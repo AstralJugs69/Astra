@@ -8,7 +8,7 @@ import uuid
 from typing import Optional, Tuple
 import structlog
 
-from astra.domain.events import AstraEvent, EventType
+from astra.domain.events import AstraEvent, EventType, VerificationOutcome
 from astra.domain.intervention import evaluate_anti_loop_policy, record_intervention
 from astra.domain.modes import Mode
 from astra.domain.reasoning_ports import EngineVerdict
@@ -43,7 +43,39 @@ class StopHookHandler:
         if event.event_type != EventType.STOP:
             raise ValueError(f"StopHookHandler called with non-stop event type: {event.event_type}")
 
-        # Run Deep tier verification audit
+        # Check if there are any unverified code modifications
+        latest_passing_ver_ts = 0
+        for ver in state.verification_history:
+            if ver.outcome == VerificationOutcome.PASSED:
+                latest_passing_ver_ts = max(latest_passing_ver_ts, ver.timestamp)
+
+        unverified_edits = [
+            a for a in state.actions_taken
+            if a.tool_name in ["replace_file_content", "write_to_file", "edit_file", "multi_replace_file_content"]
+            and a.timestamp > latest_passing_ver_ts
+        ]
+
+        has_failing_verification = (
+            state.latest_verification is not None
+            and state.latest_verification.outcome == VerificationOutcome.FAILED
+        )
+
+        # Fast Allow: If no unverified code edits, no failing verification, and no triggering signal:
+        # Allow normal non-bugfixing turns or read-only/informational queries immediately!
+        if not unverified_edits and not has_failing_verification and not triggering_signal:
+            logger.info("stop_allowed_no_unverified_edits", session_id=event.session_id)
+            state.current_mode = Mode.SHADOW.value
+            return (
+                HookResponseEnvelope(
+                    decision="allow",
+                    reason="No unverified code modifications in progress.",
+                    mode=Mode.SHADOW.value,
+                    correlation_id=event.correlation_id,
+                ),
+                state,
+            )
+
+        # Run Deep tier verification audit for actual code modifications
         deep_res = await self.deep_orchestrator.investigate(
             event=event,
             state=state,

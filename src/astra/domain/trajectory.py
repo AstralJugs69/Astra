@@ -62,6 +62,7 @@ class TrajectoryState(BaseModel):
     current_hypothesis: Optional[str] = None
     evidence_gathered: List[EvidenceRef] = Field(default_factory=list)
     actions_taken: List[ActionRecord] = Field(default_factory=list)
+    modified_files: List[str] = Field(default_factory=list)
     verification_history: List[VerificationRecord] = Field(default_factory=list)
     failure_signatures: Dict[str, int] = Field(default_factory=dict)
     current_mode: str = "SHADOW"
@@ -133,6 +134,12 @@ def reduce_trajectory(state: TrajectoryState, event: AstraEvent) -> TrajectorySt
             timestamp=event.received_at,
         )
         new_state.actions_taken.append(action)
+
+        # Check if action was a file modification
+        if tool.name in ["write_to_file", "replace_file_content", "multi_replace_file_content", "edit_file"]:
+            target = tool.arguments_summary or ""
+            if target and target not in new_state.modified_files:
+                new_state.modified_files.append(target)
 
         # Check if action was a verification attempt
         if tool.name == "run_command":

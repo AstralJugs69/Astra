@@ -109,7 +109,7 @@ def detect_same_file_repeated_edits(
 def detect_premature_termination(
     state: TrajectoryState, event: AstraEvent
 ) -> Optional[Signal]:
-    """Flags when agent attempts to Stop immediately after a failed or absent verification."""
+    """Flags when agent attempts to Stop immediately after a failed or unverified code modification."""
     if event.event_type != EventType.STOP:
         return None
 
@@ -134,19 +134,26 @@ def detect_premature_termination(
             metadata={"latest_command": latest.command},
         )
 
-    # Case 2: Code changes were made but zero verification was performed
-    has_code_edits = any(
-        a.tool_name in ["replace_file_content", "write_to_file", "edit_file"]
-        for a in state.actions_taken
-    )
-    if has_code_edits and not state.verification_history:
+    # Case 2: Code modifications were made since the latest passing verification
+    latest_passing_ver_ts = 0
+    for ver in state.verification_history:
+        if ver.outcome == VerificationOutcome.PASSED:
+            latest_passing_ver_ts = max(latest_passing_ver_ts, ver.timestamp)
+
+    unverified_edits = [
+        a for a in state.actions_taken
+        if a.tool_name in ["replace_file_content", "write_to_file", "edit_file", "multi_replace_file_content"]
+        and a.timestamp > latest_passing_ver_ts
+    ]
+
+    if unverified_edits:
         return Signal(
             type=SignalType.UNSUPPORTED_SUCCESS_CLAIM,
             confidence=0.85,
             source="rule",
             suggested_mode="INTERVENE",
-            rationale="Agent attempted to terminate after code changes without running any verification check.",
-            metadata={"code_edits_count": len(state.actions_taken)},
+            rationale=f"Agent attempted to terminate after {len(unverified_edits)} code edit(s) without running verification.",
+            metadata={"unverified_edits_count": len(unverified_edits)},
         )
 
     return None
