@@ -12,10 +12,10 @@ from astra.domain.evidence import EvidenceSource, assemble_evidence_packet
 from astra.domain.events import AstraEvent, EventType
 from astra.domain.evidence_ports import EvidenceRetriever
 from astra.domain.model_ports import CostMetadata
-from astra.domain.reasoning_ports import EngineResult
+from astra.domain.reasoning_ports import CritiqueType, EngineResult
 from astra.domain.routing import RoutingMode, determine_routing
 from astra.domain.signals import Signal, SignalType
-from astra.domain.trajectory import EvidenceRef, TrajectoryState
+from astra.domain.trajectory import EvidenceRef, TrajectoryState, build_reasoning_checkpoint
 from astra.engines.bugfix.verifier import BugfixVerifier
 from astra.engines.reasoning.alternatives import AlternativeRanker
 from astra.engines.reasoning.critic import ReasoningCritic
@@ -90,7 +90,7 @@ class DeepTierOrchestrator:
             workspace_path=event.workspace_path,
         )
 
-        # 3. Assemble bounded evidence packet purely
+        # 3. Assemble bounded evidence packet with structured ReasoningCheckpoint
         actions_summary = ", ".join(
             f"{a.tool_name}({a.arguments_summary[:40]})" for a in state.actions_taken[-5:]
         )
@@ -99,16 +99,23 @@ class DeepTierOrchestrator:
             if state.latest_verification
             else "No verification run"
         )
-        trajectory_summary = f"Actions: {actions_summary}\nVerification: {ver_status}\nFailures: {state.failure_count}"
+        trajectory_summary = (
+            f"Phase: {state.epistemic_phase.value}\n"
+            f"Actions: {actions_summary}\n"
+            f"Verification: {ver_status}\n"
+            f"Failures: {state.failure_count}"
+        )
 
+        checkpoint = build_reasoning_checkpoint(state)
         packet = assemble_evidence_packet(
             task=state.task or "Complete the assigned development task accurately",
             trajectory_summary=trajectory_summary,
             candidate_items=raw_items,
             token_budget=self.token_budget,
+            checkpoint=checkpoint,
         )
 
-        # 4. Engine Selection
+        # 4. Engine Selection: Verification vs Reasoning Critique
         is_verification_trigger = (
             event.event_type == EventType.STOP
             or (triggering_signal and triggering_signal.type in [
@@ -131,8 +138,19 @@ class DeepTierOrchestrator:
             configured_mode=self.routing_mode,
         )
 
-        # 6. Optional Alternative Ranker execution if routed
-        if routing_decision.should_execute_alternative_ranker:
+        # 6. Deepen Reasoning: If critique identifies missing alternatives or reasoning impasse
+        should_rank_alternatives = (
+            routing_decision.should_execute_alternative_ranker
+            or (
+                engine_result.critique is not None
+                and engine_result.critique.type in [
+                    CritiqueType.MISSING_ALTERNATIVE,
+                    CritiqueType.PREMATURE_CONVERGENCE,
+                ]
+            )
+        )
+
+        if should_rank_alternatives:
             alt_result = await self.alternative_ranker.run(packet, state)
             engine_result.alternatives = alt_result.alternatives
             total_cost.model_calls += alt_result.bounded_cost.model_calls

@@ -52,10 +52,18 @@ class ReasoningCritic(BaseEngine):
         ]
         actions_str = "\n".join(recent_actions) or "No actions recorded."
 
+        cp = evidence.checkpoint
+        phase_str = cp.epistemic_phase.value if cp else state.epistemic_phase.value
+        claims_str = ", ".join(cp.active_claims) if cp and cp.active_claims else "None stated"
+        assumptions_str = ", ".join(cp.assumptions) if cp and cp.assumptions else "None stated"
+
         prompt = (
-            f"You are the Astra Reasoning Critic.\n"
+            f"You are the Astra Reasoning Critic auditing an agentic pair-programmer.\n"
             f"Task: {evidence.task or state.task or 'Current coding task'}\n"
-            f"Hypothesis Under Review: {state.current_hypothesis or 'Unstated/Implicit'}\n\n"
+            f"Epistemic Phase: {phase_str}\n"
+            f"Hypothesis Under Review: {state.current_hypothesis or 'Unstated/Implicit'}\n"
+            f"Active Claims: {claims_str}\n"
+            f"Assumptions: {assumptions_str}\n\n"
             f"Recent Actions Taken:\n{actions_str}\n\n"
             f"Evidence Packet:\n{evidence.trajectory_summary}\n\n"
             f"Evaluate whether the agent's current conclusion/hypothesis is sufficiently justified.\n"
@@ -70,8 +78,8 @@ class ReasoningCritic(BaseEngine):
                 model_name=self.model_name,
                 timeout_seconds=self.timeout_seconds,
                 system_instruction=(
-                    "You are a companion reasoning critic. Your goal is NOT to disagree, but to identify "
-                    "whether conclusions are rigorously justified by evidence. Be constructive and specific."
+                    "You are a companion reasoning critic. Your goal is NOT to disagree unnecessarily, "
+                    "but to identify whether conclusions are rigorously justified by evidence. Be constructive and specific."
                 ),
             )
 

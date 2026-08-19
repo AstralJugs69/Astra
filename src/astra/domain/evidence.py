@@ -7,6 +7,8 @@ from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
+from astra.domain.trajectory import ReasoningCheckpoint
+
 
 class EvidenceSource(str, Enum):
     TRANSCRIPT_SLICE = "TRANSCRIPT_SLICE"
@@ -35,6 +37,7 @@ class EvidencePacket(BaseModel):
 
     task: Optional[str] = None
     trajectory_summary: str = ""
+    checkpoint: Optional[ReasoningCheckpoint] = None
     items: List[EvidenceItem] = Field(default_factory=list)
     token_budget: int = 4000
     token_used: int = 0
@@ -52,6 +55,7 @@ def assemble_evidence_packet(
     trajectory_summary: str,
     candidate_items: List[EvidenceItem],
     token_budget: int = 4000,
+    checkpoint: Optional[ReasoningCheckpoint] = None,
 ) -> EvidencePacket:
     """Pure assembler: prioritizes, deduplicates, and clamps candidate items to token budget."""
     base_cost = estimate_tokens(task or "") + estimate_tokens(trajectory_summary)
@@ -94,6 +98,7 @@ def assemble_evidence_packet(
     return EvidencePacket(
         task=task,
         trajectory_summary=trajectory_summary,
+        checkpoint=checkpoint,
         items=packed_items,
         token_budget=token_budget,
         token_used=accumulated_tokens,
