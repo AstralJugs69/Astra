@@ -50,11 +50,12 @@ class BugfixVerifier(BaseEngine):
 
         prompt = (
             f"You are the Astra Bugfix Verifier enforcing the Evidence-First Debugging Protocol.\n"
-            f"Agent Task: {evidence.task or state.task or 'Solve the bug/issue'}\n\n"
+            f"Agent Task: {evidence.task or state.task or 'Solve the assigned development/verification task'}\n\n"
             f"Trajectory Summary:\n{evidence.trajectory_summary}\n\n"
             f"Verification & Workspace Evidence:\n{evidence_str}\n\n"
-            f"Audit whether the claimed fix is backed by actual, reproducible passing verification.\n"
-            f"If the agent edited code but never ran the test suite, or if tests failed, is_verified must be False."
+            f"Audit whether the claimed work/fix is backed by actual passing verification.\n"
+            f"- If the evidence shows that a test suite or verification command was executed and passed with zero failures, is_verified must be True.\n"
+            f"- If the agent edited code but never ran any verification check, or if tests failed, is_verified must be False."
         )
 
         try:
