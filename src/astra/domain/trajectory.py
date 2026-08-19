@@ -1,13 +1,27 @@
-"""Pure trajectory state models and reducers.
+"""Pure trajectory state models, epistemic phases, and reducers.
 
-Zero I/O, zero framework imports. Represents compact trajectory state for an agent session.
+Zero I/O, zero framework imports. Represents compact trajectory state and structured
+reasoning checkpoints for an agent session.
 """
 
+from enum import Enum
 import time
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from astra.domain.events import AstraEvent, EventType, VerificationOutcome
+
+
+class EpistemicPhase(str, Enum):
+    """Epistemic phase tracking the progression of agent investigation and belief."""
+    UNKNOWN = "UNKNOWN"
+    HYPOTHESIS = "HYPOTHESIS"
+    INVESTIGATING = "INVESTIGATING"
+    EVIDENCE_FOUND = "EVIDENCE_FOUND"
+    CONCLUSION = "CONCLUSION"
+    VERIFYING = "VERIFYING"
+    CONFIRMED = "CONFIRMED"
+    CONTRADICTED = "CONTRADICTED"
 
 
 class EvidenceRef(BaseModel):
@@ -59,7 +73,10 @@ class TrajectoryState(BaseModel):
     schema_version: int = 1
     state_version: int = 1
     task: Optional[str] = None
+    epistemic_phase: EpistemicPhase = EpistemicPhase.UNKNOWN
     current_hypothesis: Optional[str] = None
+    active_claims: List[str] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
     evidence_gathered: List[EvidenceRef] = Field(default_factory=list)
     actions_taken: List[ActionRecord] = Field(default_factory=list)
     modified_files: List[str] = Field(default_factory=list)
@@ -95,6 +112,41 @@ class TrajectoryState(BaseModel):
         return None
 
 
+class ReasoningCheckpoint(BaseModel):
+    """Structured snapshot of the agent's current beliefs, evidence, and state."""
+
+    session_id: str
+    epistemic_phase: EpistemicPhase
+    task: Optional[str] = None
+    current_hypothesis: Optional[str] = None
+    active_claims: List[str] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+    evidence_gathered: List[EvidenceRef] = Field(default_factory=list)
+    recent_actions: List[ActionRecord] = Field(default_factory=list)
+    modified_files: List[str] = Field(default_factory=list)
+    latest_verification: Optional[VerificationRecord] = None
+    unresolved_questions: List[str] = Field(default_factory=list)
+    failure_count: int = 0
+
+
+def build_reasoning_checkpoint(state: TrajectoryState) -> ReasoningCheckpoint:
+    """Builds a structured ReasoningCheckpoint from the current TrajectoryState."""
+    return ReasoningCheckpoint(
+        session_id=state.session_id,
+        epistemic_phase=state.epistemic_phase,
+        task=state.task,
+        current_hypothesis=state.current_hypothesis,
+        active_claims=state.active_claims,
+        assumptions=state.assumptions,
+        evidence_gathered=state.evidence_gathered[-5:],
+        recent_actions=state.actions_taken[-5:],
+        modified_files=state.modified_files,
+        latest_verification=state.latest_verification,
+        unresolved_questions=state.unresolved_questions,
+        failure_count=state.failure_count,
+    )
+
+
 def create_initial_trajectory(session_id: str, timestamp_ms: Optional[int] = None) -> TrajectoryState:
     """Creates a new initial TrajectoryState for a session."""
     now = timestamp_ms or int(time.time() * 1000)
@@ -124,7 +176,6 @@ def reduce_trajectory(state: TrajectoryState, event: AstraEvent) -> TrajectorySt
 
     if event.event_type == EventType.POST_TOOL_USE and event.tool:
         tool = event.tool
-        # Record action
         action = ActionRecord(
             step_index=event.step_index,
             tool_name=tool.name,
@@ -135,23 +186,32 @@ def reduce_trajectory(state: TrajectoryState, event: AstraEvent) -> TrajectorySt
         )
         new_state.actions_taken.append(action)
 
-        # Check if action was a file modification
+        # File modifications transition epistemic phase
         if tool.name in ["write_to_file", "replace_file_content", "multi_replace_file_content", "edit_file"]:
             target = tool.arguments_summary or ""
             if target and target not in new_state.modified_files:
                 new_state.modified_files.append(target)
+            new_state.epistemic_phase = EpistemicPhase.CONCLUSION
 
-        # Check if action was a verification attempt
-        if tool.name == "run_command":
-            if is_verification_command(tool.arguments_summary):
-                outcome = VerificationOutcome.FAILED if tool.had_error else VerificationOutcome.PASSED
-                ver_record = VerificationRecord(
-                    step_index=event.step_index,
-                    command=tool.arguments_summary,
-                    outcome=outcome,
-                    summary=tool.output_summary[:500],
-                    timestamp=event.received_at,
-                )
-                new_state.verification_history.append(ver_record)
+        # Verification command execution
+        elif tool.name == "run_command" and is_verification_command(tool.arguments_summary):
+            outcome = VerificationOutcome.FAILED if tool.had_error else VerificationOutcome.PASSED
+            ver_record = VerificationRecord(
+                step_index=event.step_index,
+                command=tool.arguments_summary,
+                outcome=outcome,
+                summary=tool.output_summary[:500],
+                timestamp=event.received_at,
+            )
+            new_state.verification_history.append(ver_record)
+            if outcome == VerificationOutcome.PASSED:
+                new_state.epistemic_phase = EpistemicPhase.CONFIRMED
+            else:
+                new_state.epistemic_phase = EpistemicPhase.CONTRADICTED
+
+        # Exploratory tools
+        elif tool.name in ["grep_search", "view_file", "find_by_name", "list_dir", "search_web", "read_url_content"]:
+            if new_state.epistemic_phase in [EpistemicPhase.UNKNOWN, EpistemicPhase.HYPOTHESIS]:
+                new_state.epistemic_phase = EpistemicPhase.INVESTIGATING
 
     return new_state
