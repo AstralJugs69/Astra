@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from astra.api.routers import event, health
+from astra.api.routers import event, health, reason
 from astra.infrastructure.observability.logging import configure_logging
 from astra.settings import get_settings
 
@@ -29,6 +29,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(event.router)
+    app.include_router(reason.router)
 
     return app
 

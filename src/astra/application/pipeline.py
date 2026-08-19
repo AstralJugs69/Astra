@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Optional
 import structlog
 
+from astra.application.handle_stop import StopHookHandler
 from astra.domain.events import AstraEvent, EventType
 from astra.domain.intervention import evaluate_anti_loop_policy, record_intervention
 from astra.domain.model_ports import CostMetadata
@@ -20,6 +21,7 @@ from astra.domain.trajectory import (
     reduce_trajectory,
 )
 from astra.integration.antigravity.response_format import AssistPayload, HookResponseEnvelope
+from astra.tiers.deep.orchestrator import DeepTierOrchestrator
 from astra.tiers.fast.assessor import FastTierAssessor
 
 logger = structlog.get_logger(__name__)
@@ -32,7 +34,7 @@ class DecisionPipeline:
         self,
         state_store: TrajectoryStateStore,
         fast_assessor: FastTierAssessor,
-        deep_orchestrator: Optional[Any] = None,  # Injected in Milestone 5
+        deep_orchestrator: Optional[DeepTierOrchestrator] = None,
         max_session_interventions: int = 5,
         max_forced_continuations_per_signature: int = 2,
         anti_loop_cooldown_seconds: float = 30.0,
@@ -43,6 +45,15 @@ class DecisionPipeline:
         self.max_session_interventions = max_session_interventions
         self.max_forced_continuations_per_signature = max_forced_continuations_per_signature
         self.anti_loop_cooldown_seconds = anti_loop_cooldown_seconds
+
+        if deep_orchestrator:
+            self.stop_handler = StopHookHandler(
+                deep_orchestrator=deep_orchestrator,
+                max_forced_continuations_per_signature=max_forced_continuations_per_signature,
+                anti_loop_cooldown_seconds=anti_loop_cooldown_seconds,
+            )
+        else:
+            self.stop_handler = None
 
     async def process_event(self, event: AstraEvent) -> HookResponseEnvelope:
         """Processes an incoming normalized AstraEvent through the decision pipeline."""
@@ -62,7 +73,18 @@ class DecisionPipeline:
         signals = assessment.signals
         total_cost = assessment.cost
 
-        # 4. Escalation Policy
+        # 4. Handle Stop Event Specialization
+        if event.event_type == EventType.STOP and self.stop_handler:
+            top_signal = signals[0] if signals else None
+            response_envelope, state = await self.stop_handler.handle(
+                event=event,
+                state=state,
+                triggering_signal=top_signal,
+            )
+            await self.state_store.save(state)
+            return response_envelope
+
+        # 5. Escalation Policy for other events (e.g. PostToolUse)
         try:
             current_mode = Mode(state.current_mode)
         except ValueError:
@@ -81,21 +103,17 @@ class DecisionPipeline:
         assist_payload = None
         intervention_id = None
 
-        # 5. Handle Mode Action
         if mode_decision.new_mode == Mode.SHADOW:
             decision_str = "continue"
-            reason_str = None
 
         elif mode_decision.new_mode == Mode.ASSIST:
             if self.deep_orchestrator:
-                # Deep tier investigation in Milestone 5
                 deep_res = await self.deep_orchestrator.investigate(
                     event=event, state=state, triggering_signal=mode_decision.primary_signal
                 )
                 assist_payload = deep_res.assist_payload
                 total_cost = deep_res.total_cost
             else:
-                # Fallback rule-based assist
                 sig = mode_decision.primary_signal
                 assist_payload = AssistPayload(
                     message=sig.rationale if sig else "Astra recommendation: verify recent changes.",
@@ -107,7 +125,6 @@ class DecisionPipeline:
             sig = mode_decision.primary_signal
             sig_hash = sig.failure_signature_hash if sig else None
 
-            # 6. Anti-Loop Safety Check
             anti_loop = evaluate_anti_loop_policy(
                 state=state,
                 failure_signature_hash=sig_hash,
@@ -118,43 +135,28 @@ class DecisionPipeline:
 
             if anti_loop.allow_forced_continuation:
                 intervention_id = str(uuid.uuid4())
-                decision_str = "block_stop" if event.event_type == EventType.STOP else "continue"
+                decision_str = "continue"
                 reason_str = sig.rationale if sig else "Action requires verification before completion."
 
-                # Record intervention
                 state = record_intervention(
                     state=state,
                     intervention_id=intervention_id,
                     mode=Mode.INTERVENE.value,
                     trigger_signal=sig.type.value if sig else "UNKNOWN",
                     message=reason_str,
-                    was_forced_continuation=(event.event_type == EventType.STOP),
+                    was_forced_continuation=False,
                     failure_signature_hash=sig_hash,
                     timestamp_ms=event.received_at,
                 )
-            elif anti_loop.action == "surface_to_user":
-                decision_str = "continue"
-                reason_str = anti_loop.user_surfaced_message
-                logger.warning("anti_loop_cap_reached_surfacing_to_user", session_id=event.session_id, hash=sig_hash)
             else:
                 decision_str = "continue"
-                reason_str = "Cooldown active; allowing agent stop."
+                reason_str = anti_loop.user_surfaced_message
 
-        # 7. Persist state
+        # 6. Persist state
         await self.state_store.save(state)
 
         total_latency_ms = int((time.perf_counter() - start_time) * 1000)
         total_cost.latency_ms = total_latency_ms
-
-        logger.info(
-            "pipeline_event_processed",
-            session_id=event.session_id,
-            event_type=event.event_type.value,
-            mode=state.current_mode,
-            decision=decision_str,
-            latency_ms=total_latency_ms,
-            correlation_id=event.correlation_id,
-        )
 
         return HookResponseEnvelope(
             decision=decision_str,
