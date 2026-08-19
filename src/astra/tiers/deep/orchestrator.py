@@ -58,7 +58,7 @@ class DeepTierOrchestrator:
         triggering_signal: Optional[Signal] = None,
     ) -> DeepInvestigationResult:
         """Executes a bounded deep reasoning investigation."""
-        # 1. Determine evidence requests based on trigger
+        # 1. Determine evidence requests based on trigger and trajectory history
         evidence_requests: List[EvidenceRef] = []
         if triggering_signal:
             evidence_requests.extend(triggering_signal.evidence_refs)
@@ -72,6 +72,18 @@ class DeepTierOrchestrator:
                 )
             )
 
+        # Include latest verification history so Verifier has test evidence
+        if state.verification_history:
+            for idx, ver in enumerate(state.verification_history[-3:]):
+                evidence_requests.append(
+                    EvidenceRef(
+                        source_type=EvidenceSource.TEST_OUTPUT.value,
+                        locator=f"verification_{idx}_{ver.command[:30]}",
+                        summary=f"Command: {ver.command}\nOutcome: {ver.outcome.value}\nOutput:\n{ver.summary}",
+                        timestamp=ver.timestamp,
+                    )
+                )
+
         # 2. Retrieve raw evidence items via adapter
         raw_items = await self.evidence_retriever.retrieve(
             requests=evidence_requests,
@@ -82,7 +94,12 @@ class DeepTierOrchestrator:
         actions_summary = ", ".join(
             f"{a.tool_name}({a.arguments_summary[:40]})" for a in state.actions_taken[-5:]
         )
-        trajectory_summary = f"Actions: {actions_summary}\nFailures: {state.failure_count}"
+        ver_status = (
+            f"Latest verification: {state.latest_verification.command} -> {state.latest_verification.outcome.value}"
+            if state.latest_verification
+            else "No verification run"
+        )
+        trajectory_summary = f"Actions: {actions_summary}\nVerification: {ver_status}\nFailures: {state.failure_count}"
 
         packet = assemble_evidence_packet(
             task=state.task or "Complete the assigned development task accurately",
