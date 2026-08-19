@@ -48,5 +48,6 @@ Thumbs.db
 evaluation/runs/
 *.sqlite
 
-# Gitignored docs directory as requested
-docs/
+# Gitignored implementation plan in docs/ while preserving tracked ADRs
+docs/*
+!docs/adr/

@@ -1,0 +1,1 @@
+"""Fast tier signal assessment."""
