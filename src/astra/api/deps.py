@@ -37,10 +37,19 @@ def get_persistence_store() -> TrajectoryStateStore:
 @lru_cache()
 def get_model_provider() -> AntigravitySdkProvider:
     """Provides the Antigravity SDK model provider."""
+    import os
     cfg = get_settings()
+    proj_id = (
+        cfg.gcp_project_id
+        or cfg.firestore_project_id
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCP_PROJECT_ID")
+        or os.environ.get("FIRESTORE_PROJECT_ID")
+        or os.environ.get("ASTRA_PROJECT_ID")
+    )
     return AntigravitySdkProvider(
         api_key=cfg.gemini_api_key,
-        project_id=cfg.firestore_project_id,
+        project_id=proj_id,
         location=cfg.vertex_location,
         default_model=cfg.fast_model,
         use_vertex_ai=cfg.use_vertex_ai,

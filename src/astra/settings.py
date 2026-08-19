@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # Model & SDK Settings (Vertex AI using GCP Project credits)
     use_vertex_ai: bool = Field(default=True, alias="ASTRA_USE_VERTEX_AI", description="Use Vertex AI GCP project credits")
     vertex_location: str = Field(default="global", alias="ASTRA_VERTEX_LOCATION", description="Vertex AI endpoint location")
+    gcp_project_id: Optional[str] = Field(default=None, alias="GCP_PROJECT_ID", description="Dedicated GCP Project ID for Vertex AI")
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     fast_model: str = Field(default="gemini-3.7-flash", description="Unified Vertex AI model for fast tier")
     deep_model: str = Field(default="gemini-3.7-flash", description="Unified Vertex AI model for deep reasoning")

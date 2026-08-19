@@ -68,6 +68,7 @@ class BugfixVerifier(BaseEngine):
                     "You are a rigorous code verification auditor. Determine whether a fix is "
                     "empirically proven by passing test executions. Be strict and objective."
                 ),
+                tier="deep",
             )
 
             if output.is_verified:

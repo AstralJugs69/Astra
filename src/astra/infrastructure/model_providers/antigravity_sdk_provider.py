@@ -55,6 +55,7 @@ class AntigravitySdkProvider:
         model_name: Optional[str] = None,
         timeout_seconds: float = 5.0,
         system_instruction: Optional[str] = None,
+        tier: str = "fast",
     ) -> Tuple[T, CostMetadata]:
         """Generates structured output parsed into Pydantic model schema."""
         model = model_name or self.default_model
@@ -87,7 +88,7 @@ class AntigravitySdkProvider:
             tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
 
             cost = CostMetadata(
-                tier_invoked="deep" if "pro" in model else "fast",
+                tier_invoked=tier,
                 model_name=model,
                 model_calls=1,
                 tokens_in=tokens_in,
@@ -111,6 +112,7 @@ class AntigravitySdkProvider:
         model_name: Optional[str] = None,
         timeout_seconds: float = 5.0,
         system_instruction: Optional[str] = None,
+        tier: str = "fast",
     ) -> Tuple[str, CostMetadata]:
         """Generates raw text response."""
         model = model_name or self.default_model
@@ -138,7 +140,7 @@ class AntigravitySdkProvider:
             tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
 
             cost = CostMetadata(
-                tier_invoked="deep" if "pro" in model else "fast",
+                tier_invoked=tier,
                 model_name=model,
                 model_calls=1,
                 tokens_in=tokens_in,

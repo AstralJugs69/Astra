@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any, Dict, Optional
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import AsyncRetrying, retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from astra.domain.trajectory import TrajectoryState
 
@@ -45,6 +45,30 @@ class FirestoreTrajectoryStore:
         """Returns True if Firestore is currently in degraded bypass mode."""
         return self._consecutive_failures >= self.max_degraded_failures
 
+    async def _fetch_doc_with_retry(self, doc_ref):
+        """Fetches document with bounded retry on transient errors."""
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(2),
+            wait=wait_exponential(multiplier=0.1, min=0.1, max=0.5),
+            retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+            reraise=True,
+        ):
+            with attempt:
+                async with asyncio.timeout(self.timeout_seconds):
+                    return await doc_ref.get()
+
+    async def _set_doc_with_retry(self, doc_ref, data):
+        """Sets document with bounded retry on transient errors."""
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(2),
+            wait=wait_exponential(multiplier=0.1, min=0.1, max=0.5),
+            retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),
+            reraise=True,
+        ):
+            with attempt:
+                async with asyncio.timeout(self.timeout_seconds):
+                    return await doc_ref.set(data)
+
     async def load(self, session_id: str) -> Optional[TrajectoryState]:
         """Loads TrajectoryState from Firestore."""
         if self.is_degraded:
@@ -55,8 +79,7 @@ class FirestoreTrajectoryStore:
             db = self._get_client()
             doc_ref = db.collection(self.collection_name).document(session_id)
 
-            async with asyncio.timeout(self.timeout_seconds):
-                doc = await doc_ref.get()
+            doc = await self._fetch_doc_with_retry(doc_ref)
 
             if not doc.exists:
                 self._consecutive_failures = 0
@@ -83,8 +106,7 @@ class FirestoreTrajectoryStore:
             doc_ref = db.collection(self.collection_name).document(state.session_id)
             data = state.model_dump(mode="json")
 
-            async with asyncio.timeout(self.timeout_seconds):
-                await doc_ref.set(data)
+            await self._set_doc_with_retry(doc_ref, data)
 
             self._consecutive_failures = 0
             return True

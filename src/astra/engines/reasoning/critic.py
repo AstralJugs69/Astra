@@ -81,6 +81,7 @@ class ReasoningCritic(BaseEngine):
                     "You are a companion reasoning critic. Your goal is NOT to disagree unnecessarily, "
                     "but to identify whether conclusions are rigorously justified by evidence. Be constructive and specific."
                 ),
+                tier="deep",
             )
 
             if output.has_weakness:

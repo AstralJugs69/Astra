@@ -55,13 +55,15 @@ def normalize_antigravity_event(
         raw_payload = RawAntigravityPayload()
 
     # 2. Extract Session ID (Blocking requirement)
-    session_id = raw_payload.conversationId
+    session_id = (
+        raw_payload.conversationId
+        or raw_payload_dict.get("conversationId")
+        or raw_payload_dict.get("sessionId")
+        or raw_payload_dict.get("session_id")
+    )
     if not session_id:
         warnings.append("missing_conversationId_in_payload")
-        # Try finding in raw dict if nested
-        session_id = raw_payload_dict.get("conversationId") or raw_payload_dict.get("session_id")
-        if not session_id:
-            return None, warnings
+        return None, warnings
 
     # 3. Determine Event Type
     event_type_str = envelope.event_type.upper().replace("-", "_")

@@ -92,6 +92,7 @@ class FastTierAssessor:
                     model_name=self.fast_model,
                     timeout_seconds=self.timeout_seconds,
                     system_instruction="You are Astra Fast Assessor. Rapidly classify agent risks into structured JSON.",
+                    tier="fast",
                 )
 
                 if model_output.confidence >= 0.7:

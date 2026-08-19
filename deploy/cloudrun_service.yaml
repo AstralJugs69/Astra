@@ -36,6 +36,10 @@ spec:
           value: "gemini-3.7-flash"
         - name: ASTRA_DEEP_MODEL
           value: "gemini-3.7-flash"
+        - name: GCP_PROJECT_ID
+          value: "project-1990255b-a239-4a98-a89"
+        - name: FIRESTORE_PROJECT_ID
+          value: "project-1990255b-a239-4a98-a89"
         - name: ASTRA_AUTH_TOKEN
           valueFrom:
             secretKeyRef:

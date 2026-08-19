@@ -30,6 +30,7 @@ class ModelProvider(Protocol):
         model_name: Optional[str] = None,
         timeout_seconds: float = 5.0,
         system_instruction: Optional[str] = None,
+        tier: str = "fast",
     ) -> Tuple[T, CostMetadata]:
         """Generates structured output parsed into the provided Pydantic model schema."""
         ...
@@ -40,6 +41,7 @@ class ModelProvider(Protocol):
         model_name: Optional[str] = None,
         timeout_seconds: float = 5.0,
         system_instruction: Optional[str] = None,
+        tier: str = "fast",
     ) -> Tuple[str, CostMetadata]:
         """Generates plain text response with cost metadata."""
         ...

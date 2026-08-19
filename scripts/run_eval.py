@@ -17,7 +17,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 
 def main():
     parser = argparse.ArgumentParser(description="Run Astra benchmark evaluation suite.")
-    parser.add_argument("--mock", action="store_true", default=True, help="Run mock benchmark trials")
+    parser.add_argument("--mock", action="store_true", default=False, help="Run mock benchmark trials")
     parser.add_argument("--output", default="evaluation/evaluation_report.md", help="Report output file")
     args = parser.parse_args()
 

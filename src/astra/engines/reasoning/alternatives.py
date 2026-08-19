@@ -56,6 +56,7 @@ class AlternativeRanker(BaseEngine):
                     "You are an expert software architect providing multiple distinct alternative solutions. "
                     "Help the agent escape local minima and model laziness."
                 ),
+                tier="deep",
             )
 
             return EngineResult(
