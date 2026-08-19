@@ -31,9 +31,9 @@ spec:
         - name: FIRESTORE_PROJECT_ID
           value: "PROJECT_ID"
         - name: ASTRA_FAST_MODEL
-          value: "gemini-2.5-flash"
+          value: "gemini-3.7-flash"
         - name: ASTRA_DEEP_MODEL
-          value: "gemini-2.5-flash"
+          value: "gemini-3.7-flash"
         - name: ASTRA_AUTH_TOKEN
           valueFrom:
             secretKeyRef:

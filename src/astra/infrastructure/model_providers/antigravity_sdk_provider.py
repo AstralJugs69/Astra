@@ -23,7 +23,7 @@ class AntigravitySdkProvider:
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         location: str = "us-central1",
-        default_model: str = "gemini-2.5-flash",
+        default_model: str = "gemini-3.7-flash",
     ):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.project_id = project_id or os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("ASTRA_PROJECT_ID")
