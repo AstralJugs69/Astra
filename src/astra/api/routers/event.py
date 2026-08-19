@@ -65,10 +65,10 @@ async def handle_event(
         logger.error("pipeline_outer_deadline_exceeded_fail_open", correlation_id=corr_id, deadline=deadline)
         if event.event_type == EventType.POST_TOOL_USE:
             return {}
-        return {"decision": "continue", "reason": "astra_internal_fail_open"}
+        return {"decision": "allow", "reason": "astra_internal_fail_open"}
 
     except Exception as exc:
         logger.error("pipeline_unhandled_exception_fail_open", correlation_id=corr_id, error=str(exc))
         if event.event_type == EventType.POST_TOOL_USE:
             return {}
-        return {"decision": "continue", "reason": "astra_internal_fail_open"}
+        return {"decision": "allow", "reason": "astra_internal_fail_open"}

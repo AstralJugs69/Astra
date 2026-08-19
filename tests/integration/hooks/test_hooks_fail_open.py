@@ -61,7 +61,7 @@ def test_stop_hook_fail_open_when_backend_unreachable():
     )
     assert result.returncode == 0
     output_json = json.loads(result.stdout.strip())
-    assert output_json == {"decision": "continue"}
+    assert output_json == {"decision": "allow"}
 
 
 def test_hooks_fail_open_on_empty_or_malformed_stdin():
@@ -74,7 +74,7 @@ def test_hooks_fail_open_on_empty_or_malformed_stdin():
     # Invalid JSON
     res_stop = run_hook_subprocess(STOP_SCRIPT, stdin_data="{not valid json}")
     assert res_stop.returncode == 0
-    assert json.loads(res_stop.stdout.strip()) == {"decision": "continue"}
+    assert json.loads(res_stop.stdout.strip()) == {"decision": "allow"}
 
 
 class MockBackendHandler(BaseHTTPRequestHandler):
@@ -137,7 +137,7 @@ def test_hook_fails_open_on_500_backend_response(mock_backend):
     )
     assert result.returncode == 0
     output_json = json.loads(result.stdout.strip())
-    assert output_json == {"decision": "continue"}
+    assert output_json == {"decision": "allow"}
 
 
 def test_hook_fails_open_on_malformed_backend_response(mock_backend):
@@ -152,4 +152,4 @@ def test_hook_fails_open_on_malformed_backend_response(mock_backend):
     )
     assert result.returncode == 0
     output_json = json.loads(result.stdout.strip())
-    assert output_json == {"decision": "continue"}
+    assert output_json == {"decision": "allow"}
