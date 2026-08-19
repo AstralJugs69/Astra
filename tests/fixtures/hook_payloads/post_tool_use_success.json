@@ -1,0 +1,21 @@
+{
+  "conversationId": "1ac030ab-9022-4abd-81de-bf7d552301e1",
+  "workspacePaths": [
+    "C:/dev/Astra"
+  ],
+  "transcriptPath": "C:/Users/milli/.gemini/antigravity/brain/1ac030ab-9022-4abd-81de-bf7d552301e1/.system_generated/logs/transcript.jsonl",
+  "artifactDirectoryPath": "C:/Users/milli/.gemini/antigravity/brain/1ac030ab-9022-4abd-81de-bf7d552301e1",
+  "modelName": "gemini-2.5-pro",
+  "stepIdx": 12,
+  "toolCall": {
+    "name": "run_command",
+    "args": {
+      "CommandLine": "pytest tests/unit/ -v",
+      "Cwd": "C:/dev/Astra"
+    }
+  },
+  "toolResult": {
+    "output": "============================= test session starts =============================\nplatform win32 -- Python 3.13.1\nrootdir: C:\\dev\\Astra\ncollected 8 items\n\ntests/unit/domain/test_signals.py ........ [100%]\n============================== 8 passed in 0.24s ==============================",
+    "exitCode": 0
+  }
+}
