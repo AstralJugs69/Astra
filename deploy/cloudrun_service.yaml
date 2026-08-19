@@ -33,7 +33,7 @@ spec:
         - name: ASTRA_FAST_MODEL
           value: "gemini-2.5-flash"
         - name: ASTRA_DEEP_MODEL
-          value: "gemini-2.5-pro"
+          value: "gemini-2.5-flash"
         - name: ASTRA_AUTH_TOKEN
           valueFrom:
             secretKeyRef:
