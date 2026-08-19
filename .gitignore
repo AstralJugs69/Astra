@@ -45,7 +45,7 @@ htmlcov/
 Thumbs.db
 
 # Evaluation runs & local stores
-evaluation/runs/
+evaluation/
 *.sqlite
 
 # Gitignored implementation plan in docs/ while preserving tracked ADRs
