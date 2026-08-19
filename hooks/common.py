@@ -17,7 +17,8 @@ from typing import Any, Dict, Optional, Tuple
 # Configurable via environment or local defaults
 DEFAULT_BACKEND_URL = os.environ.get("ASTRA_ENDPOINT_URL", "http://127.0.0.1:8080/event")
 DEFAULT_AUTH_TOKEN = os.environ.get("ASTRA_AUTH_TOKEN", "astra-dev-secret-token-change-in-prod")
-DEBUG_LOG_FILE = os.environ.get("ASTRA_HOOK_DEBUG_LOG", "C:/dev/Astra/hook_events.log")
+_default_log = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hook_events.log")
+DEBUG_LOG_FILE = os.environ.get("ASTRA_HOOK_DEBUG_LOG", _default_log)
 
 
 def log_debug(message: str) -> None:
