@@ -27,10 +27,11 @@ class Settings(BaseSettings):
         description="Shared secret Bearer token for API auth",
     )
 
-    # Model & SDK Settings (Gemini 3.7 Flash across Fast and Deep tiers)
+    # Model & SDK Settings (Vertex AI using GCP Project credits)
+    use_vertex_ai: bool = Field(default=True, alias="ASTRA_USE_VERTEX_AI", description="Use Vertex AI GCP project credits")
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    fast_model: str = Field(default="gemini-3.7-flash", description="Unified model for fast tier classification")
-    deep_model: str = Field(default="gemini-3.7-flash", description="Unified model for deep reasoning engines")
+    fast_model: str = Field(default="gemini-2.5-flash", description="Unified Vertex AI model for fast tier")
+    deep_model: str = Field(default="gemini-2.5-flash", description="Unified Vertex AI model for deep reasoning")
     fast_timeout_seconds: float = Field(default=4.0, description="Fast tier timeout in seconds")
     deep_timeout_seconds: float = Field(default=12.0, description="Deep tier engine timeout in seconds")
 

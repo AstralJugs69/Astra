@@ -23,8 +23,10 @@ class AntigravitySdkProvider:
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         location: str = "us-central1",
-        default_model: str = "gemini-3.7-flash",
+        default_model: str = "gemini-2.5-flash",
+        use_vertex_ai: bool = True,
     ):
+        self.use_vertex_ai = use_vertex_ai
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         self.project_id = project_id or os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("ASTRA_PROJECT_ID")
         self.location = location
@@ -34,13 +36,16 @@ class AntigravitySdkProvider:
     def _get_client(self):
         if self._client is None:
             from google import genai
-            if self.api_key:
+            if self.use_vertex_ai and self.project_id:
+                logger.info("using_vertex_ai_client", project_id=self.project_id, location=self.location)
+                self._client = genai.Client(vertexai=True, project=self.project_id, location=self.location)
+            elif self.api_key:
                 self._client = genai.Client(api_key=self.api_key)
             elif self.project_id:
                 logger.info("using_vertex_ai_client", project_id=self.project_id, location=self.location)
                 self._client = genai.Client(vertexai=True, project=self.project_id, location=self.location)
             else:
-                raise ValueError("Neither GEMINI_API_KEY nor GCP project_id configured for model provider")
+                raise ValueError("Neither GCP project_id nor GEMINI_API_KEY configured for model provider")
         return self._client
 
     async def generate_structured(

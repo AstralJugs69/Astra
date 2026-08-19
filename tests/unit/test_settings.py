@@ -7,8 +7,9 @@ from astra.settings import Settings
 def test_settings_defaults():
     settings = Settings()
     assert settings.env == "dev"
-    assert settings.fast_model == "gemini-3.7-flash"
-    assert settings.deep_model == "gemini-3.7-flash"
+    assert settings.use_vertex_ai is True
+    assert settings.fast_model == "gemini-2.5-flash"
+    assert settings.deep_model == "gemini-2.5-flash"
     assert settings.fast_timeout_seconds == 4.0
     assert settings.deep_timeout_seconds == 12.0
     assert settings.max_forced_continuations_per_signature == 2

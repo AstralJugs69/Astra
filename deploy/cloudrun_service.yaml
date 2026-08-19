@@ -28,12 +28,12 @@ spec:
           value: "prod"
         - name: ASTRA_PERSISTENCE_BACKEND
           value: "FIRESTORE"
-        - name: FIRESTORE_PROJECT_ID
-          value: "PROJECT_ID"
+        - name: ASTRA_USE_VERTEX_AI
+          value: "true"
         - name: ASTRA_FAST_MODEL
-          value: "gemini-3.7-flash"
+          value: "gemini-2.5-flash"
         - name: ASTRA_DEEP_MODEL
-          value: "gemini-3.7-flash"
+          value: "gemini-2.5-flash"
         - name: ASTRA_AUTH_TOKEN
           valueFrom:
             secretKeyRef:
