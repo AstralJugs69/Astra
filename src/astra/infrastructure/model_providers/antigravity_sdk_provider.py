@@ -16,21 +16,31 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class AntigravitySdkProvider:
-    """Concrete adapter wrapping Google GenAI SDK (google-genai)."""
+    """Concrete adapter wrapping Google GenAI SDK (google-genai) with Vertex AI and API key support."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
+        location: str = "us-central1",
         default_model: str = "gemini-2.5-flash",
     ):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        self.project_id = project_id or os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("ASTRA_PROJECT_ID")
+        self.location = location
         self.default_model = default_model
         self._client = None
 
     def _get_client(self):
         if self._client is None:
             from google import genai
-            self._client = genai.Client(api_key=self.api_key)
+            if self.api_key:
+                self._client = genai.Client(api_key=self.api_key)
+            elif self.project_id:
+                logger.info("using_vertex_ai_client", project_id=self.project_id, location=self.location)
+                self._client = genai.Client(vertexai=True, project=self.project_id, location=self.location)
+            else:
+                raise ValueError("Neither GEMINI_API_KEY nor GCP project_id configured for model provider")
         return self._client
 
     async def generate_structured(
@@ -56,7 +66,6 @@ class AntigravitySdkProvider:
 
         try:
             async with asyncio.timeout(timeout_seconds):
-                # Call async generate_content
                 response = await client.aio.models.generate_content(
                     model=model,
                     contents=prompt,
@@ -65,12 +74,10 @@ class AntigravitySdkProvider:
 
             latency_ms = int((time.perf_counter() - start_time) * 1000)
 
-            # Parse JSON text into response_schema
             raw_text = response.text or "{}"
             parsed_data = json.loads(raw_text)
             parsed_obj = response_schema.model_validate(parsed_data)
 
-            # Compute cost metadata
             tokens_in = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
             tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
 

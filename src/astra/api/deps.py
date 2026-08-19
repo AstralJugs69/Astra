@@ -40,6 +40,7 @@ def get_model_provider() -> AntigravitySdkProvider:
     cfg = get_settings()
     return AntigravitySdkProvider(
         api_key=cfg.gemini_api_key,
+        project_id=cfg.firestore_project_id,
         default_model=cfg.fast_model,
     )
 

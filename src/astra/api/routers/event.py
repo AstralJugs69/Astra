@@ -20,8 +20,8 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["event"])
 
-OUTER_FAST_DEADLINE_SECONDS = 2.5
-OUTER_DEEP_DEADLINE_SECONDS = 10.0
+OUTER_FAST_DEADLINE_SECONDS = 5.0
+OUTER_DEEP_DEADLINE_SECONDS = 15.0
 
 
 @router.post("/event", response_model=Dict[str, Any])

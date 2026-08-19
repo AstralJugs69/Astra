@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import execute_hook  # noqa: E402
 
-STOP_TIMEOUT_SECONDS = 12.0
+STOP_TIMEOUT_SECONDS = 15.0
 
 if __name__ == "__main__":
     execute_hook(event_type="Stop", timeout_seconds=STOP_TIMEOUT_SECONDS)
