@@ -9,8 +9,8 @@ def test_settings_defaults():
     assert settings.env == "dev"
     assert settings.fast_model == "gemini-2.5-flash"
     assert settings.deep_model == "gemini-2.5-pro"
-    assert settings.fast_timeout_seconds == 2.0
-    assert settings.deep_timeout_seconds == 8.0
+    assert settings.fast_timeout_seconds == 4.0
+    assert settings.deep_timeout_seconds == 12.0
     assert settings.max_forced_continuations_per_signature == 2
     assert settings.persistence_backend == "IN_MEMORY"
 
