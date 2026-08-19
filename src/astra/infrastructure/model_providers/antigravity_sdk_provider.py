@@ -22,8 +22,8 @@ class AntigravitySdkProvider:
         self,
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
-        location: str = "us-central1",
-        default_model: str = "gemini-2.5-flash",
+        location: str = "global",
+        default_model: str = "gemini-3.7-flash",
         use_vertex_ai: bool = True,
     ):
         self.use_vertex_ai = use_vertex_ai

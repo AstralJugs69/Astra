@@ -41,6 +41,7 @@ def get_model_provider() -> AntigravitySdkProvider:
     return AntigravitySdkProvider(
         api_key=cfg.gemini_api_key,
         project_id=cfg.firestore_project_id,
+        location=cfg.vertex_location,
         default_model=cfg.fast_model,
         use_vertex_ai=cfg.use_vertex_ai,
     )
