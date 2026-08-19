@@ -44,10 +44,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Evaluation runs & local stores
-evaluation/
+# Evaluation runtime store (ignore sqlite database and temp run artifacts)
+evaluation/runs/
 *.sqlite
+*.sqlite3
 
-# Gitignored implementation plan in docs/ while preserving tracked ADRs
-docs/*
-!docs/adr/
+# Local runtime logs
+hook_events.log
