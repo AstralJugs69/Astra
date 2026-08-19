@@ -30,6 +30,37 @@ def log_debug(message: str) -> None:
             pass
 
 
+def format_hook_entry(event_type: str, raw_payload: Dict[str, Any], decision: Dict[str, Any], status: str = "OK") -> str:
+    """Formats hook executions into human-readable, grep-friendly structured log lines."""
+    session_id = raw_payload.get("session_id", raw_payload.get("sessionId", "unknown"))[:8]
+    
+    if event_type == "PostToolUse":
+        tool_name = raw_payload.get("tool_name") or raw_payload.get("toolName") or "tool"
+        args = raw_payload.get("tool_arguments") or raw_payload.get("toolArguments") or {}
+        arg_str = ""
+        if isinstance(args, dict):
+            arg_str = (
+                args.get("CommandLine")
+                or args.get("TargetFile")
+                or args.get("AbsolutePath")
+                or args.get("Query")
+                or args.get("Pattern")
+                or ""
+            )
+        elif isinstance(args, str):
+            arg_str = args[:40]
+        arg_summary = f" {arg_str[:50]}" if arg_str else ""
+        return f"[HOOK:PostToolUse] [TOOL:{tool_name}]{arg_summary} | Session:{session_id} | Status:{status} -> Backend: {{}}"
+
+    elif event_type == "Stop":
+        dec_val = decision.get("decision", "allow").upper()
+        reason = decision.get("reason", "").replace("\n", " ")
+        reason_str = f" | Reason: {reason[:100]}" if reason else ""
+        return f"[HOOK:Stop] [AUDIT] Session:{session_id} | Status:{status} -> Decision: {dec_val}{reason_str}"
+
+    return f"[HOOK:{event_type}] Session:{session_id} | Status:{status} -> Decision: {decision}"
+
+
 def get_fail_open_default(event_type: str) -> Dict[str, Any]:
     """Hardcoded fail-open default decision.
 
@@ -68,7 +99,6 @@ def relay_event_to_backend(
     the hardcoded fail-open default.
     """
     correlation_id = str(uuid.uuid4())
-    log_debug(f"Relaying {event_type} event (correlation_id={correlation_id}) to {backend_url}")
 
     # Build wrapped envelope for POST /event
     request_body = {
@@ -95,29 +125,34 @@ def relay_event_to_backend(
             if response.status == 200:
                 resp_bytes = response.read()
                 resp_json = json.loads(resp_bytes.decode("utf-8"))
-                log_debug(f"Backend response received: {resp_json}")
+                log_debug(format_hook_entry(event_type, raw_payload, resp_json, status="200_OK"))
                 return resp_json
             else:
-                log_debug(f"Backend returned non-200 status: {response.status}")
-                return get_fail_open_default(event_type)
+                default_dec = get_fail_open_default(event_type)
+                log_debug(format_hook_entry(event_type, raw_payload, default_dec, status=f"HTTP_{response.status}"))
+                return default_dec
 
     except urllib.error.HTTPError as http_err:
-        log_debug(f"HTTP error during relay: {http_err.code} {http_err.reason}")
-        return get_fail_open_default(event_type)
+        default_dec = get_fail_open_default(event_type)
+        log_debug(format_hook_entry(event_type, raw_payload, default_dec, status=f"HTTP_ERR_{http_err.code}"))
+        return default_dec
     except urllib.error.URLError as url_err:
-        log_debug(f"URL error during relay (timeout/connection): {url_err.reason}")
-        return get_fail_open_default(event_type)
+        default_dec = get_fail_open_default(event_type)
+        log_debug(format_hook_entry(event_type, raw_payload, default_dec, status=f"URL_ERR_{url_err.reason}"))
+        return default_dec
     except Exception as exc:
-        log_debug(f"Unexpected error during relay: {exc}")
-        return get_fail_open_default(event_type)
+        default_dec = get_fail_open_default(event_type)
+        log_debug(format_hook_entry(event_type, raw_payload, default_dec, status=f"EXC_{exc}"))
+        return default_dec
 
 
 def execute_hook(event_type: str, timeout_seconds: float) -> None:
     """Standard execution flow for any hook script."""
     raw_payload, err = read_stdin_json()
     if err:
-        log_debug(f"Stdin error: {err} -> using fail-open default")
-        sys.stdout.write(json.dumps(get_fail_open_default(event_type)) + "\n")
+        default_dec = get_fail_open_default(event_type)
+        log_debug(f"[HOOK:{event_type}] Stdin Error: {err} -> Fallback: {default_dec}")
+        sys.stdout.write(json.dumps(default_dec) + "\n")
         sys.stdout.flush()
         return
 

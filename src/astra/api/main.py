@@ -11,7 +11,7 @@ from astra.settings import get_settings
 def create_app() -> FastAPI:
     """Creates and configures the FastAPI application."""
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, env=settings.env)
 
     app = FastAPI(
         title="Astra Companion Agent API",
