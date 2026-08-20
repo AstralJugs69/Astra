@@ -7,7 +7,15 @@ through the full HTTP pipeline, verification cycles, and anti-loop safety bounda
 import httpx
 import pytest
 
-from astra.api.deps import get_model_provider
+from astra.api.deps import (
+    get_alternative_ranker,
+    get_bugfix_verifier,
+    get_decision_pipeline,
+    get_deep_orchestrator,
+    get_fast_assessor,
+    get_model_provider,
+    get_reasoning_critic,
+)
 from astra.api.main import app
 from astra.domain.model_ports import CostMetadata
 from astra.domain.trajectory import EpistemicPhase
@@ -46,8 +54,22 @@ def override_model_provider_for_e2e():
     """Overrides real Vertex AI provider during E2E lifecycle tests for speed and isolation."""
     mock = FastMockProvider()
     app.dependency_overrides[get_model_provider] = lambda: mock
+    get_decision_pipeline.cache_clear()
+    get_model_provider.cache_clear()
+    get_fast_assessor.cache_clear()
+    get_deep_orchestrator.cache_clear()
+    get_bugfix_verifier.cache_clear()
+    get_reasoning_critic.cache_clear()
+    get_alternative_ranker.cache_clear()
     yield
     app.dependency_overrides.pop(get_model_provider, None)
+    get_decision_pipeline.cache_clear()
+    get_model_provider.cache_clear()
+    get_fast_assessor.cache_clear()
+    get_deep_orchestrator.cache_clear()
+    get_bugfix_verifier.cache_clear()
+    get_reasoning_critic.cache_clear()
+    get_alternative_ranker.cache_clear()
 
 
 @pytest.mark.e2e
@@ -171,6 +193,7 @@ async def test_anti_loop_safety_exhaustion_e2e():
 
         # Execute forced continuations up to the configured cap
         cap = settings.max_forced_continuations_per_signature
+        interval_ms = int(settings.anti_loop_cooldown_seconds * 1000) + 2000
         for attempt in range(1, cap + 1):
             r = await client.post(
                 "/event",
@@ -178,7 +201,7 @@ async def test_anti_loop_safety_exhaustion_e2e():
                     "event_type": "Stop",
                     "correlation_id": f"c-20{attempt+1}",
                     "payload": {"conversationId": session_id, "terminationReason": "Done"},
-                    "client_timestamp_ms": 2000 + attempt * 5000,
+                    "client_timestamp_ms": 2000 + attempt * interval_ms,
                 },
                 headers=auth_header,
             )
@@ -191,7 +214,7 @@ async def test_anti_loop_safety_exhaustion_e2e():
                 "event_type": "Stop",
                 "correlation_id": f"c-20{cap+2}",
                 "payload": {"conversationId": session_id, "terminationReason": "Done"},
-                "client_timestamp_ms": 2000 + (cap + 1) * 5000,
+                "client_timestamp_ms": 2000 + (cap + 1) * interval_ms,
             },
             headers=auth_header,
         )

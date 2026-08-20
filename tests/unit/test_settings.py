@@ -13,9 +13,10 @@ def test_settings_defaults():
     assert settings.deep_model == "gemini-3.7-flash"
     assert settings.fast_timeout_seconds == 8.0
     assert settings.deep_timeout_seconds == 25.0
-    assert settings.max_forced_continuations_per_signature == 5
-    assert settings.anti_loop_cooldown_seconds == 0.0
-    assert settings.intervention_budget_per_session == 50
+    assert settings.max_forced_continuations_per_signature == 2
+    assert settings.anti_loop_cooldown_seconds == 30.0
+    assert settings.intervention_budget_per_session == 5
+    assert settings.intercept_all_reasoning is True
     assert settings.persistence_backend == "IN_MEMORY"
 
 

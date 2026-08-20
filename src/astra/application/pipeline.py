@@ -13,7 +13,7 @@ from astra.application.handle_stop import StopHookHandler
 from astra.domain.events import AstraEvent, EventType
 from astra.domain.intervention import evaluate_anti_loop_policy, record_intervention
 from astra.domain.model_ports import CostMetadata
-from astra.domain.modes import Mode, decide_mode
+from astra.domain.modes import Mode, ModeDecision, decide_mode
 from astra.domain.persistence_ports import TrajectoryStateStore
 from astra.domain.trajectory import (
     TrajectoryState,
@@ -35,11 +35,12 @@ class DecisionPipeline:
         state_store: TrajectoryStateStore,
         fast_assessor: FastTierAssessor,
         deep_orchestrator: Optional[DeepTierOrchestrator] = None,
-        max_session_interventions: int = 50,
-        max_forced_continuations_per_signature: int = 5,
-        anti_loop_cooldown_seconds: float = 0.0,
-        repeated_failures_threshold: int = 1,
-        repeated_edits_threshold: int = 2,
+        max_session_interventions: int = 5,
+        max_forced_continuations_per_signature: int = 2,
+        anti_loop_cooldown_seconds: float = 30.0,
+        repeated_failures_threshold: int = 2,
+        repeated_edits_threshold: int = 3,
+        intercept_all_reasoning: bool = False,
     ):
         self.state_store = state_store
         self.fast_assessor = fast_assessor
@@ -49,6 +50,7 @@ class DecisionPipeline:
         self.anti_loop_cooldown_seconds = anti_loop_cooldown_seconds
         self.repeated_failures_threshold = repeated_failures_threshold
         self.repeated_edits_threshold = repeated_edits_threshold
+        self.intercept_all_reasoning = intercept_all_reasoning
 
         if deep_orchestrator:
             self.stop_handler = StopHookHandler(
@@ -105,6 +107,17 @@ class DecisionPipeline:
             state=state,
             max_session_interventions=self.max_session_interventions,
         )
+
+        # If intercept_all_reasoning is enabled, promote Shadow to ASSIST for active reasoning critique
+        if self.intercept_all_reasoning and mode_decision.new_mode == Mode.SHADOW and self.deep_orchestrator:
+            mode_decision = ModeDecision(
+                current_mode=current_mode,
+                new_mode=Mode.ASSIST,
+                should_escalate=True,
+                reason="Continuous reasoning interception active: analyzing step reasoning.",
+                primary_signal=mode_decision.primary_signal,
+            )
+
         state.current_mode = mode_decision.new_mode.value
 
         decision_str = "continue"

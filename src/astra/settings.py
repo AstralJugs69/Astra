@@ -48,28 +48,35 @@ class Settings(BaseSettings):
 
     # Escalation & Anti-Loop Parameters (Experimental)
     intervention_policy: str = Field(
-        default="aggressive",
+        default="balanced",
         description="Intervention policy preset: balanced, conservative, aggressive",
     )
     max_forced_continuations_per_signature: int = Field(
-        default=5,
+        default=2,
         description="Max forced Stop continuations before surfacing to user",
     )
     anti_loop_cooldown_seconds: float = Field(
-        default=0.0,
+        default=30.0,
         description="Minimum seconds between forced interventions for same signature",
     )
     intervention_budget_per_session: int = Field(
-        default=50,
+        default=5,
         description="Maximum total interventions allowed per session",
     )
     repeated_failures_threshold: int = Field(
-        default=1,
+        default=2,
         description="Consecutive verification failures required to trigger signal",
     )
     repeated_edits_threshold: int = Field(
-        default=2,
+        default=3,
         description="Consecutive same-file edits required to trigger signal",
+    )
+
+    # Reversible Reasoning Interception
+    intercept_all_reasoning: bool = Field(
+        default=True,
+        alias="ASTRA_INTERCEPT_ALL_REASONING",
+        description="When True, Astra intercepts and critiques every reasoning/action turn",
     )
 
     # Routing Settings

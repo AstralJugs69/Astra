@@ -20,7 +20,7 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["event"])
 
-OUTER_FAST_DEADLINE_SECONDS = 8.0
+OUTER_FAST_DEADLINE_SECONDS = 30.0
 OUTER_DEEP_DEADLINE_SECONDS = 30.0
 
 

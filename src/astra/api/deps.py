@@ -137,4 +137,5 @@ def get_decision_pipeline() -> DecisionPipeline:
         anti_loop_cooldown_seconds=cfg.anti_loop_cooldown_seconds,
         repeated_failures_threshold=cfg.repeated_failures_threshold,
         repeated_edits_threshold=cfg.repeated_edits_threshold,
+        intercept_all_reasoning=cfg.intercept_all_reasoning,
     )
