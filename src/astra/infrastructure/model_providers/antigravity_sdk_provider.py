@@ -76,41 +76,48 @@ class AntigravitySdkProvider:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-        try:
-            async with asyncio.timeout(timeout_seconds):
-                response = await client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config,
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                async with asyncio.timeout(timeout_seconds):
+                    response = await client.aio.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=config,
+                    )
+
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+                raw_text = response.text or "{}"
+                parsed_data = json.loads(raw_text)
+                parsed_obj = response_schema.model_validate(parsed_data)
+
+                tokens_in = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
+                cost = CostMetadata(
+                    tier_invoked=tier,
+                    model_name=model,
+                    model_calls=1,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    latency_ms=latency_ms,
                 )
+                return parsed_obj, cost
 
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-
-            raw_text = response.text or "{}"
-            parsed_data = json.loads(raw_text)
-            parsed_obj = response_schema.model_validate(parsed_data)
-
-            tokens_in = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-            tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-
-            cost = CostMetadata(
-                tier_invoked=tier,
-                model_name=model,
-                model_calls=1,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                latency_ms=latency_ms,
-            )
-            return parsed_obj, cost
-
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning("model_call_timed_out", model=model, timeout_seconds=timeout_seconds, latency_ms=latency_ms)
-            raise TimeoutError(f"Model call to {model} timed out after {timeout_seconds}s")
-        except Exception as exc:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.error("model_call_failed", model=model, error=str(exc) or repr(exc), latency_ms=latency_ms)
-            raise
+            except asyncio.TimeoutError:
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                logger.warning("model_call_timed_out", model=model, timeout_seconds=timeout_seconds, latency_ms=latency_ms)
+                raise TimeoutError(f"Model call to {model} timed out after {timeout_seconds}s")
+            except Exception as exc:
+                is_rate_limit = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning("model_call_rate_limited_retrying", model=model, attempt=attempt + 1)
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                logger.error("model_call_failed", model=model, error=str(exc) or repr(exc), latency_ms=latency_ms)
+                raise
 
     async def generate_text(
         self,
@@ -133,38 +140,45 @@ class AntigravitySdkProvider:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-        try:
-            async with asyncio.timeout(timeout_seconds):
-                response = await client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config,
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                async with asyncio.timeout(timeout_seconds):
+                    response = await client.aio.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=config,
+                    )
+
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                text_out = response.text or ""
+
+                tokens_in = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
+                cost = CostMetadata(
+                    tier_invoked=tier,
+                    model_name=model,
+                    model_calls=1,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    latency_ms=latency_ms,
                 )
+                return text_out, cost
 
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            text_out = response.text or ""
-
-            tokens_in = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-            tokens_out = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-
-            cost = CostMetadata(
-                tier_invoked=tier,
-                model_name=model,
-                model_calls=1,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                latency_ms=latency_ms,
-            )
-            return text_out, cost
-
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning("model_call_timed_out", model=model, timeout_seconds=timeout_seconds, latency_ms=latency_ms)
-            raise TimeoutError(f"Model call to {model} timed out after {timeout_seconds}s")
-        except Exception as exc:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.error("model_call_failed", model=model, error=str(exc) or repr(exc), latency_ms=latency_ms)
-            raise
+            except asyncio.TimeoutError:
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                logger.warning("model_call_timed_out", model=model, timeout_seconds=timeout_seconds, latency_ms=latency_ms)
+                raise TimeoutError(f"Model call to {model} timed out after {timeout_seconds}s")
+            except Exception as exc:
+                is_rate_limit = "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+                if is_rate_limit and attempt < max_retries:
+                    logger.warning("model_call_rate_limited_retrying", model=model, attempt=attempt + 1)
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                logger.error("model_call_failed", model=model, error=str(exc) or repr(exc), latency_ms=latency_ms)
+                raise
 
 
 # Explicit alias matching Google GenAI SDK foundation
