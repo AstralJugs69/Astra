@@ -68,6 +68,7 @@ class AntigravitySdkProvider:
             response_mime_type="application/json",
             response_schema=response_schema,
             system_instruction=system_instruction,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         try:
@@ -123,6 +124,7 @@ class AntigravitySdkProvider:
 
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         try:

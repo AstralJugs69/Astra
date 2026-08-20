@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
     fast_model: str = Field(default="gemini-3.7-flash", description="Unified Vertex AI model for fast tier")
     deep_model: str = Field(default="gemini-3.7-flash", description="Unified Vertex AI model for deep reasoning")
-    fast_timeout_seconds: float = Field(default=4.0, description="Fast tier timeout in seconds")
-    deep_timeout_seconds: float = Field(default=12.0, description="Deep tier engine timeout in seconds")
+    fast_timeout_seconds: float = Field(default=8.0, description="Fast tier timeout in seconds")
+    deep_timeout_seconds: float = Field(default=25.0, description="Deep tier engine timeout in seconds")
 
     # Persistence Settings
     persistence_backend: str = Field(

@@ -11,8 +11,8 @@ def test_settings_defaults():
     assert settings.vertex_location == "global"
     assert settings.fast_model == "gemini-3.7-flash"
     assert settings.deep_model == "gemini-3.7-flash"
-    assert settings.fast_timeout_seconds == 4.0
-    assert settings.deep_timeout_seconds == 12.0
+    assert settings.fast_timeout_seconds == 8.0
+    assert settings.deep_timeout_seconds == 25.0
     assert settings.max_forced_continuations_per_signature == 2
     assert settings.persistence_backend == "IN_MEMORY"
 
