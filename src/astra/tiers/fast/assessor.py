@@ -72,8 +72,8 @@ class FastTierAssessor:
             return FastAssessmentResult(signals=rule_signals, cost=cost)
 
         # 2. Optional model-assisted classification for ambiguous cases
-        # Only invoke model if tool call had an error or state has repeated edits
-        if event.is_tool_failure or len(state.actions_taken) > 3:
+        # Only invoke model if tool call had a genuine failure with repeated errors
+        if event.is_tool_failure and state.failure_count >= repeated_failures_threshold:
             prompt = (
                 f"Assess the following coding agent event for reasoning or verification risks.\n"
                 f"Event Type: {event.event_type.value}\n"
