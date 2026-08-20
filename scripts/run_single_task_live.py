@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run a single benchmark task live in your terminal with real-time streaming agy output.")
     parser.add_argument("task_id", choices=list(BENCHMARK_TASKS.keys()), help="Benchmark task ID to run")
     parser.add_argument("--with-astra", action="store_true", default=False, help="Enable Astra companion hooks (default is Baseline / Astra OFF)")
+    parser.add_argument("--batch", action="store_true", default=False, help="Run non-interactively via --prompt instead of interactive -i mode")
     args = parser.parse_args()
 
     task = get_task_spec(args.task_id)
@@ -39,16 +40,26 @@ def main():
     print(f"   Workspace:  {workspace}")
     print(f"   Prompt:     {task.prompt}")
     print("=" * 80)
-    print("Streaming Antigravity CLI (agy) output below...\n")
+    print("Streaming Antigravity CLI (agy) live below...\n")
 
-    agy_cmd = shutil.which("agy") or "agy"
-    cmd = [
-        agy_cmd,
-        "--prompt", task.prompt,
-        "--dangerously-skip-permissions",
-    ]
+    agy_cmd = shutil.which("agy") or os.path.expandvars(r"%LOCALAPPDATA%\agy\bin\agy.exe")
+
+    # When running interactively in terminal, -i / --prompt-interactive opens live streaming TUI
+    if args.batch:
+        cmd = [
+            agy_cmd,
+            "--prompt", task.prompt,
+            "--dangerously-skip-permissions",
+        ]
+    else:
+        cmd = [
+            agy_cmd,
+            "-i", task.prompt,
+            "--dangerously-skip-permissions",
+        ]
 
     env = os.environ.copy()
+    env["PYTHONPATH"] = str(workspace)
     if args.with_astra:
         env["ASTRA_ENDPOINT_URL"] = "http://127.0.0.1:8080/event"
 

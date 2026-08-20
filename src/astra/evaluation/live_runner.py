@@ -80,9 +80,12 @@ class AntigravityLiveRunner:
     def run_oracle_verification(self, workspace_path: Path, oracle_cmd: str) -> Tuple[bool, str]:
         """Runs the deterministic oracle test command inside the workspace."""
         try:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(workspace_path)
             res = subprocess.run(
                 oracle_cmd,
                 cwd=str(workspace_path),
+                env=env,
                 shell=True,
                 capture_output=True,
                 text=True,
