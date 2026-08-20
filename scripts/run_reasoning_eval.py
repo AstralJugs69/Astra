@@ -5,6 +5,7 @@ step-level error localization, and critique fidelity.
 """
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -35,7 +36,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
         pass
 
 
-def evaluate_baseline(task: ReasoningTaskItem, provider) -> ReasoningEvaluationResult:
+async def evaluate_baseline(task: ReasoningTaskItem, provider) -> ReasoningEvaluationResult:
     """Evaluates task using baseline direct prompt (ProcessBench / MR-Ben format)."""
     start_time = time.time()
     steps_formatted = "\n".join(task.solution_steps)
@@ -55,10 +56,10 @@ Task:
 4. Put the first error step number (or -1 if completely correct) in \\boxed{{}}.
 """
     try:
-        response = provider.generate_text(prompt=prompt, tier="fast")
-        pred_step = extract_boxed_answer(response.content)
+        text_out, cost = await provider.generate_text(prompt=prompt, tier="fast", timeout_seconds=30.0)
+        pred_step = extract_boxed_answer(text_out)
         pred_correctness = "correct" if pred_step == -1 else "incorrect"
-        critique_text = response.content
+        critique_text = text_out
     except Exception as exc:
         critique_text = f"Error during generation: {exc}"
         pred_step = None
@@ -86,13 +87,11 @@ Task:
     )
 
 
-def evaluate_with_astra(task: ReasoningTaskItem, provider) -> ReasoningEvaluationResult:
+async def evaluate_with_astra(task: ReasoningTaskItem, provider) -> ReasoningEvaluationResult:
     """Evaluates task using Astra's ReasoningCritic and Epistemic Checkpoint Engine."""
     start_time = time.time()
-    critic = ReasoningCritic(model_provider=provider)
 
     steps_formatted = "\n".join(task.solution_steps)
-    # Feed structured step-by-step reasoning trace into Astra Reasoning Engine
     prompt = f"""[ASTRA REASONING AUDIT]
 Task: {task.question}
 Proposed Steps:
@@ -104,10 +103,10 @@ Perform fine-grained premise auditing and assumption verification:
 - If no error exists, return \\boxed{{-1}}.
 """
     try:
-        response = provider.generate_text(prompt=prompt, tier="deep")
-        pred_step = extract_boxed_answer(response.content)
+        text_out, cost = await provider.generate_text(prompt=prompt, tier="deep", timeout_seconds=30.0)
+        pred_step = extract_boxed_answer(text_out)
         pred_correctness = "correct" if pred_step == -1 else "incorrect"
-        critique_text = response.content
+        critique_text = text_out
     except Exception as exc:
         critique_text = f"Error during generation: {exc}"
         pred_step = None
@@ -153,7 +152,6 @@ def generate_reasoning_report(
     for b, a in zip(baseline_results, astra_results):
         b_step_str = str(b.predicted_first_error_step) if b.predicted_first_error_step is not None else "N/A"
         a_step_str = str(a.predicted_first_error_step) if a.predicted_first_error_step is not None else "N/A"
-        gt_step_str = str(b.predicted_first_error_step) if b.predicted_first_error_step == a.predicted_first_error_step else "Ref"
 
         lines.append(
             f"| `{b.task_id}` | {b.subject} | Baseline | Step {b_step_str} | Step {b.predicted_first_error_step or '-'} | "
@@ -184,13 +182,17 @@ def generate_reasoning_report(
     return "\n".join(lines)
 
 
-def main():
+async def main_async():
     parser = argparse.ArgumentParser(description="Run MR-Ben & ProcessBench reasoning evaluation.")
     parser.add_argument("--output", default="evaluation/reasoning_evaluation_report.md", help="Output Markdown report path")
     parser.add_argument("--mock", action="store_true", default=False, help="Run mock evaluation for fast verification")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of tasks to evaluate")
     args = parser.parse_args()
 
     tasks = list_reasoning_tasks()
+    if args.limit:
+        tasks = tasks[:args.limit]
+
     print("=" * 80)
     print(f"🧠 RUNNING OFFICIAL MR-BEN & PROCESSBENCH REASONING SUITE ({len(tasks)} Tasks)")
     print("=" * 80)
@@ -201,7 +203,7 @@ def main():
     astra_results: List[ReasoningEvaluationResult] = []
 
     for idx, task in enumerate(tasks, start=1):
-        print(f"[{idx:02d}/15] Evaluating `{task.task_id}` ({task.subject}) ...")
+        print(f"[{idx:02d}/{len(tasks)}] Evaluating `{task.task_id}` ({task.subject}) ...")
         
         if args.mock:
             # Simulated scoring for tests
@@ -230,8 +232,8 @@ def main():
                 wall_time_seconds=2.1,
             )
         else:
-            b_res = evaluate_baseline(task, provider)
-            a_res = evaluate_with_astra(task, provider)
+            b_res = await evaluate_baseline(task, provider)
+            a_res = await evaluate_with_astra(task, provider)
 
         baseline_results.append(b_res)
         astra_results.append(a_res)
@@ -243,6 +245,10 @@ def main():
 
     print(f"\nReport written to: {args.output}")
     print("\n" + report)
+
+
+def main():
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
