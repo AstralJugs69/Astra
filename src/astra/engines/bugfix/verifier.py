@@ -101,7 +101,7 @@ class BugfixVerifier(BaseEngine):
                 )
 
         except Exception as exc:
-            logger.error("bugfix_verifier_failed", error=str(exc))
+            logger.error("bugfix_verifier_failed", error=str(exc) or repr(exc))
             # Fallback on failure: Intervene and force test verification
             critique = CritiquePayload(
                 type=CritiqueType.INSUFFICIENT_VERIFICATION,

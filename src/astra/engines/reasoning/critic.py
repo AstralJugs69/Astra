@@ -112,7 +112,7 @@ class ReasoningCritic(BaseEngine):
                 )
 
         except Exception as exc:
-            logger.error("reasoning_critic_failed", error=str(exc))
+            logger.error("reasoning_critic_failed", error=str(exc) or repr(exc))
             return EngineResult(
                 engine_name="reasoning_critic",
                 verdict=EngineVerdict.CRITIQUE_ONLY,

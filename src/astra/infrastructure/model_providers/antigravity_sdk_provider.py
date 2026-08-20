@@ -72,6 +72,7 @@ class AntigravitySdkProvider:
             response_mime_type="application/json",
             response_schema=response_schema,
             system_instruction=system_instruction,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024) if "3.7" in model or "thinking" in model else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
@@ -105,10 +106,10 @@ class AntigravitySdkProvider:
         except asyncio.TimeoutError:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning("model_call_timed_out", model=model, timeout_seconds=timeout_seconds, latency_ms=latency_ms)
-            raise
+            raise TimeoutError(f"Model call to {model} timed out after {timeout_seconds}s")
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.error("model_call_failed", model=model, error=str(exc), latency_ms=latency_ms)
+            logger.error("model_call_failed", model=model, error=str(exc) or repr(exc), latency_ms=latency_ms)
             raise
 
     async def generate_text(
@@ -128,6 +129,7 @@ class AntigravitySdkProvider:
 
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024) if "3.7" in model or "thinking" in model else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
@@ -158,10 +160,10 @@ class AntigravitySdkProvider:
         except asyncio.TimeoutError:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning("model_call_timed_out", model=model, timeout_seconds=timeout_seconds, latency_ms=latency_ms)
-            raise
+            raise TimeoutError(f"Model call to {model} timed out after {timeout_seconds}s")
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.error("model_call_failed", model=model, error=str(exc), latency_ms=latency_ms)
+            logger.error("model_call_failed", model=model, error=str(exc) or repr(exc), latency_ms=latency_ms)
             raise
 
 
