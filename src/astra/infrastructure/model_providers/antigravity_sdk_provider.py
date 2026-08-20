@@ -1,4 +1,4 @@
-"""Antigravity SDK / Google GenAI ModelProvider adapter."""
+"""Google GenAI / Vertex AI ModelProvider adapter for Astra reasoning engines."""
 
 import asyncio
 import json
@@ -16,7 +16,11 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class AntigravitySdkProvider:
-    """Concrete adapter wrapping Google GenAI SDK (google-genai) with Vertex AI and API key support."""
+    """Concrete model provider adapter wrapping the official Google GenAI SDK (google-genai).
+
+    Supports Vertex AI (genai.Client(vertexai=True, project=..., location=...)) and
+    Gemini Developer API (genai.Client(api_key=...)) to serve Fast and Deep reasoning tiers.
+    """
 
     def __init__(
         self,
@@ -159,3 +163,7 @@ class AntigravitySdkProvider:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.error("model_call_failed", model=model, error=str(exc), latency_ms=latency_ms)
             raise
+
+
+# Explicit alias matching Google GenAI SDK foundation
+GoogleGenAiSdkProvider = AntigravitySdkProvider
