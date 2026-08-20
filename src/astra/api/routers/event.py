@@ -43,19 +43,13 @@ async def handle_event(
         logger.warning("event_dropped_missing_required_fields", correlation_id=corr_id)
         if "POST" in envelope.event_type.upper():
             return {}
-        # Fallback for Stop event with missing fields: force test verification
-        return {
-            "decision": "block_stop",
-            "reason": (
-                "Astra Stop Intervene: Agent is completing work without proving the fix works against test suite.\n"
-                "Required Action: Execute test verification command before terminating."
-            ),
-        }
+        # Fail-open for Stop event with missing fields: allow completion
+        return {"decision": "continue"}
 
     # 2. Determine outer timeout ceiling
     deadline = OUTER_DEEP_DEADLINE_SECONDS if event.event_type == EventType.STOP else OUTER_FAST_DEADLINE_SECONDS
 
-    # 3. Execute with fail-safe safety wrapper
+    # 3. Execute with fail-open safety wrapper
     try:
         async with asyncio.timeout(deadline):
             response_envelope = await pipeline.process_event(event)
@@ -68,25 +62,15 @@ async def handle_event(
         return stdout_json
 
     except asyncio.TimeoutError:
-        logger.error("pipeline_outer_deadline_exceeded", correlation_id=corr_id, deadline=deadline)
+        logger.error("pipeline_outer_deadline_exceeded_fail_open", correlation_id=corr_id, deadline=deadline)
         if event.event_type == EventType.POST_TOOL_USE:
             return {}
-        return {
-            "decision": "block_stop",
-            "reason": (
-                "Astra Stop Intervene: Agent is completing work without proving the fix works against test suite.\n"
-                "Required Action: Execute test verification command before terminating."
-            ),
-        }
+        # Hard fail-open: collapse to continue
+        return {"decision": "continue"}
 
     except Exception as exc:
-        logger.error("pipeline_unhandled_exception", correlation_id=corr_id, error=str(exc))
+        logger.error("pipeline_unhandled_exception_fail_open", correlation_id=corr_id, error=str(exc))
         if event.event_type == EventType.POST_TOOL_USE:
             return {}
-        return {
-            "decision": "block_stop",
-            "reason": (
-                "Astra Stop Intervene: Agent is completing work without proving the fix works against test suite.\n"
-                "Required Action: Execute test verification command before terminating."
-            ),
-        }
+        # Hard fail-open: collapse to continue
+        return {"decision": "continue"}

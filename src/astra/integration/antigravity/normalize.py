@@ -44,7 +44,7 @@ def normalize_antigravity_event(
 ) -> Tuple[Optional[AstraEvent], List[str]]:
     """Translates a raw hook envelope into a clean domain AstraEvent."""
     warnings: List[str] = []
-    now_ms = received_at_ms or int(time.time() * 1000)
+    now_ms = received_at_ms or envelope.client_timestamp_ms or int(time.time() * 1000)
 
     # 1. Parse inner payload
     raw_payload_dict = envelope.payload or {}

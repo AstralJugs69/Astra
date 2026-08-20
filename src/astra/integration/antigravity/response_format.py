@@ -40,7 +40,9 @@ def format_antigravity_stdout(
         # In Antigravity CLI, PostToolUse expects empty dict {}
         return {}
 
-    # For Stop event: only block termination when decision is explicitly block_stop
+    # For Stop event:
+    # In Antigravity CLI, to BLOCK stop and force continuation: return {"decision": "continue", "reason": "..."}
+    # To ALLOW stop (fail-open or verified): return {"decision": "allow"}
     if response.decision == "block_stop" and response.reason:
         return {
             "decision": "continue",

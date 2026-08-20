@@ -48,7 +48,7 @@ def test_post_tool_use_fail_open_when_backend_unreachable():
 
 
 def test_stop_hook_fail_open_when_backend_unreachable():
-    """When backend URL is down, Stop hook must return {'decision': 'continue'} to allow completion."""
+    """When backend URL is down, Stop hook must return {'decision': 'allow'} to allow completion."""
     payload = {
         "conversationId": "test-session-123",
         "terminationReason": "model_stop",
@@ -94,7 +94,7 @@ class MockBackendHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"decision": "block_stop", "reason": "Testing block"}).encode("utf-8"))
+            self.wfile.write(json.dumps({"decision": "continue", "reason": "Testing block"}).encode("utf-8"))
 
     def log_message(self, format, *args):
         pass  # Suppress server logging during tests
@@ -122,7 +122,7 @@ def test_hook_relays_valid_backend_response(mock_backend):
     )
     assert result.returncode == 0
     output_json = json.loads(result.stdout.strip())
-    assert output_json == {"decision": "block_stop", "reason": "Testing block"}
+    assert output_json == {"decision": "continue", "reason": "Testing block"}
 
 
 def test_hook_fails_open_on_500_backend_response(mock_backend):
