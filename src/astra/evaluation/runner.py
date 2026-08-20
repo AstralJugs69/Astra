@@ -5,6 +5,7 @@ import uuid
 from typing import Dict, List, Optional
 import structlog
 
+from astra.evaluation.live_runner import AntigravityLiveRunner
 from astra.evaluation.metrics import calculate_transcript_metrics
 from astra.evaluation.models import (
     EvaluationCondition,
@@ -23,8 +24,13 @@ logger = structlog.get_logger(__name__)
 class EvaluationRunner:
     """Runs benchmark trials under Baseline and With-Astra conditions."""
 
-    def __init__(self, store: Optional[EvaluationStore] = None):
+    def __init__(
+        self,
+        store: Optional[EvaluationStore] = None,
+        live_runner: Optional[AntigravityLiveRunner] = None,
+    ):
         self.store = store or EvaluationStore()
+        self.live_runner = live_runner or AntigravityLiveRunner()
 
     def run_mock_trial(
         self,
@@ -81,19 +87,43 @@ class EvaluationRunner:
         self.store.record_run(record)
         return record
 
-    def run_all_benchmarks(self, mock: bool = True) -> List[RunRecord]:
-        """Runs all registered 15 benchmark tasks under both conditions back-to-back."""
+    def run_trial(
+        self,
+        task: TaskSpec,
+        condition: EvaluationCondition,
+        mock: bool = False,
+    ) -> RunRecord:
+        """Executes a single trial either live via agy CLI or simulated."""
+        if mock:
+            return self.run_mock_trial(task, condition)
+        else:
+            record = self.live_runner.execute_live_trial(task, condition)
+            self.store.record_run(record)
+            return record
+
+    def run_all_benchmarks(
+        self,
+        mock: bool = False,
+        task_id_filter: Optional[str] = None,
+        difficulty_filter: Optional[TaskDifficulty] = None,
+    ) -> List[RunRecord]:
+        """Runs registered benchmark tasks under both conditions back-to-back."""
         tasks = list_benchmark_tasks()
+        if task_id_filter:
+            tasks = [t for t in tasks if t.task_id == task_id_filter]
+        if difficulty_filter:
+            tasks = [t for t in tasks if t.difficulty == difficulty_filter]
+
         results: List[RunRecord] = []
 
         for task in tasks:
-            logger.info("starting_task_evaluation", task_id=task.task_id, difficulty=task.difficulty.value)
+            logger.info("starting_task_evaluation", task_id=task.task_id, difficulty=task.difficulty.value, mock=mock)
             # Condition A: Baseline (no Astra)
-            res_baseline = self.run_mock_trial(task, condition=EvaluationCondition.BASELINE)
+            res_baseline = self.run_trial(task, condition=EvaluationCondition.BASELINE, mock=mock)
             results.append(res_baseline)
 
             # Condition B: With-Astra
-            res_astra = self.run_mock_trial(task, condition=EvaluationCondition.WITH_ASTRA)
+            res_astra = self.run_trial(task, condition=EvaluationCondition.WITH_ASTRA, mock=mock)
             results.append(res_astra)
 
         return results
