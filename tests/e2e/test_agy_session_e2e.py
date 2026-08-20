@@ -169,41 +169,30 @@ async def test_anti_loop_safety_exhaustion_e2e():
             headers=auth_header,
         )
 
-        # Stop attempt 1 -> Forced continuation
-        r1 = await client.post(
-            "/event",
-            json={
-                "event_type": "Stop",
-                "correlation_id": "c-202",
-                "payload": {"conversationId": session_id, "terminationReason": "Done"},
-                "client_timestamp_ms": 2000,
-            },
-            headers=auth_header,
-        )
-        assert r1.json().get("decision") == "continue"
+        # Execute forced continuations up to the configured cap
+        cap = settings.max_forced_continuations_per_signature
+        for attempt in range(1, cap + 1):
+            r = await client.post(
+                "/event",
+                json={
+                    "event_type": "Stop",
+                    "correlation_id": f"c-20{attempt+1}",
+                    "payload": {"conversationId": session_id, "terminationReason": "Done"},
+                    "client_timestamp_ms": 2000 + attempt * 5000,
+                },
+                headers=auth_header,
+            )
+            assert r.json().get("decision") == "continue"
 
-        # Stop attempt 2 -> Forced continuation (beyond 30s cooldown, count = 2 reached)
-        r2 = await client.post(
+        # Final Stop attempt -> Anti-loop exhaustion triggers; Astra surfaces and allows termination
+        r_final = await client.post(
             "/event",
             json={
                 "event_type": "Stop",
-                "correlation_id": "c-203",
+                "correlation_id": f"c-20{cap+2}",
                 "payload": {"conversationId": session_id, "terminationReason": "Done"},
-                "client_timestamp_ms": 35000,
+                "client_timestamp_ms": 2000 + (cap + 1) * 5000,
             },
             headers=auth_header,
         )
-        assert r2.json().get("decision") == "continue"
-
-        # Stop attempt 3 -> Anti-loop exhaustion triggers; Astra surfaces and allows termination
-        r3 = await client.post(
-            "/event",
-            json={
-                "event_type": "Stop",
-                "correlation_id": "c-204",
-                "payload": {"conversationId": session_id, "terminationReason": "Done"},
-                "client_timestamp_ms": 70000,
-            },
-            headers=auth_header,
-        )
-        assert r3.json().get("decision") == "allow"
+        assert r_final.json().get("decision") == "allow"

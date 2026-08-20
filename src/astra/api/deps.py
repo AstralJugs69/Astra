@@ -135,4 +135,6 @@ def get_decision_pipeline() -> DecisionPipeline:
         max_session_interventions=cfg.intervention_budget_per_session,
         max_forced_continuations_per_signature=cfg.max_forced_continuations_per_signature,
         anti_loop_cooldown_seconds=cfg.anti_loop_cooldown_seconds,
+        repeated_failures_threshold=cfg.repeated_failures_threshold,
+        repeated_edits_threshold=cfg.repeated_edits_threshold,
     )

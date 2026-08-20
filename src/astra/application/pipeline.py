@@ -35,9 +35,11 @@ class DecisionPipeline:
         state_store: TrajectoryStateStore,
         fast_assessor: FastTierAssessor,
         deep_orchestrator: Optional[DeepTierOrchestrator] = None,
-        max_session_interventions: int = 5,
-        max_forced_continuations_per_signature: int = 2,
-        anti_loop_cooldown_seconds: float = 30.0,
+        max_session_interventions: int = 50,
+        max_forced_continuations_per_signature: int = 5,
+        anti_loop_cooldown_seconds: float = 0.0,
+        repeated_failures_threshold: int = 1,
+        repeated_edits_threshold: int = 2,
     ):
         self.state_store = state_store
         self.fast_assessor = fast_assessor
@@ -45,6 +47,8 @@ class DecisionPipeline:
         self.max_session_interventions = max_session_interventions
         self.max_forced_continuations_per_signature = max_forced_continuations_per_signature
         self.anti_loop_cooldown_seconds = anti_loop_cooldown_seconds
+        self.repeated_failures_threshold = repeated_failures_threshold
+        self.repeated_edits_threshold = repeated_edits_threshold
 
         if deep_orchestrator:
             self.stop_handler = StopHookHandler(
@@ -69,7 +73,12 @@ class DecisionPipeline:
         state = reduce_trajectory(state, event)
 
         # 3. Fast Tier Assessment
-        assessment = await self.fast_assessor.assess(event=event, state=state)
+        assessment = await self.fast_assessor.assess(
+            event=event,
+            state=state,
+            repeated_failures_threshold=self.repeated_failures_threshold,
+            repeated_edits_threshold=self.repeated_edits_threshold,
+        )
         signals = assessment.signals
         total_cost = assessment.cost
 
