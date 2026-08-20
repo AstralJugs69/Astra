@@ -11,9 +11,12 @@ import sys
 import time
 from pathlib import Path
 
-from astra.evaluation.live_runner import AntigravityLiveRunner
+from astra.evaluation.live_runner import AntigravityLiveRunner, REPO_ROOT
 from astra.evaluation.models import EvaluationCondition
 from astra.evaluation.tasks.registry import get_task_spec, BENCHMARK_TASKS
+from dotenv import load_dotenv
+
+load_dotenv(REPO_ROOT / ".env")
 
 
 def main():

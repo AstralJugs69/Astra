@@ -23,11 +23,13 @@ from astra.evaluation.models import (
     TaskSpec,
     TrialOutcome,
 )
+from dotenv import load_dotenv
 
 logger = structlog.get_logger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 HOOKS_DIR = REPO_ROOT / "hooks"
+load_dotenv(REPO_ROOT / ".env")
 
 
 class AntigravityLiveRunner:
