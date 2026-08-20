@@ -102,11 +102,21 @@ class BugfixVerifier(BaseEngine):
 
         except Exception as exc:
             logger.error("bugfix_verifier_failed", error=str(exc))
-            # Fallback on failure
+            # Fallback on failure: Intervene and force test verification
+            critique = CritiquePayload(
+                type=CritiqueType.INSUFFICIENT_VERIFICATION,
+                severity=CritiqueSeverity.HIGH,
+                claim_under_review="Task completed",
+                supporting_observation="Unverified termination attempt.",
+                why_problematic="Agent is completing work without proving the fix works against test suite.",
+                missing_information="Execute test verification command before terminating.",
+                suggested_next_action="Run test suite to verify your changes and prove your solution works.",
+            )
             return EngineResult(
                 engine_name="bugfix_verifier",
                 verdict=EngineVerdict.NOT_VERIFIED,
-                confidence=0.5,
+                critique=critique,
+                confidence=0.8,
                 bounded_cost=CostMetadata(tier_invoked="deep", latency_ms=100),
                 routing_recommendation="return_to_main_agent",
             )
