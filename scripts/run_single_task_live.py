@@ -1,6 +1,7 @@
 """Interactive live runner for executing Antigravity CLI (agy) on a benchmark task.
 
-Streams agy tool calls, thoughts, and output directly to the console in real time.
+Streams agy tool calls, thoughts, and output directly to the console in real time,
+and automatically triggers the deterministic oracle grader upon task completion.
 """
 
 import argparse
@@ -23,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run a single benchmark task live in your terminal with real-time streaming agy output.")
     parser.add_argument("task_id", choices=list(BENCHMARK_TASKS.keys()), help="Benchmark task ID to run")
     parser.add_argument("--with-astra", action="store_true", default=False, help="Enable Astra companion hooks (default is Baseline / Astra OFF)")
-    parser.add_argument("--batch", action="store_true", default=False, help="Run non-interactively via --prompt instead of interactive -i mode")
+    parser.add_argument("--interactive", "-i", action="store_true", default=False, help="Run in interactive REPL mode (requires typing /exit to finish)")
     args = parser.parse_args()
 
     task = get_task_spec(args.task_id)
@@ -40,23 +41,8 @@ def main():
     print(f"   Workspace:  {workspace}")
     print(f"   Prompt:     {task.prompt}")
     print("=" * 80)
-    print("Streaming Antigravity CLI (agy) live below...\n")
 
     agy_cmd = shutil.which("agy") or os.path.expandvars(r"%LOCALAPPDATA%\agy\bin\agy.exe")
-
-    # When running interactively in terminal, -i / --prompt-interactive opens live streaming TUI
-    if args.batch:
-        cmd = [
-            agy_cmd,
-            "--prompt", task.prompt,
-            "--dangerously-skip-permissions",
-        ]
-    else:
-        cmd = [
-            agy_cmd,
-            "-i", task.prompt,
-            "--dangerously-skip-permissions",
-        ]
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(workspace)
@@ -64,17 +50,42 @@ def main():
         env["ASTRA_ENDPOINT_URL"] = "http://127.0.0.1:8080/event"
 
     start_time = time.time()
-    
-    # Run agy directly connected to terminal stdout/stderr for full streaming visibility
-    proc = subprocess.run(
-        cmd,
-        cwd=str(workspace),
-        env=env,
-    )
+
+    if args.interactive:
+        print("Interactive session active. Type '/exit' when finished to trigger the Oracle Grader.\n")
+        cmd = [
+            agy_cmd,
+            "-i", task.prompt,
+            "--dangerously-skip-permissions",
+        ]
+        proc = subprocess.run(cmd, cwd=str(workspace), env=env)
+        exit_code = proc.returncode
+    else:
+        print("Streaming Antigravity CLI (agy) output live in autonomous execution mode...\n")
+        cmd = [
+            agy_cmd,
+            "--print", task.prompt,
+            "--dangerously-skip-permissions",
+        ]
+        # Run with live streaming output
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(workspace),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+        proc.wait()
+        exit_code = proc.returncode
 
     elapsed_s = time.time() - start_time
     print("\n" + "=" * 80)
-    print(f"🏁 Antigravity CLI finished in {elapsed_s:.1f}s with exit code {proc.returncode}")
+    print(f"🏁 Antigravity CLI finished in {elapsed_s:.1f}s with exit code {exit_code}")
     print("=" * 80)
 
     print(f"\n🔍 Running Deterministic Oracle Grader: `{task.oracle_command}` ...")
