@@ -115,12 +115,11 @@ class AntigravityLiveRunner:
         # Find agy executable
         agy_cmd = shutil.which("agy") or "agy"
 
-        # Execute agy CLI non-interactively with YOLO auto-accept mode
+        # Execute native agy CLI non-interactively
         cmd = [
             agy_cmd,
             "--prompt", task.prompt,
-            "--yolo",
-            "--model", "gemini-3.7-flash",
+            "--dangerously-skip-permissions",
         ]
 
         env = os.environ.copy()

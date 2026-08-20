@@ -45,8 +45,7 @@ def main():
     cmd = [
         agy_cmd,
         "--prompt", task.prompt,
-        "--yolo",
-        "--model", "gemini-3.7-flash",
+        "--dangerously-skip-permissions",
     ]
 
     env = os.environ.copy()
