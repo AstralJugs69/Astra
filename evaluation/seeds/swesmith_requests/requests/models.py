@@ -25,17 +25,10 @@ class ChunkedResponseDecoder:
                     raise ProtocolError("Connection closed before end of stream")
                 chunk_len = int(line.strip(), 16)
                 if chunk_len == 0:
-                    # BUG: Zero-length trailer read without error handling
                     trailer = self.socket.readline()
                     break
                 data = self.socket.read(chunk_len)
                 self.buffer += data
                 yield data
-                # Discard CRLF
-                self.socket.read(2)
-            except ProtocolError as exc:
-                # FLAW: Re-raising raw ProtocolError without wrapping as ChunkedEncodingError
-                raise exc
-            except TimeoutError as exc:
-                # FLAW: Socket timeout during trailer read raises raw ProtocolError
-                raise ProtocolError(f"Socket timed out: {exc}")
+            except (ProtocolError, TimeoutError, OSError) as exc:
+                raise ChunkedEncodingError(str(exc), partial_bytes=self.buffer) from exc

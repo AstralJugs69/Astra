@@ -1,83 +1,59 @@
-# 📊 Astra Challenge Set — Benchmark Architecture & Specification
+# 🧠 Astra Reasoning Benchmark System — MR-Ben & ProcessBench Architecture
 
-## 1. Context & Motivation
-Traditional software repair benchmarks (e.g. raw SWE-bench or single-file synthetic bugs) fail to measure the true effectiveness of an agent companion. They either measure simple patch synthesis or contain dataset quality issues (underspecified instructions, flaky tests).
+## 1. Overview
+The evaluation harness has been transformed into a **purely process-based Meta-Reasoning Benchmark**, integrating the official datasets and scoring engines from:
+1. **MR-Ben** (JIA-Lab / ACL): Official Meta-Reasoning & System-2 Diagnostic Benchmark.
+2. **ProcessBench** (QwenLM / ACL 2025): Official Process-Level Error Localization Benchmark.
 
-The **Astra Challenge Set** is a diagnostic evaluation system built specifically to measure the **Harness $\times$ Companion Augmentation Effect**:
-$$\text{Performance} = \text{Model (Gemini 3.7 Flash)} + \text{Harness (Antigravity CLI)} + \text{Companion (Astra)}$$
-
-The benchmark curates **15 hard, long-horizon tasks** sourced across 4 leading agent evaluation ecosystems:
-1. **Terminal-Bench 2.x / 3.0**: Real Linux terminal environments, systems administration, kernel tools, network proxies, and binary repairs.
-2. **SWE-Bench Pro**: Complex, multi-file software engineering bugs across large real-world repositories (Django, SymPy, Astropy, Pytest).
-3. **Harness-Bench**: Harness-level agent interaction benchmarks evaluating async services, backpressure, distributed workers, and data leakage.
-4. **SWE-smith**: Controlled program-repair tasks from real GitHub repositories with deterministic seed states.
+Cloned Repositories:
+- `benchmarks/mr_ben/` (from `https://github.com/JIA-Lab-research/Mr-Ben`)
+- `benchmarks/process_bench/` (from `https://github.com/QwenLM/ProcessBench`)
 
 ---
 
-## 2. Epistemic Failure Modes Tested
+## 2. Benchmark Task Catalog (15 Hardest Tasks)
 
-Each task in the challenge set is engineered to trigger at least one failure mode Astra is designed to supervise:
-- ⚠️ **Premature Convergence**: Agent discovers a local symptom and attempts to stop without addressing the root cause.
-- 🔄 **Circular Thrashing (`SAME_FILE_REPEATED_EDIT`)**: Agent repeatedly edits the same file without testing alternative hypotheses.
-- 🛑 **Unverified Claims on Termination (`PREMATURE_TERMINATION`)**: Agent claims success on `Stop` without executing test verification.
-- 🔀 **Model Laziness (`MISSING_ALTERNATIVE`)**: Agent implements crude workarounds (e.g., broad `try/except: pass`, artificial sleeps, or `sys.setrecursionlimit`) instead of proper architectural fixes.
+### 💻 A. Coding Meta-Reasoning (5 Tasks from MR-Ben Coding)
+1. `mrben-coding-01`: Asynchronous LRU Cache with TTL Eviction (Flaw: `popitem(last=True)` evicting MRU instead of LRU).
+2. `mrben-coding-02`: Maximum Subarray Sum in Circular Array (Flaw: All-negative array edge-case producing invalid empty subarray).
+3. `mrben-coding-03`: Thread-Safe Singleton Pattern (Flaw: Missing second check inside critical lock section).
+4. `mrben-coding-04`: Preorder Binary Tree Serialization with Null Sentinels (Valid sound proof).
+5. `mrben-coding-05`: Kahn's Topological Sort & Cycle Detection (Flaw: `<=` condition pushing vertices to queue multiple times).
+
+### 🧩 B. Logic & Constraint Reasoning (5 Tasks from MR-Ben Logic)
+6. `mrben-logic-01`: Knights and Knaves Multi-Agent Deduction (Valid sound proof).
+7. `mrben-logic-02`: Round-Robin Tournament Win Distribution (Flaw: False contradiction claim on transitive tournaments).
+8. `mrben-logic-03`: Symmetry and Permutation Invariance in Sampling Without Replacement (Valid sound proof).
+9. `mrben-logic-04`: Syllogistic Deduction and Quantifier Fallacies (Flaw: Affirming the consequent).
+10. `mrben-logic-05`: Optimal Ternary Weighings for Counterfeit Coin Identification (Valid sound proof).
+
+### 📐 C. Olympiad Mathematical Process Reasoning (5 Tasks from ProcessBench)
+11. `processbench-olympiad-01`: Algebraic Nested Radical Equation (Flaw: Dropping absolute values yielding single point instead of interval $[5, 10]$).
+12. `processbench-olympiad-02`: Prime Number Form $2^p + p^2$ (Valid sound proof using mod 3 residues).
+13. `processbench-olympiad-03`: Infinite Telescoping Product Convergence (Valid sound derivation).
+14. `processbench-olympiad-04`: Constrained Quadratic Minimization (Valid sound derivation).
+15. `processbench-olympiad-05`: Diophantine Difference of Squares Parity Obstruction (Valid sound proof).
 
 ---
 
-## 3. Challenge Set Structure (15 Tasks Across 3 Difficulty Tiers)
+## 3. Official Scoring Rubric & Metrics
 
+The official MR-Ben scoring engine grades model outputs along three axes:
+1. **Classification Accuracy**: Binary match on whether the multi-step trace is sound (`correct`) or contains a flaw (`incorrect`).
+2. **Earliest Error Step Localization**: Exact integer match on the earliest 0-indexed paragraph index where reasoning diverged.
+3. **Composite Meta-Reasoning Score (MR-Score)**:
+   - **`1.0`**: Identified correctness and localized the exact earliest faulty step.
+   - **`0.5`**: Identified that an error exists, but localized the wrong step.
+   - **`0.0`**: Misclassified correctness.
+
+---
+
+## 4. Running the Benchmark
+
+```bash
+# Run the 15-task reasoning benchmark suite
+python scripts/run_reasoning_eval.py
+
+# Fast dry-run / unit verification
+python scripts/run_reasoning_eval.py --mock
 ```
-                       ASTRA 15-TASK CHALLENGE SET
- ┌────────────────────────────────────────────────────────────────────────┐
- │ 🟢 TIER A: HARD (5 Tasks)                                              │
- │   1. tb-git-bisect-merge-conflict          (Terminal-Bench 2.0)        │
- │   2. swesmith-requests-chunked-close       (SWE-smith)                 │
- │   3. hb-fastapi-lifespan-deadlock          (Harness-Bench)             │
- │   4. swe-pytest-async-fixture-teardown     (SWE-Bench Pro)             │
- │   5. tb-nginx-reverse-proxy-ssl            (Terminal-Bench 2.0)        │
- ├────────────────────────────────────────────────────────────────────────┤
- │ 🟡 TIER B: VERY HARD (5 Tasks)                                         │
- │   6. swe-django-query-prefetch-cache       (SWE-Bench Pro)             │
- │   7. hb-ml-pipeline-feature-leakage        (Harness-Bench)             │
- │   8. swesmith-pandas-multiindex-sort       (SWE-smith)                 │
- │   9. tb-docker-multistage-caching          (Terminal-Bench 2.0)        │
- │  10. swe-sympy-matrix-branching-eval       (SWE-Bench Pro)             │
- ├────────────────────────────────────────────────────────────────────────┤
- │ 🔴 TIER C: EXTREME (5 Tasks)                                           │
- │  11. tb-sqlite-corrupt-btree-repair        (Terminal-Bench 3.0)        │
- │  12. hb-grpc-streaming-backpressure        (Harness-Bench)             │
- │  13. swe-astropy-fits-header-endianness    (SWE-Bench Pro)             │
- │  14. hb-distributed-worker-memory-leak     (Harness-Bench)             │
- │  15. tb-kernel-ebpf-filter-compilation     (Terminal-Bench 2.0)        │
- └────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 4. Evaluation Protocol & Metrics
-
-### 4.1 Paired Conditions
-Each task is executed under two identical, isolated conditions:
-- **Condition A (Baseline)**: Native Antigravity CLI (`agy`) without Astra hooks (`hooks.json` absent).
-- **Condition B (With-Astra)**: Antigravity CLI (`agy`) supervised by Astra companion daemon (`hooks.json` active).
-
-### 4.2 Primary Ground-Truth Metric: Turns-to-Fix ($T$)
-Measured strictly from Antigravity's `.jsonl` transcript step boundaries. $T$ is defined as the turn index after which the oracle verification suite passes with exit code 0 and remains 0.
-
-$$\text{Turn Reduction (\%)} = \frac{\bar{T}_{\text{baseline}} - \bar{T}_{\text{with\_astra}}}{\bar{T}_{\text{baseline}}} \times 100\%$$
-
-### 4.3 Secondary Metrics
-- **Verification Failure Rate**: Number of failing tests executed before resolution.
-- **Unverified Termination Attempts**: Number of times the agent attempted to exit before running tests.
-- **Astra Interventions**: Count of `ASSIST` suggestions and `INTERVENE` forced continuations.
-- **Anti-Loop Safety**: Validates that no task exceeds the configured forced continuation cap (max 2 per signature).
-- **Token & Latency Cost**: Sum of tokens consumed by Fast and Deep tiers.
-
----
-
-## 5. Deterministic Grading Architecture
-
-Every task defines three programmatic test gates:
-1. **Pre-condition Failure Gate**: Verifies the task workspace is broken before the agent starts.
-2. **Oracle Acceptance Command**: Automated pytest/bash test asserting correctness of the fix.
-3. **Hidden Regression Gate**: Hidden test suite ensuring adjacent functionality was not broken or mocked out.

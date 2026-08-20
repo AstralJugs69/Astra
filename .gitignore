@@ -46,5 +46,6 @@ Thumbs.db
 
 # Evaluation runs & local stores
 evaluation/runs/
+evaluation/workspaces/
 *.sqlite
 hook_events.log

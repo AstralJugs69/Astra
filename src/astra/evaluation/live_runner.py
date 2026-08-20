@@ -81,7 +81,7 @@ class AntigravityLiveRunner:
         """Runs the deterministic oracle test command inside the workspace."""
         try:
             env = os.environ.copy()
-            env["PYTHONPATH"] = str(workspace_path)
+            env["PYTHONPATH"] = str(Path(workspace_path).resolve())
             res = subprocess.run(
                 oracle_cmd,
                 cwd=str(workspace_path),
