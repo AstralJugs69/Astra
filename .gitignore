@@ -41,13 +41,10 @@ htmlcov/
 .idea/
 *.swp
 *.swo
-.DS_Store
+*.DS_Store
 Thumbs.db
 
-# Evaluation runtime store (ignore sqlite database and temp run artifacts)
+# Evaluation runs & local stores
 evaluation/runs/
 *.sqlite
-*.sqlite3
-
-# Local runtime logs
 hook_events.log

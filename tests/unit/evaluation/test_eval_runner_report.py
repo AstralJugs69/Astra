@@ -13,7 +13,7 @@ def test_runner_and_report_generation(tmp_path):
     assert len(runs) >= 4  # Baseline + With-Astra for each task
 
     report = generate_comparative_report(store)
-    assert "Astra POC — Benchmark Evaluation Report" in report
+    assert "Astra Challenge Set" in report
     assert "With-Astra" in report
     assert "Baseline" in report
     assert "Turn Reduction" in report

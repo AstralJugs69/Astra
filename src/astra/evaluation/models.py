@@ -1,4 +1,4 @@
-"""Evaluation harness data models per Section 31.4 and docs/evaluation-architecture.md."""
+"""Evaluation harness data models for the Astra Challenge Set."""
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -7,15 +7,30 @@ from pydantic import BaseModel, Field
 from astra.domain.model_ports import CostMetadata
 
 
+class TaskDifficulty(str, Enum):
+    TIER_A_HARD = "Tier A - Hard"
+    TIER_B_VERY_HARD = "Tier B - Very Hard"
+    TIER_C_EXTREME = "Tier C - Extreme"
+
+
+class BenchmarkSource(str, Enum):
+    TERMINAL_BENCH = "Terminal-Bench"
+    SWE_BENCH_PRO = "SWE-Bench Pro"
+    HARNESS_BENCH = "Harness-Bench"
+    SWE_SMITH = "SWE-smith"
+
+
 class TaskCategory(str, Enum):
-    REPRODUCIBLE_BUG = "reproducible_bug"
-    SWEBENCH = "swebench"
-    ZINDI = "zindi"
+    DEVOPS_SYSTEMS = "devops_systems"
+    NETWORKING_ASYNC = "networking_async"
+    DATA_PROCESSING_ML = "data_processing_ml"
+    CORE_SOFTWARE_REPAIR = "core_software_repair"
+    STORAGE_SYSTEMS = "storage_systems"
 
 
 class EvaluationCondition(str, Enum):
-    BASELINE = "baseline"        # Astra hooks absent
-    WITH_ASTRA = "with_astra"    # Normal production Astra hooks active
+    BASELINE = "baseline"  # No hooks.json active
+    WITH_ASTRA = "with_astra"  # Astra hooks active
 
 
 class TrialOutcome(str, Enum):
@@ -29,38 +44,40 @@ class SecondaryMetrics(BaseModel):
 
     failed_verification_attempts: int = 0
     time_to_fix_seconds: float = 0.0
-    total_tool_calls: int = 0
     unnecessary_changes: int = 0
     astra_interventions: int = 0
-    astra_assists: int = 0
-    blocked_stop_events: int = 0
-    fast_model_calls: int = 0
-    deep_model_calls: int = 0
     model_cost: CostMetadata = Field(default_factory=CostMetadata)
 
 
 class TaskSpec(BaseModel):
-    """Specification of a benchmark-neutral evaluation task."""
+    """Specification of an Astra Challenge Set benchmark task."""
 
     task_id: str
-    category: TaskCategory
+    source: BenchmarkSource = BenchmarkSource.TERMINAL_BENCH
+    difficulty: TaskDifficulty = TaskDifficulty.TIER_A_HARD
+    category: TaskCategory = TaskCategory.CORE_SOFTWARE_REPAIR
     workspace_seed_ref: str
     prompt: str
-    verification_command: str
-    max_turns: int = 15
-    instance_id: Optional[str] = None
-    repo: Optional[str] = None
-    base_commit: Optional[str] = None
+    target_failure_mode: str
+    oracle_command: str
+    precondition_command: Optional[str] = None
+    hidden_test_command: Optional[str] = None
+    max_turns: int = 20
+    condition: EvaluationCondition = EvaluationCondition.BASELINE
+
+    @property
+    def verification_command(self) -> str:
+        return self.oracle_command
 
 
 class RunRecord(BaseModel):
     """Immutable record of an evaluation trial."""
 
     run_id: str
-    pair_id: str = Field(default="", description="Identifier grouping paired Baseline and With-Astra runs")
     task_id: str
     condition: EvaluationCondition
-    benchmark_name: str = "astra_benchmark"
+    difficulty: TaskDifficulty = TaskDifficulty.TIER_A_HARD
+    source: BenchmarkSource = BenchmarkSource.TERMINAL_BENCH
     antigravity_version: str = "agy-v1"
     main_agent_model_version: str = "gemini-3.7-flash"
     started_at: int
@@ -69,19 +86,3 @@ class RunRecord(BaseModel):
     outcome: TrialOutcome
     invalid_reason: Optional[str] = None
     secondary_metrics: SecondaryMetrics = Field(default_factory=SecondaryMetrics)
-    patch: Optional[str] = None
-
-
-class RunManifest(BaseModel):
-    """Immutable manifest for an evaluation trial pair."""
-
-    pair_id: str
-    task_id: str
-    baseline_run_id: str
-    with_astra_run_id: str
-    benchmark_name: str
-    started_at: int
-    finished_at: int
-    delta_turns: Optional[int] = None
-    delta_time_seconds: Optional[float] = None
-    efficiency_gain_pct: Optional[float] = None

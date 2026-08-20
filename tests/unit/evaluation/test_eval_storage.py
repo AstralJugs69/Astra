@@ -9,7 +9,6 @@ def test_eval_store_records_and_lists_runs(tmp_path):
     store = EvaluationStore(runs_dir=tmp_path)
     record = RunRecord(
         run_id="run-001",
-        pair_id="pair-001",
         task_id="task-bug-1",
         condition=EvaluationCondition.BASELINE,
         started_at=1000,
