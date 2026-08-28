@@ -33,3 +33,13 @@ def test_dependency_lock_is_committed_input_for_the_recipe() -> None:
     assert 'name = "braille-errata-relay"' in lock_text
     assert 'name = "google-adk"' in lock_text
     assert 'name = "liblouis"' not in lock_text
+
+
+def test_container_recipe_pins_external_build_inputs() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "FROM python:3.12-slim@sha256:" in dockerfile
+    assert "ghcr.io/astral-sh/uv:0.6.8@sha256:" in dockerfile
+    assert "ARG LIBLOUIS_COMMIT=07c61e58cfb8814f6842c7212063f829288638c1" in dockerfile
+    assert 'test "$(git rev-parse HEAD)" = "${LIBLOUIS_COMMIT}"' in dockerfile
+    assert "--enable-python-bindings" not in dockerfile

@@ -15,9 +15,12 @@ from relay_bridge.cups_observer import ReadOnlyCupsObserver
 
 class _FakeConnection:
     calls: ClassVar[list[str]] = []
+    host: ClassVar[str] = ""
+    port: ClassVar[int] = 0
 
-    def __init__(self, *, server: str) -> None:
-        self.server = server
+    def __init__(self, *, host: str, port: int) -> None:
+        self.__class__.host = host
+        self.__class__.port = port
         self.__class__.calls = []
 
     def getJobs(self, **kwargs: Any) -> dict[int, dict[str, Any]]:
@@ -39,6 +42,10 @@ class _FakeConnection:
                 "printer-name": "other-queue",
                 "job-state": 3,
             },
+            44: {
+                "job-name": "destinationless",
+                "job-state": 3,
+            },
         }
 
     def getPrinterAttributes(self, queue_name: str, **kwargs: Any) -> dict[str, Any]:
@@ -57,6 +64,12 @@ class _FakeConnection:
 
     def getJobAttributes(self, scheduler_job_id: int) -> dict[str, Any]:
         self.__class__.calls.append("getJobAttributes")
+        if scheduler_job_id == 43:
+            return {
+                "job-name": "foreign",
+                "printer-name": "other-queue",
+                "job-state": 3,
+            }
         assert scheduler_job_id == 42
         return {
             "job-originating-user-name": "relay-operator",
@@ -84,11 +97,16 @@ def test_observer_emits_only_normalized_get_operation_data(monkeypatch: pytest.M
     }
     assert "attributes" not in snapshot
     assert "attributes" not in repr(snapshot)
+    assert _FakeConnection.host == "localhost"
+    assert _FakeConnection.port == 631
     assert _FakeConnection.calls == ["getJobs", "getPrinterAttributes"]
 
     job = observer.job_snapshot(42)
     assert job["state"] == "COMPLETED"
     assert _FakeConnection.calls == ["getJobs", "getPrinterAttributes", "getJobAttributes"]
+
+    with pytest.raises(ValueError, match="does not match configured queue"):
+        observer.job_snapshot(43)
 
 
 def test_observation_builder_rejects_mixed_observation_timestamps() -> None:

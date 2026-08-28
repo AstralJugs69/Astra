@@ -54,3 +54,14 @@ def test_backend_derives_numeric_job_path_and_preserves_capture(tmp_path: Path) 
             cells_per_line=4,
             lines_per_page=2,
         )
+
+
+def test_capture_journal_rejects_tampered_event(tmp_path: Path) -> None:
+    journal_path = tmp_path / "events.jsonl"
+    journal = backend.CaptureJournal(journal_path)
+    journal.append("ACCEPTED", {"scheduler_job_id": 42})
+    original = journal_path.read_text(encoding="utf-8")
+    journal_path.write_text(original.replace('"ACCEPTED"', '"TAMPERED"', 1), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash mismatch"):
+        backend.verify_event_chain(journal_path)

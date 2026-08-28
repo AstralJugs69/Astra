@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from braille_errata_relay.domain.models import (
+    BlockingReason,
     BrailleImpact,
     ChangeKind,
     Confidence,
@@ -29,18 +30,26 @@ from braille_errata_relay.domain.state_machine import (
 )
 
 
-def assessment() -> SemanticAssessment:
+def assessment(
+    *,
+    materiality: Materiality = Materiality.MATERIAL,
+    confidence: Confidence = Confidence.HIGH,
+    requires_professional_review: bool = False,
+    uncertainties: tuple[str, ...] = (),
+) -> SemanticAssessment:
     return SemanticAssessment(
         assessment_id="a" * 64,
         analysis_revision=1,
         model_id="test-model",
         prompt_version="semantic-assessment.v1",
-        materiality=Materiality.MATERIAL,
+        materiality=materiality,
         change_kind=ChangeKind.FACTUAL_CORRECTION,
         summary="A fact changed.",
         rationale=("The changed term has a different referent.",),
         evidence_span_ids=("old:block-000002", "new:block-000002"),
-        confidence=Confidence.HIGH,
+        uncertainties=uncertainties,
+        confidence=confidence,
+        requires_professional_review=requires_professional_review,
     )
 
 
@@ -149,13 +158,13 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
                 observation(observed_at=now).observations[0],
                 observation(observed_at=now)
                 .observations[0]
-                .model_copy(update={"scheduler_job_id": 43}),
+                .model_copy(update={"scheduler_job_id": 42}),
             )
         }
     )
     ambiguous = assess_site_evidence(
         site_observation=ambiguous_observation,
-        expected_job_id=None,
+        expected_job_id=42,
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
@@ -185,13 +194,80 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
             impact=impact(),
             job_state=JobState.PROCESSING,
             site_observation=site,
-            expected_job_id=42 if evidence is not ambiguous else None,
+            expected_job_id=42,
             expected_queue_name="queue",
             now=now,
             max_age_seconds=15,
         )
         assert result.precise_containment is False
         assert HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION not in result.steps
+
+
+def test_missing_lineage_never_selects_the_only_observed_job() -> None:
+    now = datetime(2026, 8, 28, 17, 0, tzinfo=UTC)
+    only_job = observation(observed_at=now)
+
+    missing_job_id = assess_site_evidence(
+        site_observation=only_job,
+        expected_job_id=None,
+        expected_queue_name="queue",
+        now=now,
+        max_age_seconds=15,
+    )
+    missing_queue = assess_site_evidence(
+        site_observation=only_job,
+        expected_job_id=42,
+        expected_queue_name=None,
+        now=now,
+        max_age_seconds=15,
+    )
+
+    assert missing_job_id.status == SiteEvidenceStatus.MISSING
+    assert missing_job_id.blocking_reason == BlockingReason.MISSING_LINEAGE
+    assert missing_queue.status == SiteEvidenceStatus.MISSING
+    assert missing_queue.blocking_reason == BlockingReason.MISSING_LINEAGE
+
+    result = containment_recommendation(
+        assessment=assessment(),
+        impact=impact(),
+        job_state=JobState.PROCESSING,
+        site_observation=only_job,
+        expected_job_id=None,
+        expected_queue_name="queue",
+        now=now,
+        max_age_seconds=15,
+    )
+    assert result.precise_containment is False
+    assert result.blocking_reason == BlockingReason.MISSING_LINEAGE
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"materiality": Materiality.NOT_MATERIAL},
+        {"confidence": Confidence.MEDIUM},
+        {"requires_professional_review": True},
+        {"uncertainties": ("the source context is incomplete",)},
+    ],
+    ids=("not-material", "below-threshold", "professional-review", "uncertainty"),
+)
+def test_semantic_review_conditions_fail_closed(overrides: dict[str, object]) -> None:
+    now = datetime(2026, 8, 28, 17, 0, tzinfo=UTC)
+    result = containment_recommendation(
+        assessment=assessment(**overrides),
+        impact=impact(),
+        job_state=JobState.PROCESSING,
+        site_observation=observation(observed_at=now),
+        expected_job_id=42,
+        expected_queue_name="queue",
+        now=now,
+        max_age_seconds=15,
+    )
+
+    assert result.precise_containment is False
+    assert result.blocking_reason == BlockingReason.SEMANTIC_REVIEW_REQUIRED
+    assert HumanStep.QUALIFIED_PROOF_REQUIRED in result.steps
+    assert HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION not in result.steps
 
 
 def test_fresh_attributable_evidence_can_describe_a_human_step() -> None:

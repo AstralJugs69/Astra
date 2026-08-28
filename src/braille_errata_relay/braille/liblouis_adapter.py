@@ -61,8 +61,6 @@ class LiblouisAdapter:
         mode = int(self._louis.dotsIO) | int(self._louis.ucBrl)
         try:
             translated = self._louis.translateString([root_table], text, mode=mode)
-        except TypeError:
-            translated = self._louis.translateString([root_table], text, mode)
         except Exception as exc:  # pragma: no cover - exact exception is binding-specific
             raise TranslationError("Liblouis translation failed") from exc
         return _require_unicode_six_dot_cells(translated)

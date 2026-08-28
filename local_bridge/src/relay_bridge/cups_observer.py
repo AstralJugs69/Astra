@@ -110,6 +110,29 @@ def _as_timestamp(value: Any) -> str | None:
     return parsed.astimezone(UTC).isoformat()
 
 
+def _parse_server(server: str) -> tuple[str, int]:
+    value = server.strip()
+    if not value:
+        raise ValueError("CUPS server must not be empty")
+    if value.startswith("["):
+        closing = value.find("]")
+        if closing < 0:
+            raise ValueError("CUPS IPv6 server is missing its closing bracket")
+        host = value[1:closing]
+        port_text = value[closing + 1 :]
+        port_text = port_text.removeprefix(":")
+    else:
+        host, separator, port_text = value.rpartition(":")
+        if not separator:
+            host, port_text = value, "631"
+    if not host or not port_text.isdigit():
+        raise ValueError("CUPS server must be host[:port]")
+    port = int(port_text)
+    if not 1 <= port <= 65535:
+        raise ValueError("CUPS port must be between 1 and 65535")
+    return host, port
+
+
 def _normalize_job_state(value: Any) -> str:
     try:
         return _JOB_STATE_NAMES.get(int(value), "UNKNOWN")
@@ -124,14 +147,16 @@ def _normalize_printer_state(value: Any) -> str:
         return "unknown"
 
 
-def _normalize_destination(attributes: dict[str, Any], queue_name: str) -> str:
+def _normalize_destination(attributes: dict[str, Any]) -> str:
     value = attributes.get("printer-name")
     if value is None:
         value = attributes.get("job-printer-uri")
-    destination = _as_text(value, queue_name)
+    destination = _as_text(value, "")
     if "/printers/" in destination:
         destination = destination.rsplit("/printers/", 1)[1].split("/", 1)[0]
-    return destination or queue_name
+    if not destination:
+        raise ValueError("CUPS job destination is missing")
+    return destination
 
 
 def normalize_job_attributes(
@@ -150,7 +175,7 @@ def normalize_job_attributes(
             "unknown",
         ),
         "title": _as_text(attributes.get("job-name"), "unknown"),
-        "destination": _normalize_destination(attributes, queue_name),
+        "destination": _normalize_destination(attributes),
         "state": _normalize_job_state(attributes.get("job-state")),
         "state_reasons": _as_reasons(attributes.get("job-state-reasons")),
         "observed_at": observed_at,
@@ -179,7 +204,8 @@ class ReadOnlyCupsObserver:
             import cups  # type: ignore[import-not-found]
         except ImportError as exc:
             raise CupsObserverUnavailable("pycups is required in the WSL bridge") from exc
-        self._connection = cups.Connection(server=server)
+        host, port = _parse_server(server)
+        self._connection = cups.Connection(host=host, port=port)
         self._queue_name = queue_name
 
     def queue_snapshot(self) -> dict[str, Any]:
@@ -222,16 +248,22 @@ class ReadOnlyCupsObserver:
             raise ValueError("scheduler job ID must be positive")
         observed_at = datetime.now(UTC).isoformat()
         attributes = dict(self._connection.getJobAttributes(scheduler_job_id))
-        return normalize_job_attributes(
+        normalized = normalize_job_attributes(
             scheduler_job_id,
             attributes,
             queue_name=self._queue_name,
             observed_at=observed_at,
         )
+        if normalized["destination"] != self._queue_name:
+            raise ValueError("CUPS job destination does not match configured queue")
+        return normalized
 
     def _is_configured_queue(self, attributes: dict[str, Any]) -> bool:
         destination = attributes.get("printer-name") or attributes.get("job-printer-uri")
         if destination is None:
-            return True
-        normalized = _normalize_destination(attributes, self._queue_name)
+            return False
+        try:
+            normalized = _normalize_destination(attributes)
+        except ValueError:
+            return False
         return normalized == self._queue_name

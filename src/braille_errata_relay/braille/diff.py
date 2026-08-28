@@ -16,7 +16,14 @@ def diff_sources(old: NormalizedSource, new: NormalizedSource) -> SourceDiff:
         for block_id in ordered_ids
         if block_id not in old_by_id
         or block_id not in new_by_id
-        or old_by_id[block_id] != new_by_id[block_id]
+        or (
+            old_by_id[block_id].kind,
+            old_by_id[block_id].text,
+        )
+        != (
+            new_by_id[block_id].kind,
+            new_by_id[block_id].text,
+        )
     )
     changed_set = set(changed_ids)
     old_changed = tuple(block for block in old.blocks if block.block_id in changed_set)

@@ -22,6 +22,37 @@ def test_changed_block_has_stable_section_id_and_bounded_evidence() -> None:
     assert evidence_span_ids(source_diff) == ("old:block-000002", "new:block-000002")
 
 
+def test_inserting_a_paragraph_does_not_change_later_stable_blocks() -> None:
+    old = normalize_source_bytes(
+        b"# Biology\n\nThe nucleus stores DNA.\n\nThe cell divides.\n",
+        document_id="x",
+    )
+    new = normalize_source_bytes(
+        b"# Biology\n\nAn inserted note.\n\nThe nucleus stores DNA.\n\nThe cell divides.\n",
+        document_id="x",
+        previous=old,
+    )
+
+    assert [block.block_id for block in new.blocks] == [
+        "block-000001",
+        "block-000004",
+        "block-000002",
+        "block-000003",
+    ]
+    source_diff = diff_sources(old, new)
+    assert source_diff.changed_block_ids == ("block-000004",)
+    assert source_diff.old_blocks == ()
+    assert [block.block_id for block in source_diff.new_blocks] == ["block-000004"]
+
+
+def test_normalized_source_hash_includes_block_kind() -> None:
+    heading = normalize_source_bytes(b"# Title\n", document_id="heading")
+    paragraph = normalize_source_bytes(b"Title\n", document_id="paragraph")
+
+    assert heading.normalized_text == paragraph.normalized_text == "Title"
+    assert heading.normalized_source_sha256 != paragraph.normalized_source_sha256
+
+
 @pytest.mark.parametrize(
     "raw",
     [

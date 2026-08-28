@@ -56,3 +56,23 @@ def test_liblouis_binding_without_unicode_flags_fails_closed() -> None:
 
     with pytest.raises(TranslationError, match="Unicode six-dot output flags"):
         LiblouisAdapter(NoUnicodeFlags()).translate("text", profile())
+
+
+def test_liblouis_does_not_fallback_to_a_positional_mode_argument() -> None:
+    class KeywordOnlyFailure:
+        dotsIO = 1
+        ucBrl = 2
+        __version__ = "3.38.0"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def translateString(self, _tables: list[str], _text: str, **kwargs: int) -> str:
+            self.calls += 1
+            assert kwargs == {"mode": 3}
+            raise TypeError("simulated binding API failure")
+
+    binding = KeywordOnlyFailure()
+    with pytest.raises(TranslationError, match="translation failed"):
+        LiblouisAdapter(binding).translate("text", profile())
+    assert binding.calls == 1

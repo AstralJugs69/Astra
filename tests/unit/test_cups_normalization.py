@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "local_bridge" / "src"))
 
@@ -42,6 +44,16 @@ def test_cups_job_attributes_are_normalized_without_raw_fields() -> None:
         "impressions_completed": 3,
     }
     assert "attributes" not in result
+
+
+def test_cups_job_without_destination_fails_closed() -> None:
+    with pytest.raises(ValueError, match="destination is missing"):
+        normalize_job_attributes(
+            44,
+            {"job-name": "destinationless", "job-state": 3},
+            queue_name="Braille-Embosser-Sim",
+            observed_at="2026-08-28T17:00:00+00:00",
+        )
 
 
 def test_cups_printer_attributes_keep_unknown_acceptance_explicit() -> None:

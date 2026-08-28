@@ -6,6 +6,7 @@ import hashlib
 import unicodedata
 from difflib import SequenceMatcher
 
+from braille_errata_relay.contracts.canonical_json import canonical_json_bytes
 from braille_errata_relay.domain.models import NormalizedSource, SourceBlock
 
 from .errors import UnsupportedContentError
@@ -100,7 +101,8 @@ def normalize_source_bytes(
     parsed_blocks = parse_markdown(canonical_text)
     blocks = _carry_block_ids(previous, parsed_blocks) if previous is not None else parsed_blocks
     block_text = "\n\n".join(block.text for block in blocks)
-    digest = hashlib.sha256(block_text.encode("utf-8")).hexdigest()
+    canonical_blocks = [{"kind": block.kind.value, "text": block.text} for block in blocks]
+    digest = hashlib.sha256(canonical_json_bytes(canonical_blocks)).hexdigest()
     return NormalizedSource(
         document_id=document_id,
         blocks=blocks,
