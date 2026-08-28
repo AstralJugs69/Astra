@@ -23,4 +23,3 @@ class LiblouisUnavailableError(BraillePipelineError):
 
 class TranslationError(BraillePipelineError):
     """Liblouis returned an invalid or incomplete result."""
-

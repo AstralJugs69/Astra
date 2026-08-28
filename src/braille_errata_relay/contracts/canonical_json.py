@@ -13,7 +13,7 @@ def _default(value: Any) -> str:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     if isinstance(value, Enum):
-        return value.value
+        return str(value.value)
     raise TypeError(f"unsupported canonical JSON value: {type(value)!r}")
 
 
@@ -29,4 +29,3 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
-

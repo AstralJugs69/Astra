@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 from braille_errata_relay.braille.brf import (
+    BRF_TO_DOTS,
     page_hashes,
     serialize_pages,
     split_exact_brf,
@@ -27,9 +28,14 @@ def small_profile() -> TranslationProfile:
     )
 
 
+def unicode_cells(value: str) -> str:
+    inverse = {char: chr(0x2800 + pattern) for pattern, char in BRF_TO_DOTS.items()}
+    return "".join(inverse[char] for char in value)
+
+
 def make_brf(rows: tuple[tuple[str, str], ...], profile: TranslationProfile) -> bytes:
     pages = tuple(
-        BraillePage(index + 1, tuple(FormattedLine(row, ()) for row in page_rows))
+        BraillePage(index + 1, tuple(FormattedLine(unicode_cells(row), ()) for row in page_rows))
         for index, page_rows in enumerate(rows)
     )
     return serialize_pages(pages, profile)
@@ -61,4 +67,3 @@ def test_page_impact_uses_equal_prefix_and_suffix_only() -> None:
     assert result.impact.new_page_range.as_tuple() == (2, 2)
     assert result.impact.resynchronized_after_page == 2
     assert result.impact.pages_changed is True
-

@@ -3,7 +3,21 @@
   "$id": "site-observation.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "observation_id", "site_id", "bridge_id", "queue_name", "sequence", "observed_at", "observations", "printer_state", "printer_state_reasons", "source"],
+  "required": [
+    "schema_version",
+    "observation_id",
+    "site_id",
+    "bridge_id",
+    "queue_name",
+    "sequence",
+    "observed_at",
+    "observations",
+    "printer_state",
+    "printer_state_reasons",
+    "printer_accepting_jobs",
+    "previous_observation_sha256",
+    "source"
+  ],
   "properties": {
     "schema_version": {"const": "site-observation.v1"},
     "observation_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -12,10 +26,69 @@
     "queue_name": {"type": "string", "minLength": 1},
     "sequence": {"type": "integer", "minimum": 1},
     "observed_at": {"type": "string", "format": "date-time"},
-    "observations": {"type": "array"},
-    "printer_state": {"type": "string"},
-    "printer_state_reasons": {"type": "array", "items": {"type": "string"}},
-    "previous_observation_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "observations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/queue_observation"}
+    },
+    "printer_state": {"enum": ["idle", "processing", "stopped", "unknown"]},
+    "printer_state_reasons": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "printer_accepting_jobs": {"type": ["boolean", "null"]},
+    "previous_observation_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "source": {"const": "cups_read_only_observer"}
+  },
+  "$defs": {
+    "queue_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scheduler_job_id",
+        "owner",
+        "title",
+        "destination",
+        "state",
+        "state_reasons",
+        "observed_at",
+        "job_created_at",
+        "processing_at",
+        "completed_at",
+        "impressions_completed"
+      ],
+      "properties": {
+        "scheduler_job_id": {"type": "integer", "minimum": 1},
+        "owner": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "destination": {"type": "string", "minLength": 1},
+        "state": {
+          "enum": [
+            "PENDING",
+            "PENDING_HELD",
+            "PROCESSING",
+            "PROCESSING_STOPPED",
+            "CANCELED",
+            "ABORTED",
+            "COMPLETED",
+            "UNKNOWN"
+          ]
+        },
+        "state_reasons": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "observed_at": {"type": "string", "format": "date-time"},
+        "job_created_at": {"type": ["string", "null"], "format": "date-time"},
+        "processing_at": {"type": ["string", "null"], "format": "date-time"},
+        "completed_at": {"type": ["string", "null"], "format": "date-time"},
+        "impressions_completed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    }
   }
 }

@@ -12,7 +12,6 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 HexSha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 NonEmpty = Annotated[str, Field(min_length=1, max_length=512)]
 BoundedNote = Annotated[str, Field(max_length=2000)]
@@ -77,6 +76,8 @@ class BlockingReason(StrEnum):
     BRAILLE_ENGINE_NOT_READY = "BRAILLE_ENGINE_NOT_READY"
     SITE_OBSERVATION_STALE = "SITE_OBSERVATION_STALE"
     MISSING_LINEAGE = "MISSING_LINEAGE"
+    AMBIGUOUS_SITE_EVIDENCE = "AMBIGUOUS_SITE_EVIDENCE"
+    SITE_OBSERVATION_BLOCKING = "SITE_OBSERVATION_BLOCKING"
     OUTPUT_INTEGRITY_FAILED = "OUTPUT_INTEGRITY_FAILED"
     STALE_STATE_VERSION = "STALE_STATE_VERSION"
 
@@ -355,6 +356,7 @@ class Incident(DomainModel):
     report_ready_at: datetime | None = None
     current_candidate_sha256: HexSha256 | None = None
     blocking_reason: BlockingReason | None = None
+    last_attributable_evidence_id: NonEmpty | None = None
 
 
 class QueueObservation(DomainModel):
@@ -382,6 +384,7 @@ class SiteObservation(DomainModel):
     observations: tuple[QueueObservation, ...]
     printer_state: str = "unknown"
     printer_state_reasons: tuple[NonEmpty, ...] = ()
+    printer_accepting_jobs: bool | None = None
     previous_observation_sha256: HexSha256 | None = None
     source: str = "cups_read_only_observer"
 
@@ -497,4 +500,3 @@ def assert_no_production_control_fields(value: Any) -> None:
     elif isinstance(value, (list, tuple)):
         for child in value:
             assert_no_production_control_fields(child)
-

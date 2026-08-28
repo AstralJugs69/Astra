@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 
 class CaptureReader:
@@ -18,5 +19,7 @@ class CaptureReader:
             raise ValueError("capture path escaped configured root")
         if not path.is_file():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
-
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise TypeError("capture manifest must be a JSON object")
+        return cast(dict[str, object], value)

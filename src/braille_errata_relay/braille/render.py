@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
 from braille_errata_relay.domain.models import (
@@ -53,6 +53,8 @@ def render(
     map_hash = source_map_sha256(source_map)
     artifact_sha = __import__("hashlib").sha256(brf).hexdigest()
     profile_sha = profile_sha256(profile)
+    build_metadata = dict(generator_build or {})
+    build_metadata.setdefault("source_map_sha256", map_hash)
     page_records = tuple(
         PageRecord(number=page.number, sha256=hashes[index], source_block_ids=page.source_block_ids)
         for index, page in enumerate(pages)
@@ -71,8 +73,8 @@ def render(
         page_count=len(pages),
         page_sha256=hashes,
         source_map_uri=f"maps/{artifact_sha}.json",
-        created_at=created_at or datetime.now(timezone.utc),
-        generator_build=generator_build or {},
+        created_at=created_at or datetime.now(UTC),
+        generator_build=build_metadata,
     )
     # Touch canonical identity here so accidental non-JSON values fail at render time.
     canonical_sha256(manifest.model_dump(mode="json"))
@@ -83,4 +85,3 @@ def render(
         source_map=source_map,
         manifest=manifest,
     )
-

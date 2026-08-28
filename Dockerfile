@@ -15,22 +15,38 @@ RUN git clone --depth 1 --branch v${LIBLOUIS_VERSION} https://github.com/libloui
     && ./autogen.sh \
     && ./configure --prefix=/opt/liblouis --enable-python-bindings \
     && make -j2 \
-    && make install
+    && make install \
+    && python -m pip install --no-cache-dir --target=/opt/liblouis-python /tmp/liblouis/python
 
-RUN python -m pip install --no-cache-dir /tmp/liblouis/python
+FROM build AS application
+COPY --from=ghcr.io/astral-sh/uv:0.6.8 /uv /uvx /usr/local/bin/
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md /app/
+COPY src /app/src
+COPY config /app/config
+COPY infra/scripts/bind_liblouis_profile.py /app/infra/scripts/bind_liblouis_profile.py
+RUN uv sync --frozen --no-dev --no-editable
+RUN PYTHONPATH=/opt/liblouis-python \
+    LD_LIBRARY_PATH=/opt/liblouis/lib \
+    LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables \
+    uv run --frozen --no-dev python infra/scripts/bind_liblouis_profile.py
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV=/app/.venv \
+    PATH=/app/.venv/bin:$PATH \
+    PYTHONPATH=/opt/liblouis-python \
+    LD_LIBRARY_PATH=/opt/liblouis/lib \
     LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables
 
 COPY --from=build /opt/liblouis /opt/liblouis
-COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY pyproject.toml README.md /app/
-COPY src /app/src
+COPY --from=build /opt/liblouis-python /opt/liblouis-python
+COPY --from=application /app/.venv /app/.venv
 COPY config /app/config
+COPY src /app/src
+COPY --from=application /app/work/translation-profile.bound.json /app/config/translation_profiles/demo-ueb-40x25-v1.json
 
 WORKDIR /app
-RUN python -m pip install --no-cache-dir --no-deps .
 EXPOSE 8080
 CMD ["uvicorn", "braille_errata_relay.api.main:app", "--host", "0.0.0.0", "--port", "8080"]

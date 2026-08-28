@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from braille_errata_relay.domain.models import NormalizedSource, SourceBlock, SourceDiff
+from braille_errata_relay.domain.models import NormalizedSource, SourceDiff
 
 
 def diff_sources(old: NormalizedSource, new: NormalizedSource) -> SourceDiff:
@@ -29,11 +29,7 @@ def diff_sources(old: NormalizedSource, new: NormalizedSource) -> SourceDiff:
                 for neighbor in blocks[max(0, index - 1) : index + 2]:
                     if neighbor.block_id not in changed_set:
                         context_ids.add(neighbor.block_id)
-    context = tuple(
-        block
-        for block in new.blocks + old.blocks
-        if block.block_id in context_ids
-    )
+    context = tuple(block for block in new.blocks + old.blocks if block.block_id in context_ids)
     return SourceDiff(
         old_source_sha256=old.normalized_source_sha256,
         new_source_sha256=new.normalized_source_sha256,
@@ -49,4 +45,3 @@ def evidence_span_ids(source_diff: SourceDiff) -> tuple[str, ...]:
         [f"old:{block.block_id}" for block in source_diff.old_blocks]
         + [f"new:{block.block_id}" for block in source_diff.new_blocks]
     )
-

@@ -26,7 +26,9 @@ def test_profile_is_versioned_but_unbound_until_gate_zero() -> None:
 
 def test_incompatible_baseline_fails_closed() -> None:
     with pytest.raises(IncompatibleBaselineError):
-        require_compatible_profile(baseline_profile_sha256="a" * 64, candidate_profile_sha256="b" * 64)
+        require_compatible_profile(
+            baseline_profile_sha256="a" * 64, candidate_profile_sha256="b" * 64
+        )
 
 
 def test_untrusted_payload_cannot_smuggle_production_control_fields() -> None:
@@ -42,4 +44,3 @@ def test_observer_protocol_has_no_mutation_surface() -> None:
     }
     assert names == {"latest_snapshot", "job_history"}
     assert not names.intersection({"print", "submit", "cancel", "hold", "release", "execute"})
-

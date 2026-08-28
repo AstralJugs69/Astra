@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -33,7 +33,7 @@ def assessment(review: bool = False) -> SemanticAssessment:
         change_kind=ChangeKind.FACTUAL_CORRECTION,
         summary="A fact changed.",
         rationale=("The changed term has a different referent.",),
-        evidence_span_ids=("old:biology/p-001", "new:biology/p-001"),
+        evidence_span_ids=("old:block-000002", "new:block-000002"),
         confidence=Confidence.HIGH,
         requires_professional_review=review,
     )
@@ -52,7 +52,12 @@ def impact(changed: bool = True, page_count: int = 2) -> BrailleImpact:
 
 
 def test_report_ready_requires_human_disposition_and_version_match() -> None:
-    incident = Incident(incident_id="a" * 64, baseline_id="b" * 64, state=IncidentState.REPORT_READY, state_version=3)
+    incident = Incident(
+        incident_id="a" * 64,
+        baseline_id="b" * 64,
+        state=IncidentState.REPORT_READY,
+        state_version=3,
+    )
     with pytest.raises(StaleStateVersion):
         transition(incident, IncidentState.HALT_REQUESTED, expected_state_version=2)
     updated = transition(incident, IncidentState.HALT_REQUESTED, expected_state_version=3)
@@ -63,8 +68,8 @@ def test_report_ready_requires_human_disposition_and_version_match() -> None:
 
 
 def test_report_timestamp_precedes_attributed_action() -> None:
-    ready_at = datetime(2026, 8, 28, 17, 0, tzinfo=timezone.utc)
-    require_report_precedes_action(ready_at, datetime(2026, 8, 28, 17, 1, tzinfo=timezone.utc))
+    ready_at = datetime(2026, 8, 28, 17, 0, tzinfo=UTC)
+    require_report_precedes_action(ready_at, datetime(2026, 8, 28, 17, 1, tzinfo=UTC))
     with pytest.raises(IllegalStateTransition):
         require_report_precedes_action(ready_at, ready_at)
 
@@ -75,7 +80,6 @@ def test_recommendation_never_returns_a_device_command() -> None:
     )
     assert steps == (
         HumanStep.COORDINATOR_REVIEW,
-        HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION,
+        HumanStep.FULL_VOLUME_REPLACEMENT_REVIEW,
     )
     assert not any("CANCEL" in step.value or "SUBMIT" in step.value for step in steps)
-

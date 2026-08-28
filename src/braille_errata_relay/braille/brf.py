@@ -101,10 +101,7 @@ ALLOWED_BRF_BYTES = frozenset(ord(char) for char in BRF_TO_DOTS.values()) | {10,
 def unicode_cells_to_brf(cells: str) -> str:
     output: list[str] = []
     for cell in cells:
-        if cell in BRF_TO_DOTS.values() and cell != " ":
-            output.append(cell)
-            continue
-        if cell == BRAILLE_SPACE or cell == " ":
+        if cell == BRAILLE_SPACE:
             output.append(" ")
             continue
         codepoint = ord(cell)
@@ -113,7 +110,9 @@ def unicode_cells_to_brf(cells: str) -> str:
         try:
             output.append(BRF_TO_DOTS[codepoint - 0x2800])
         except KeyError as exc:
-            raise BraillePipelineError(f"six-dot pattern has no BRF mapping: U+{codepoint:04X}") from exc
+            raise BraillePipelineError(
+                f"six-dot pattern has no BRF mapping: U+{codepoint:04X}"
+            ) from exc
     return "".join(output)
 
 
@@ -132,7 +131,9 @@ def serialize_pages(pages: tuple[BraillePage, ...], profile: TranslationProfile)
             if len(row) > profile.cells_per_line:
                 raise BraillePipelineError(f"page {page.number} contains an over-width line")
             rows.append(row.ljust(profile.cells_per_line).encode("ascii"))
-        rows.extend(b" " * profile.cells_per_line for _ in range(profile.lines_per_page - len(rows)))
+        rows.extend(
+            b" " * profile.cells_per_line for _ in range(profile.lines_per_page - len(rows))
+        )
         rendered_pages.append(newline.join(rows))
     result = separator.join(rendered_pages)
     if profile.final_page_separator:
@@ -169,4 +170,3 @@ def split_exact_brf(data: bytes, profile: TranslationProfile) -> tuple[bytes, ..
 
 def page_hashes(data: bytes, profile: TranslationProfile) -> tuple[str, ...]:
     return tuple(hashlib.sha256(page).hexdigest() for page in split_exact_brf(data, profile))
-

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from braille_errata_relay.domain.models import BrailleImpact, PageRange
+from braille_errata_relay.domain.models import BrailleImpact, PageRange, TranslationProfile
 
 from .brf import page_hashes, split_exact_brf
 
@@ -25,7 +25,7 @@ def _range_or_none(start: int, end: int) -> PageRange | None:
 def compare_brf(
     old_brf: bytes,
     new_brf: bytes,
-    profile,
+    profile: TranslationProfile,
     *,
     baseline_artifact_sha256: str,
     candidate_artifact_sha256: str,
@@ -63,4 +63,3 @@ def compare_brf(
         old_page_hashes=page_hashes(old_brf, profile),
         new_page_hashes=page_hashes(new_brf, profile),
     )
-

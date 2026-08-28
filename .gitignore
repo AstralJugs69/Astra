@@ -26,3 +26,5 @@ uv-cache/
 *.pfx
 credentials*.json
 service-account*.json
+
+.pytest-local/

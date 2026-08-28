@@ -11,7 +11,6 @@ from braille_errata_relay.braille.profile import load_translation_profile
 from braille_errata_relay.braille.render import render
 from braille_errata_relay.domain.models import ArtifactKind
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -48,4 +47,3 @@ def test_v1_and_v2_repeat_renders_are_byte_identical() -> None:
         assert first.manifest.page_sha256 == second.manifest.page_sha256
         outputs.append(first)
     assert outputs[0].brf != outputs[1].brf
-

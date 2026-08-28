@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
-
-MODULE_PATH = Path(__file__).resolve().parents[2] / "simulator/cups_backend/relay_capture_backend.py"
+MODULE_PATH = (
+    Path(__file__).resolve().parents[2] / "simulator/cups_backend/relay_capture_backend.py"
+)
 SPEC = importlib.util.spec_from_file_location("relay_capture_backend", MODULE_PATH)
 assert SPEC and SPEC.loader
 backend = importlib.util.module_from_spec(SPEC)
@@ -53,4 +54,3 @@ def test_backend_derives_numeric_job_path_and_preserves_capture(tmp_path: Path) 
             cells_per_line=4,
             lines_per_page=2,
         )
-

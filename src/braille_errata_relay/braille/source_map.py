@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from braille_errata_relay.contracts.canonical_json import canonical_sha256
 from braille_errata_relay.braille.paginator import BraillePage
+from braille_errata_relay.contracts.canonical_json import canonical_sha256
 
 
 def build_source_map(pages: tuple[BraillePage, ...]) -> dict[str, object]:
@@ -28,4 +28,3 @@ def build_source_map(pages: tuple[BraillePage, ...]) -> dict[str, object]:
 
 def source_map_sha256(source_map: dict[str, object]) -> str:
     return canonical_sha256(source_map)
-

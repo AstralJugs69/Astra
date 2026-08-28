@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Protocol
 
 from .models import (
-    ArtifactManifest,
     ArtifactRef,
     Incident,
     ProductionBaseline,
@@ -71,4 +70,3 @@ class Clock(Protocol):
 
 class ReadOnlyObserverPort(Protocol):
     """Marker protocol for an observer whose public surface is evidence-only."""
-

@@ -16,21 +16,18 @@ deterministic.
 
 The checked-in core includes:
 
-- Python 3.11–3.12 project configuration and FastAPI health/readiness factory;
+- Python 3.11-3.12 project configuration and FastAPI health/readiness factory;
 - closed Pydantic domain models and read-only dependency ports;
 - canonical JSON and SHA-256 helpers;
 - strict UTF-8, NFC, line-ending, and heading/paragraph Markdown handling;
-- versioned UEB Grade 2 profile for 40 cells × 25 lines;
+- versioned UEB Grade 2 profile for 40 cells x 25 lines;
 - pinned Liblouis adapter with no substitute translator;
 - deterministic wrapping, pagination, explicit six-dot BRF serialization,
   manifests, source maps, and page prefix/suffix impact;
 - V1/V2 hero fixtures, unsupported-content tests, incompatible-profile tests,
   authority-negative tests, and a Gate 0-aware golden test.
 
-The profile is intentionally unbound until the real Liblouis 3.38.0 table
-bundle is installed and hashed. This environment currently lacks the binding,
-WSL access, a running Docker engine, native CUPS tools, and a usable 3.11/3.12
-interpreter; `infra/scripts/preflight.py` records those results.
+The profile is intentionally unbound until the real Liblouis 3.38.0 table bundle is installed and hashed. The locked environment has a uv-managed Python 3.12 interpreter. The real Liblouis binding/table profile, a running Docker engine, native CUPS tools, and deployed cloud credentials remain Gate 0 prerequisites; `infra/scripts/preflight.py` records those results.
 
 ## Local verification
 
@@ -38,8 +35,8 @@ Use a Python 3.11 or 3.12 environment, install the project with its chosen
 lockfile, and run:
 
 ```text
-python -m pytest -q -p no:cacheprovider
-python infra/scripts/preflight.py
+uv run --frozen pytest -q -p no:cacheprovider
+uv run --frozen python infra/scripts/preflight.py
 ```
 
 The Liblouis golden test is skipped until Gate 0 binds the profile. It must not

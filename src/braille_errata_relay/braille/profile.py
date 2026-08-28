@@ -42,4 +42,3 @@ def profile_json(profile: TranslationProfile) -> str:
     return json.dumps(
         profile.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
-

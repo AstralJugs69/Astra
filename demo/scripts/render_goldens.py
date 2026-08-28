@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from braille_errata_relay.braille.diff import diff_sources
@@ -15,7 +14,6 @@ from braille_errata_relay.braille.profile import load_translation_profile, profi
 from braille_errata_relay.braille.render import render
 from braille_errata_relay.contracts.canonical_json import canonical_json_bytes
 from braille_errata_relay.domain.models import ArtifactKind
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,7 +37,7 @@ def main() -> int:
             source_revision_id=f"drive:fixture:{version}",
             source_sha256=normalized.normalized_source_sha256,
             artifact_kind=ArtifactKind.FULL_CANDIDATE_BRF,
-            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
             generator_build={"profile_sha256": profile_sha256(profile)},
         )
         (args.output / f"{version}.brf").write_bytes(rendered[version].brf)
@@ -57,8 +55,12 @@ def main() -> int:
         candidate_artifact_sha256=rendered["v2"].manifest.artifact_sha256,
     )
     source_diff = diff_sources(
-        normalize_source_bytes((ROOT / "demo/fixtures/source-v1-hero.md").read_bytes(), document_id="biology-vol2"),
-        normalize_source_bytes((ROOT / "demo/fixtures/source-v2-hero.md").read_bytes(), document_id="biology-vol2"),
+        normalize_source_bytes(
+            (ROOT / "demo/fixtures/source-v1-hero.md").read_bytes(), document_id="biology-vol2"
+        ),
+        normalize_source_bytes(
+            (ROOT / "demo/fixtures/source-v2-hero.md").read_bytes(), document_id="biology-vol2"
+        ),
     )
     impact = {
         "schema_version": "page-impact.v1",
@@ -74,4 +76,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

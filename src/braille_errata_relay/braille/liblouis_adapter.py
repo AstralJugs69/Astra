@@ -28,6 +28,14 @@ def _load_louis() -> Any:
     return louis
 
 
+def _require_unicode_six_dot_cells(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise TranslationError("Liblouis returned no Unicode Braille cells")
+    if any(not 0x2800 <= ord(char) <= 0x283F for char in value):
+        raise TranslationError("Liblouis output crossed the boundary without Unicode six-dot cells")
+    return value
+
+
 class LiblouisAdapter:
     """Translate complete logical blocks through the configured Liblouis table."""
 
@@ -45,21 +53,19 @@ class LiblouisAdapter:
 
     def translate(self, text: str, profile: TranslationProfile) -> str:
         require_bound_profile(profile)
+        if not isinstance(text, str) or not text:
+            raise TranslationError("Liblouis input must be non-empty text")
+        if not hasattr(self._louis, "dotsIO") or not hasattr(self._louis, "ucBrl"):
+            raise TranslationError("Liblouis binding lacks Unicode six-dot output flags")
         root_table = profile.translation_tables[0].name
-        mode = 0
-        if hasattr(self._louis, "dotsIO") and hasattr(self._louis, "ucBrl"):
-            mode = int(self._louis.dotsIO) | int(self._louis.ucBrl)
+        mode = int(self._louis.dotsIO) | int(self._louis.ucBrl)
         try:
             translated = self._louis.translateString([root_table], text, mode=mode)
         except TypeError:
-            translated = self._louis.translateString([root_table], text, 0, mode)
+            translated = self._louis.translateString([root_table], text, mode)
         except Exception as exc:  # pragma: no cover - exact exception is binding-specific
             raise TranslationError("Liblouis translation failed") from exc
-        if not isinstance(translated, str) or not translated:
-            raise TranslationError("Liblouis returned no translation")
-        if any(ord(char) > 0x28FF for char in translated):
-            raise TranslationError("Liblouis returned non-Braille output")
-        return translated
+        return _require_unicode_six_dot_cells(translated)
 
     def translate_blocks(
         self, blocks: tuple[SourceBlock, ...], profile: TranslationProfile
@@ -72,4 +78,3 @@ class LiblouisAdapter:
             )
             for block in blocks
         )
-

@@ -56,4 +56,3 @@ def format_blocks(
         if index != len(blocks) - 1:
             lines.append(FormattedLine("", ()))
     return tuple(lines)
-
