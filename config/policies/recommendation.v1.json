@@ -1,0 +1,8 @@
+{
+  "schema_version": "recommendation-policy.v1",
+  "policy_id": "relay-policy.v1",
+  "max_bounded_replacement_pages": 4,
+  "full_volume_on_page_count_change": true,
+  "full_volume_on_incompatible_baseline": true,
+  "stale_observation_blocks_precise_recommendation": true
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": "retention-policy.v1",
+  "policy_id": "demo-retention-v1",
+  "source_and_artifact_retention": "retain-for-reproducibility",
+  "synthetic_data_only": true,
+  "deletion_requires_explicit_review": true
+}

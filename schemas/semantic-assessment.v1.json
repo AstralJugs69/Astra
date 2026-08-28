@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "semantic-assessment.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "assessment_id", "analysis_revision", "model_id", "prompt_version", "materiality", "change_kind", "summary", "rationale", "evidence_span_ids", "uncertainties", "confidence", "requires_professional_review"],
+  "properties": {
+    "schema_version": {"const": "semantic-assessment.v1"},
+    "assessment_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "analysis_revision": {"type": "integer", "minimum": 1},
+    "model_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "prompt_version": {"type": "string", "minLength": 1, "maxLength": 512},
+    "materiality": {"enum": ["MATERIAL", "NOT_MATERIAL", "UNCERTAIN"]},
+    "change_kind": {"enum": ["FACTUAL_CORRECTION", "INSTRUCTION_CHANGE", "NAVIGATION_CHANGE", "EDITORIAL_CHANGE", "FORMATTING_ONLY", "UNKNOWN"]},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "rationale": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 1000}},
+    "evidence_span_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+    "uncertainties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 500}},
+    "confidence": {"enum": ["LOW", "MEDIUM", "HIGH"]},
+    "requires_professional_review": {"type": "boolean"}
+  }
+}

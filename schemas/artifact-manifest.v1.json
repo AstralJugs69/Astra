@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "artifact-manifest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_kind", "artifact_sha256", "byte_length", "source_revision_id", "source_sha256", "normalized_source_sha256", "translation_profile_sha256", "liblouis_version", "formatter_version", "page_count", "page_sha256", "source_map_uri", "created_at", "generator_build"],
+  "properties": {
+    "schema_version": {"const": "artifact-manifest.v1"},
+    "artifact_kind": {"enum": ["BASELINE_BRF", "FULL_CANDIDATE_BRF", "RANGE_CANDIDATE_BRF", "SOURCE_SNAPSHOT", "NORMALIZED_SOURCE", "SOURCE_DIFF", "REPORT"]},
+    "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "byte_length": {"type": "integer", "minimum": 0},
+    "source_revision_id": {"type": "string", "minLength": 1},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "normalized_source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "baseline_manifest_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "translation_profile_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "liblouis_version": {"type": "string", "minLength": 1},
+    "formatter_version": {"type": "string", "minLength": 1},
+    "page_count": {"type": "integer", "minimum": 0},
+    "page_sha256": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "source_map_uri": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "generator_build": {"type": "object", "additionalProperties": {"type": "string"}},
+    "parent_artifact_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "page_range": {"type": ["object", "null"], "required": ["start", "end"], "properties": {"start": {"type": "integer", "minimum": 1}, "end": {"type": "integer", "minimum": 1}}}
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "translation-profile.v1",
+  "profile_id": "demo-ueb-40x25-v1",
+  "language": "en-US",
+  "braille_code": "UEB_GRADE_2",
+  "liblouis_version": "3.38.0",
+  "translation_tables": [
+    {"name": "en-ueb-g2.ctb", "sha256": null},
+    {"name": "en-us-brf.dis", "sha256": null}
+  ],
+  "formatter_version": "relay-formatter.v1",
+  "cells_per_line": 40,
+  "lines_per_page": 25,
+  "newline_bytes_hex": "0d0a",
+  "page_separator_hex": "0c",
+  "final_page_separator": false,
+  "page_number_policy": "NONE_FOR_FIXTURE",
+  "normalization": "NFC_LF_TRIM_TRAILING_SPACE"
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": "plain-markdown.v1",
+  "mime_type": "text/markdown",
+  "allowed_blocks": ["heading", "paragraph"],
+  "line_endings": ["LF", "CRLF", "CR"],
+  "unicode_normalization": "NFC",
+  "reject_bom": true,
+  "reject_inline_markdown": true,
+  "reject_tables_lists_quotes_code_and_html": true
+}

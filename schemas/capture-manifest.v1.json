@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "capture-manifest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scheduler_job_id", "job_title", "state", "received_sha256", "byte_length_received", "pages_total", "pages_completed", "simulated_endpoint"],
+  "properties": {
+    "schema_version": {"const": "capture-manifest.v1"},
+    "scheduler_job_id": {"type": "integer", "minimum": 1},
+    "job_title": {"type": "string", "minLength": 1},
+    "state": {"type": "string"},
+    "received_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "completed_output_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "byte_length_received": {"type": "integer", "minimum": 0},
+    "pages_total": {"type": "integer", "minimum": 0},
+    "pages_completed": {"type": "integer", "minimum": 0},
+    "simulated_endpoint": {"const": true}
+  }
+}
