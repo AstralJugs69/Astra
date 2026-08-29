@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "capture-acceptance.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "scheduler_job_id", "job_title", "received_sha256",
+    "byte_length_received", "simulated_endpoint_id", "accepted_at",
+    "accepted_event_sha256", "previous_event_sha256", "truth_basis"
+  ],
+  "properties": {
+    "schema_version": {"const": "capture-acceptance.v1"},
+    "scheduler_job_id": {"type": "integer", "minimum": 1},
+    "job_title": {"type": "string", "minLength": 1, "maxLength": 512},
+    "received_sha256": {"$ref": "#/$defs/sha256"},
+    "byte_length_received": {"type": "integer", "minimum": 1},
+    "simulated_endpoint_id": {"const": "relay-capture://demo-embosser"},
+    "accepted_at": {"type": "string", "format": "date-time"},
+    "accepted_event_sha256": {"$ref": "#/$defs/sha256"},
+    "previous_event_sha256": {
+      "oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]
+    },
+    "truth_basis": {"const": "SIMULATED_DEMO"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

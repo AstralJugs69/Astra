@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "baseline-production-link.v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "link_id", "baseline_id", "supersedes_production_link_id",
+    "scheduler_job_id", "scheduler_job_title", "site_observation_id", "site_id",
+    "bridge_id", "queue_name", "baseline_brf_sha256", "baseline_state_version",
+    "idempotency_key_sha256", "evidence_observed_at", "linked_at", "verified_at",
+    "verification_basis"
+  ],
+  "properties": {
+    "schema_version": {"const": "baseline-production-link.v3"},
+    "link_id": {"$ref": "#/$defs/sha256"},
+    "baseline_id": {"$ref": "#/$defs/sha256"},
+    "supersedes_production_link_id": {"$ref": "#/$defs/sha256"},
+    "scheduler_job_id": {"type": "integer", "minimum": 1},
+    "scheduler_job_title": {"type": "string", "minLength": 1, "maxLength": 512},
+    "site_observation_id": {"$ref": "#/$defs/sha256"},
+    "site_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "bridge_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "queue_name": {"type": "string", "minLength": 1, "maxLength": 512},
+    "baseline_brf_sha256": {"$ref": "#/$defs/sha256"},
+    "baseline_state_version": {"type": "integer", "minimum": 2},
+    "idempotency_key_sha256": {"$ref": "#/$defs/sha256"},
+    "evidence_observed_at": {"type": "string", "format": "date-time"},
+    "linked_at": {"type": "string", "format": "date-time"},
+    "verified_at": {"type": "null"},
+    "verification_basis": {"const": "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -119,6 +119,35 @@ def _submission(**updates: object) -> EndpointEvidenceSubmission:
     return EndpointEvidenceSubmission.model_validate(values)
 
 
+def _received_submission(**updates: object) -> EndpointEvidenceSubmission:
+    values: dict[str, object] = {
+        "schema_version": "endpoint-evidence-submission.v2",
+        "baseline_id": "a" * 64,
+        "production_link_id": "2" * 64,
+        "scheduler_job_id": 19,
+        "scheduler_job_title": f"BER|WO-DEMO-001|{'c' * 12}|BASELINE",
+        "site_id": "demo-site",
+        "queue_name": "Braille-Embosser-Sim",
+        "approved_baseline_brf_sha256": "c" * 64,
+        "endpoint_received_sha256": "c" * 64,
+        "capture_manifest_sha256": None,
+        "terminal_event_sha256": None,
+        "capture_acceptance_sha256": "3" * 64,
+        "accepted_event_sha256": "4" * 64,
+        "previous_event_sha256": None,
+        "capture_state": CaptureState.RECEIVED,
+        "evidence_timestamp": NOW,
+        "expected_baseline_state_version": 1,
+        "idempotency_key": endpoint_receipt_idempotency_key(
+            baseline_id="a" * 64,
+            production_link_id="2" * 64,
+            expected_state_version=1,
+        ),
+    }
+    values.update(updates)
+    return EndpointEvidenceSubmission.model_validate(values)
+
+
 class MemoryArtifacts:
     bucket_name = "test"
 
@@ -207,6 +236,32 @@ async def test_exact_endpoint_bytes_are_required_before_verified_transition() ->
     assert first.receipt.capture_state is CaptureState.COMPLETED
     assert first.receipt.endpoint_received_sha256 == first.receipt.approved_baseline_brf_sha256
     assert len(artifacts.values) == 1
+
+
+@pytest.mark.asyncio
+async def test_active_acceptance_confirms_received_bytes_without_inventing_terminal_output() -> (
+    None
+):
+    ledger = MemoryLedger()
+    workflow = EndpointReceiptWorkflow(
+        ledger=ledger, artifact_store=MemoryArtifacts(), clock=lambda: NOW
+    )
+
+    result = await workflow.confirm(
+        _received_submission(), submitting_principal="endpoint@example.com"
+    )
+
+    assert result.baseline.baseline.status is BaselineStatus.PRODUCTION_LINK_VERIFIED
+    assert result.receipt.schema_version == "endpoint-receipt.v2"
+    assert result.receipt.capture_state is CaptureState.RECEIVED
+    assert result.receipt.capture_manifest_sha256 is None
+    assert result.receipt.terminal_event_sha256 is None
+    assert result.receipt.capture_acceptance_sha256 == "3" * 64
+
+
+def test_received_evidence_cannot_infer_completion_or_mix_terminal_fields() -> None:
+    with pytest.raises(ValueError, match="active evidence must not infer terminal completion"):
+        _received_submission(terminal_event_sha256="5" * 64)
 
 
 @pytest.mark.parametrize(

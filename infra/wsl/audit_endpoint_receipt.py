@@ -21,12 +21,14 @@ from jsonschema import Draft202012Validator, FormatChecker
 ROOT = Path(__file__).resolve().parents[2]
 CAPTURE_ROOT = Path("/var/lib/braille-relay/captures")
 SCHEMA_PATH = ROOT / "schemas" / "capture-manifest.v1.json"
+ACCEPTANCE_SCHEMA_PATH = ROOT / "schemas" / "capture-acceptance.v1.json"
 BACKEND_PATH = ROOT / "simulator" / "cups_backend" / "relay_capture_backend.py"
 SITE_ID = "demo-site"
 QUEUE_NAME = "Braille-Embosser-Sim"
 ENDPOINT_ID = "relay-capture://demo-embosser"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 TERMINAL_STATES = {"COMPLETED", "TERMINATED", "FAILED"}
+ACCEPTANCE_FILENAME = "capture-acceptance.json"
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -58,19 +60,27 @@ def _job_directory(job_id: int) -> Path:
     return job_dir
 
 
-def _manifest(path: Path) -> tuple[dict[str, object], bytes]:
+def _schema_object(path: Path, schema_path: Path, *, label: str) -> tuple[dict[str, object], bytes]:
     raw = path.read_bytes()
     value = json.loads(raw.decode("utf-8"))
     if not isinstance(value, dict):
-        raise TypeError("capture manifest must be an object")
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        raise TypeError(f"{label} must be an object")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
     errors = sorted(
         Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(value),
         key=str,
     )
     if errors:
-        raise ValueError("capture manifest does not conform to capture-manifest.v1")
+        raise ValueError(f"{label} does not conform to its immutable schema")
     return value, raw
+
+
+def _manifest(path: Path) -> tuple[dict[str, object], bytes]:
+    return _schema_object(path, SCHEMA_PATH, label="capture manifest")
+
+
+def _acceptance(path: Path) -> tuple[dict[str, object], bytes]:
+    return _schema_object(path, ACCEPTANCE_SCHEMA_PATH, label="capture acceptance record")
 
 
 def _events(path: Path, backend: ModuleType) -> tuple[list[dict[str, object]], str]:
@@ -86,6 +96,27 @@ def _events(path: Path, backend: ModuleType) -> tuple[list[dict[str, object]], s
     if not records:
         raise ValueError("capture event chain is empty")
     return records, terminal_hash
+
+
+def _first_event(path: Path, backend: ModuleType) -> dict[str, object]:
+    """Validate only the immutable acceptance prefix of an active capture.
+
+    A simulator may append page and terminal events after the acceptance record
+    is durable. Those mutable suffixes cannot change what bytes the endpoint
+    accepted, so they are deliberately outside this active-evidence check.
+    """
+
+    with path.open("r", encoding="utf-8") as stream:
+        line = stream.readline()
+    if not line.strip():
+        raise ValueError("capture event chain has no first acceptance event")
+    value = json.loads(line)
+    if not isinstance(value, dict):
+        raise TypeError("first capture event must be an object")
+    event_hash = value.get("event_sha256")
+    if not isinstance(event_hash, str) or event_hash != backend._event_digest(value):
+        raise ValueError("first capture acceptance event hash is invalid")
+    return value
 
 
 def audit(
@@ -111,51 +142,139 @@ def audit(
 
     job_dir = _job_directory(job_id)
     input_path = job_dir / "input.brf"
-    manifest_path = job_dir / "manifest.json"
     events_path = job_dir / "events.jsonl"
-    for path in (input_path, manifest_path, events_path):
+    manifest_path = job_dir / "manifest.json"
+    acceptance_path = job_dir / ACCEPTANCE_FILENAME
+    for path in (input_path, events_path):
         if not path.is_file():
             raise ValueError("required endpoint evidence is missing")
-    manifest, manifest_bytes = _manifest(manifest_path)
     backend = _load_backend()
-    events, terminal_hash = _events(events_path, backend)
-
-    state = manifest.get("state")
-    if state not in TERMINAL_STATES:
-        raise ValueError("capture evidence is not terminal")
-    if manifest.get("scheduler_job_id") != job_id:
-        raise ValueError("capture scheduler job ID does not match")
-    if manifest.get("job_title") != expected_title:
-        raise ValueError("capture canonical title does not match")
-    if manifest.get("simulated_endpoint") is not True:
-        raise ValueError("capture is not labeled as a simulated demo endpoint")
-    if (
-        manifest.get("terminal_event_sha256") != terminal_hash
-        or manifest.get("events_sha256") != terminal_hash
-    ):
-        raise ValueError("capture manifest conflicts with the terminal event chain")
     input_hash = _sha256_file(input_path)
-    if input_hash != manifest.get("received_sha256") or input_hash != approved_brf_sha256:
+    if input_hash != approved_brf_sha256:
         raise ValueError("endpoint-received bytes do not match the approved baseline BRF")
 
-    accepted = events[0]
-    terminal = events[-1]
+    if manifest_path.is_file():
+        manifest, manifest_bytes = _manifest(manifest_path)
+        events, terminal_hash = _events(events_path, backend)
+        state = manifest.get("state")
+        if state not in TERMINAL_STATES:
+            raise ValueError("capture evidence is not terminal")
+        if manifest.get("scheduler_job_id") != job_id:
+            raise ValueError("capture scheduler job ID does not match")
+        if manifest.get("job_title") != expected_title:
+            raise ValueError("capture canonical title does not match")
+        if manifest.get("simulated_endpoint") is not True:
+            raise ValueError("capture is not labeled as a simulated demo endpoint")
+        if (
+            manifest.get("terminal_event_sha256") != terminal_hash
+            or manifest.get("events_sha256") != terminal_hash
+            or manifest.get("received_sha256") != input_hash
+        ):
+            raise ValueError("capture manifest conflicts with the terminal event chain")
+        accepted = events[0]
+        terminal = events[-1]
+        details = accepted.get("details")
+        if (
+            accepted.get("event_type") != "ACCEPTED"
+            or not isinstance(details, dict)
+            or details.get("scheduler_job_id") != job_id
+            or details.get("job_title") != expected_title
+            or details.get("received_sha256") != input_hash
+        ):
+            raise ValueError("capture acceptance event conflicts with immutable lineage")
+        if terminal.get("event_type") != state or terminal.get("event_sha256") != terminal_hash:
+            raise ValueError("capture terminal event conflicts with manifest state")
+        evidence_timestamp = manifest.get("finished_at")
+        if not isinstance(evidence_timestamp, str):
+            raise TypeError("capture evidence timestamp is missing")
+        return {
+            "schema_version": "endpoint-evidence-submission.v1",
+            "baseline_id": baseline_id,
+            "production_link_id": production_link_id,
+            "scheduler_job_id": job_id,
+            "scheduler_job_title": expected_title,
+            "site_id": SITE_ID,
+            "queue_name": QUEUE_NAME,
+            "simulated_endpoint_id": ENDPOINT_ID,
+            "approved_baseline_brf_sha256": approved_brf_sha256,
+            "endpoint_received_sha256": input_hash,
+            "capture_manifest_sha256": _sha256_bytes(manifest_bytes),
+            "terminal_event_sha256": terminal_hash,
+            "capture_state": state,
+            "evidence_timestamp": evidence_timestamp,
+            "truth_basis": "SIMULATED_DEMO",
+            "expected_baseline_state_version": expected_state_version,
+            "idempotency_key": _idempotency_key(
+                baseline_id=baseline_id,
+                production_link_id=production_link_id,
+                expected_state_version=expected_state_version,
+            ),
+        }
+
+    if not acceptance_path.is_file():
+        raise ValueError("capture has neither immutable acceptance nor terminal manifest evidence")
+    acceptance, acceptance_bytes = _acceptance(acceptance_path)
+    accepted = _first_event(events_path, backend)
     details = accepted.get("details")
     if (
-        accepted.get("event_type") != "ACCEPTED"
+        acceptance.get("scheduler_job_id") != job_id
+        or acceptance.get("job_title") != expected_title
+        or acceptance.get("received_sha256") != input_hash
+        or acceptance.get("byte_length_received") != input_path.stat().st_size
+        or acceptance.get("simulated_endpoint_id") != ENDPOINT_ID
+        or acceptance.get("truth_basis") != "SIMULATED_DEMO"
+        or accepted.get("event_type") != "ACCEPTED"
+        or accepted.get("event_sha256") != acceptance.get("accepted_event_sha256")
+        or accepted.get("previous_event_sha256") != acceptance.get("previous_event_sha256")
+        or accepted.get("previous_event_sha256") is not None
         or not isinstance(details, dict)
         or details.get("scheduler_job_id") != job_id
         or details.get("job_title") != expected_title
         or details.get("received_sha256") != input_hash
+        or details.get("byte_length_received") != input_path.stat().st_size
+        or details.get("simulated_endpoint_id") != ENDPOINT_ID
+        or details.get("truth_basis") != "SIMULATED_DEMO"
+        or accepted.get("recorded_at") != acceptance.get("accepted_at")
     ):
-        raise ValueError("capture acceptance event conflicts with immutable lineage")
-    if terminal.get("event_type") != state or terminal.get("event_sha256") != terminal_hash:
-        raise ValueError("capture terminal event conflicts with manifest state")
-    evidence_timestamp = manifest.get("finished_at")
-    if not isinstance(evidence_timestamp, str):
-        raise TypeError("capture evidence timestamp is missing")
+        raise ValueError("active capture acceptance conflicts with immutable lineage")
+    accepted_event_hash = acceptance.get("accepted_event_sha256")
+    accepted_at = acceptance.get("accepted_at")
+    previous_event_hash = acceptance.get("previous_event_sha256")
+    if not isinstance(accepted_event_hash, str) or not isinstance(accepted_at, str):
+        raise TypeError("active capture acceptance is incomplete")
 
-    idempotency_key = _sha256_bytes(
+    return {
+        "schema_version": "endpoint-evidence-submission.v2",
+        "baseline_id": baseline_id,
+        "production_link_id": production_link_id,
+        "scheduler_job_id": job_id,
+        "scheduler_job_title": expected_title,
+        "site_id": SITE_ID,
+        "queue_name": QUEUE_NAME,
+        "simulated_endpoint_id": ENDPOINT_ID,
+        "approved_baseline_brf_sha256": approved_brf_sha256,
+        "endpoint_received_sha256": input_hash,
+        "capture_manifest_sha256": None,
+        "terminal_event_sha256": None,
+        "capture_acceptance_sha256": _sha256_bytes(acceptance_bytes),
+        "accepted_event_sha256": accepted_event_hash,
+        "previous_event_sha256": previous_event_hash,
+        "capture_state": "RECEIVED",
+        "evidence_timestamp": accepted_at,
+        "truth_basis": "SIMULATED_DEMO",
+        "expected_baseline_state_version": expected_state_version,
+        "idempotency_key": _idempotency_key(
+            baseline_id=baseline_id,
+            production_link_id=production_link_id,
+            expected_state_version=expected_state_version,
+        ),
+    }
+
+
+def _idempotency_key(
+    *, baseline_id: str, production_link_id: str, expected_state_version: int
+) -> str:
+    return _sha256_bytes(
         json.dumps(
             {
                 "scope": "endpoint-receipt",
@@ -167,25 +286,6 @@ def audit(
             separators=(",", ":"),
         ).encode("utf-8")
     )
-    return {
-        "schema_version": "endpoint-evidence-submission.v1",
-        "baseline_id": baseline_id,
-        "production_link_id": production_link_id,
-        "scheduler_job_id": job_id,
-        "scheduler_job_title": expected_title,
-        "site_id": SITE_ID,
-        "queue_name": QUEUE_NAME,
-        "simulated_endpoint_id": ENDPOINT_ID,
-        "approved_baseline_brf_sha256": approved_brf_sha256,
-        "endpoint_received_sha256": input_hash,
-        "capture_manifest_sha256": _sha256_bytes(manifest_bytes),
-        "terminal_event_sha256": terminal_hash,
-        "capture_state": state,
-        "evidence_timestamp": evidence_timestamp,
-        "truth_basis": "SIMULATED_DEMO",
-        "expected_baseline_state_version": expected_state_version,
-        "idempotency_key": idempotency_key,
-    }
 
 
 def main() -> int:

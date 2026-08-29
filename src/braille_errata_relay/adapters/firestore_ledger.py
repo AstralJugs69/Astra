@@ -15,7 +15,11 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
-from braille_errata_relay.domain.errors import BaselineStateConflictError
+from braille_errata_relay.domain.errors import (
+    BaselineStateConflictError,
+    IncidentReviewPrerequisiteError,
+    IncidentReviewStateConflictError,
+)
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
@@ -24,11 +28,24 @@ from braille_errata_relay.domain.models import (
     BaselineStatus,
     DriveChangeBatch,
     EndpointReceipt,
+    HumanTimelineEventKind,
+    Incident,
     IncidentCheckpoint,
+    IncidentReviewState,
+    IncidentState,
+    IncidentTimelineEvent,
     IncidentWorkflowStage,
+    OperatorAttestation,
+    ProfessionalDisposition,
     RegisteredBaseline,
     SemanticAssessment,
     SiteObservation,
+)
+from braille_errata_relay.domain.state_machine import (
+    IllegalStateTransition,
+    StaleStateVersion,
+    require_report_precedes_action,
+    transition,
 )
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -101,6 +118,20 @@ class EndpointReceiptCommit:
 @dataclass(frozen=True)
 class EndpointVerificationClaim:
     verified_at: datetime
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class ProfessionalDispositionCommit:
+    state: IncidentReviewState
+    disposition: ProfessionalDisposition
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class OperatorAttestationCommit:
+    state: IncidentReviewState
+    attestation: OperatorAttestation
     duplicate: bool
 
 
@@ -375,11 +406,13 @@ class FirestoreGate0Ledger:
         )
         baseline_ref = self._document("baselines", proposed_link.baseline_id)
         link_ref = self._document("baseline_production_links", proposed_link.baseline_id)
+        record_ref = self._document("baseline_production_link_records", proposed_link.link_id)
         request_ref = self._document("baseline_production_link_requests", request_id)
 
         def operation(transaction: Any) -> ProductionLinkCommit:
             baseline_data = self._snapshot_data(baseline_ref.get(transaction=transaction))
             link_data = self._snapshot_data(link_ref.get(transaction=transaction))
+            record_data = self._snapshot_data(record_ref.get(transaction=transaction))
             request_data = self._snapshot_data(request_ref.get(transaction=transaction))
             if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
                 raise LedgerIntegrityError("baseline is missing or malformed")
@@ -390,9 +423,10 @@ class FirestoreGate0Ledger:
                     or request_data.get("link_id") != proposed_link.link_id
                 ):
                     raise LedgerIntegrityError("production link idempotency key conflicts")
-                if link_data is None or not isinstance(link_data.get("record"), dict):
+                replay_data = record_data if record_data is not None else link_data
+                if replay_data is None or not isinstance(replay_data.get("record"), dict):
                     raise LedgerIntegrityError("production link receipt has no immutable link")
-                persisted_link = BaselineProductionLink.model_validate(link_data["record"])
+                persisted_link = BaselineProductionLink.model_validate(replay_data["record"])
                 return ProductionLinkCommit(current, persisted_link, True)
             if current.baseline.state_version != expected_state_version:
                 raise BaselineStateConflictError("baseline state version is stale")
@@ -400,6 +434,8 @@ class FirestoreGate0Ledger:
                 raise BaselineStateConflictError("baseline is not awaiting a production link")
             if link_data is not None:
                 raise LedgerIntegrityError("baseline already has an unreceipted production link")
+            if record_data is not None:
+                raise LedgerIntegrityError("production link ID already exists")
             if proposed_link.baseline_state_version != expected_state_version + 1:
                 raise ValueError("production link target version is invalid")
             if proposed_link.baseline_brf_sha256 != current.baseline.approved_brf_sha256:
@@ -417,7 +453,7 @@ class FirestoreGate0Ledger:
                 }
             )
             baseline_body = {"record": updated_baseline.model_dump(mode="json")}
-            link_body = {"record": proposed_link.model_dump(mode="json")}
+            link_body = {"record": proposed_link.model_dump(mode="json", exclude_none=True)}
             now = self._clock()
             transaction.set(
                 baseline_ref,
@@ -430,6 +466,14 @@ class FirestoreGate0Ledger:
             )
             transaction.create(
                 link_ref,
+                {
+                    **link_body,
+                    "payload_sha256": canonical_sha256(link_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                record_ref,
                 {
                     **link_body,
                     "payload_sha256": canonical_sha256(link_body),
@@ -523,6 +567,256 @@ class FirestoreGate0Ledger:
             idempotency_key=idempotency_key,
         )
 
+    def _supersede_baseline_production_sync(
+        self,
+        *,
+        proposed_link: BaselineProductionLink,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit:
+        _require_sha256(proposed_link.baseline_id, label="baseline ID")
+        _require_sha256(proposed_link.link_id, label="production link ID")
+        if (
+            proposed_link.schema_version != "baseline-production-link.v3"
+            or proposed_link.supersedes_production_link_id is None
+            or expected_state_version < 1
+            or not idempotency_key
+        ):
+            raise ValueError("production link supersession parameters are invalid")
+        key_hash = canonical_sha256(
+            {"scope": "baseline-production-link-supersession", "key": idempotency_key}
+        )
+        if proposed_link.idempotency_key_sha256 != key_hash:
+            raise ValueError("production link supersession idempotency hash is inconsistent")
+        request_body = {
+            "baseline_id": proposed_link.baseline_id,
+            "supersedes_production_link_id": proposed_link.supersedes_production_link_id,
+            "scheduler_job_id": proposed_link.scheduler_job_id,
+            "expected_state_version": expected_state_version,
+            "idempotency_key_sha256": key_hash,
+        }
+        request_sha256 = canonical_sha256(request_body)
+        request_id = canonical_sha256(
+            {
+                "scope": "baseline-production-link-supersession-request",
+                "idempotency_key_sha256": key_hash,
+            }
+        )
+        baseline_ref = self._document("baselines", proposed_link.baseline_id)
+        link_ref = self._document("baseline_production_links", proposed_link.baseline_id)
+        prior_record_ref = self._document(
+            "baseline_production_link_records", proposed_link.supersedes_production_link_id
+        )
+        next_record_ref = self._document("baseline_production_link_records", proposed_link.link_id)
+        confirmation_ref = self._document(
+            "baseline_endpoint_confirmations", proposed_link.baseline_id
+        )
+        request_ref = self._document("baseline_production_link_supersession_requests", request_id)
+
+        def operation(transaction: Any) -> ProductionLinkCommit:
+            baseline_data = self._snapshot_data(baseline_ref.get(transaction=transaction))
+            link_data = self._snapshot_data(link_ref.get(transaction=transaction))
+            prior_record_data = self._snapshot_data(prior_record_ref.get(transaction=transaction))
+            next_record_data = self._snapshot_data(next_record_ref.get(transaction=transaction))
+            confirmation_data = self._snapshot_data(confirmation_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise LedgerIntegrityError("baseline is missing or malformed")
+            current = RegisteredBaseline.model_validate(baseline_data["record"])
+            if request_data is not None:
+                if (
+                    request_data.get("request_sha256") != request_sha256
+                    or request_data.get("link_id") != proposed_link.link_id
+                ):
+                    raise LedgerIntegrityError(
+                        "production link supersession idempotency key conflicts"
+                    )
+                if next_record_data is None or not isinstance(next_record_data.get("record"), dict):
+                    raise LedgerIntegrityError(
+                        "production link supersession has no immutable record"
+                    )
+                return ProductionLinkCommit(
+                    current,
+                    BaselineProductionLink.model_validate(next_record_data["record"]),
+                    True,
+                )
+            if current.baseline.state_version != expected_state_version:
+                raise BaselineStateConflictError("baseline state version is stale")
+            if current.baseline.status is not BaselineStatus.PROVISIONAL_PRODUCTION_LINK:
+                raise BaselineStateConflictError("baseline production link is not provisional")
+            if link_data is None or not isinstance(link_data.get("record"), dict):
+                raise LedgerIntegrityError("provisional baseline has no active production link")
+            active_link = BaselineProductionLink.model_validate(link_data["record"])
+            if active_link.link_id != proposed_link.supersedes_production_link_id:
+                raise LedgerIntegrityError("production link supersession targets a non-active link")
+            if (
+                active_link.scheduler_job_id == proposed_link.scheduler_job_id
+                or current.baseline.scheduler_job_id != active_link.scheduler_job_id
+                or current.baseline.scheduler_job_title != active_link.scheduler_job_title
+            ):
+                raise LedgerIntegrityError(
+                    "production link supersession changes no active job lineage"
+                )
+            if confirmation_data is not None:
+                raise LedgerIntegrityError(
+                    "active production link already has endpoint confirmation"
+                )
+            if proposed_link.baseline_state_version != expected_state_version + 1:
+                raise ValueError("production link supersession target version is invalid")
+            if proposed_link.baseline_brf_sha256 != current.baseline.approved_brf_sha256:
+                raise LedgerIntegrityError(
+                    "production link supersession changed baseline artifact lineage"
+                )
+            if next_record_data is not None:
+                raise LedgerIntegrityError("superseding production link ID already exists")
+            active_body = {"record": active_link.model_dump(mode="json", exclude_none=True)}
+            if prior_record_data is not None and prior_record_data.get(
+                "payload_sha256"
+            ) != canonical_sha256(active_body):
+                raise LedgerIntegrityError("active production link archive conflicts")
+            updated_baseline = current.model_copy(
+                update={
+                    "baseline": current.baseline.model_copy(
+                        update={
+                            "scheduler_job_id": proposed_link.scheduler_job_id,
+                            "scheduler_job_title": proposed_link.scheduler_job_title,
+                            "status": BaselineStatus.PROVISIONAL_PRODUCTION_LINK,
+                            "state_version": expected_state_version + 1,
+                        }
+                    )
+                }
+            )
+            baseline_body = {"record": updated_baseline.model_dump(mode="json")}
+            next_link_body = {"record": proposed_link.model_dump(mode="json", exclude_none=True)}
+            now = self._clock()
+            transaction.set(
+                baseline_ref,
+                {
+                    **baseline_data,
+                    **baseline_body,
+                    "payload_sha256": canonical_sha256(baseline_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.set(
+                link_ref,
+                {
+                    **next_link_body,
+                    "payload_sha256": canonical_sha256(next_link_body),
+                    "updated_at": now,
+                },
+            )
+            if prior_record_data is None:
+                transaction.create(
+                    prior_record_ref,
+                    {
+                        **active_body,
+                        "payload_sha256": canonical_sha256(active_body),
+                        "created_at": now,
+                    },
+                )
+            transaction.create(
+                next_record_ref,
+                {
+                    **next_link_body,
+                    "payload_sha256": canonical_sha256(next_link_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "link_id": proposed_link.link_id,
+                    "created_at": now,
+                },
+            )
+            return ProductionLinkCommit(updated_baseline, proposed_link, False)
+
+        return cast(ProductionLinkCommit, self._transaction_runner(operation))
+
+    async def supersede_baseline_production(
+        self,
+        *,
+        proposed_link: BaselineProductionLink,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit:
+        return await asyncio.to_thread(
+            self._supersede_baseline_production_sync,
+            proposed_link=proposed_link,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
+    def _get_production_link_supersession_by_idempotency_sync(
+        self,
+        *,
+        baseline_id: str,
+        scheduler_job_id: int,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit | None:
+        _require_sha256(baseline_id, label="baseline ID")
+        if scheduler_job_id < 1 or expected_state_version < 1 or not idempotency_key:
+            raise ValueError("production link supersession request identity is invalid")
+        key_hash = canonical_sha256(
+            {"scope": "baseline-production-link-supersession", "key": idempotency_key}
+        )
+        request_id = canonical_sha256(
+            {
+                "scope": "baseline-production-link-supersession-request",
+                "idempotency_key_sha256": key_hash,
+            }
+        )
+        request_data = self._snapshot_data(
+            self._document("baseline_production_link_supersession_requests", request_id).get()
+        )
+        if request_data is None:
+            return None
+        if (
+            request_data.get("baseline_id") != baseline_id
+            or request_data.get("scheduler_job_id") != scheduler_job_id
+            or request_data.get("expected_state_version") != expected_state_version
+            or request_data.get("idempotency_key_sha256") != key_hash
+        ):
+            raise LedgerIntegrityError("production link supersession idempotency key conflicts")
+        link_id = request_data.get("link_id")
+        if not isinstance(link_id, str):
+            raise LedgerIntegrityError("production link supersession request is malformed")
+        record_data = self._snapshot_data(
+            self._document("baseline_production_link_records", link_id).get()
+        )
+        baseline = self._get_baseline_sync(baseline_id)
+        if (
+            baseline is None
+            or record_data is None
+            or not isinstance(record_data.get("record"), dict)
+        ):
+            raise LedgerIntegrityError("production link supersession replay lineage is incomplete")
+        return ProductionLinkCommit(
+            baseline,
+            BaselineProductionLink.model_validate(record_data["record"]),
+            True,
+        )
+
+    async def get_production_link_supersession_by_idempotency(
+        self,
+        *,
+        baseline_id: str,
+        scheduler_job_id: int,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit | None:
+        return await asyncio.to_thread(
+            self._get_production_link_supersession_by_idempotency_sync,
+            baseline_id=baseline_id,
+            scheduler_job_id=scheduler_job_id,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
     def _get_production_link_sync(self, baseline_id: str) -> BaselineProductionLink | None:
         _require_sha256(baseline_id, label="baseline ID")
         data = self._snapshot_data(self._document("baseline_production_links", baseline_id).get())
@@ -535,6 +829,40 @@ class FirestoreGate0Ledger:
 
     async def get_production_link(self, baseline_id: str) -> BaselineProductionLink | None:
         return await asyncio.to_thread(self._get_production_link_sync, baseline_id)
+
+    def _get_endpoint_receipt_for_link_sync(
+        self,
+        *,
+        baseline_id: str,
+        production_link_id: str,
+    ) -> EndpointReceipt | None:
+        _require_sha256(baseline_id, label="baseline ID")
+        _require_sha256(production_link_id, label="production link ID")
+        pointer = self._snapshot_data(
+            self._document("baseline_endpoint_confirmations", baseline_id).get()
+        )
+        if pointer is None:
+            return None
+        receipt_id = pointer.get("receipt_id")
+        if not isinstance(receipt_id, str):
+            raise LedgerIntegrityError("endpoint confirmation pointer is malformed")
+        receipt_data = self._snapshot_data(self._document("endpoint_receipts", receipt_id).get())
+        if receipt_data is None or not isinstance(receipt_data.get("record"), dict):
+            raise LedgerIntegrityError("endpoint confirmation receipt is missing")
+        receipt = EndpointReceipt.model_validate(receipt_data["record"])
+        return receipt if receipt.production_link_id == production_link_id else None
+
+    async def get_endpoint_receipt_for_link(
+        self,
+        *,
+        baseline_id: str,
+        production_link_id: str,
+    ) -> EndpointReceipt | None:
+        return await asyncio.to_thread(
+            self._get_endpoint_receipt_for_link_sync,
+            baseline_id=baseline_id,
+            production_link_id=production_link_id,
+        )
 
     def _confirm_endpoint_receipt_sync(
         self,
@@ -616,7 +944,12 @@ class FirestoreGate0Ledger:
                 }
             )
             baseline_body = {"record": updated.model_dump(mode="json")}
-            receipt_body = {"record": proposed_receipt.model_dump(mode="json")}
+            receipt_body = {
+                "record": proposed_receipt.model_dump(
+                    mode="json",
+                    exclude_none=proposed_receipt.schema_version == "endpoint-receipt.v1",
+                )
+            }
             now = self._clock()
             transaction.set(
                 baseline_ref,
@@ -639,6 +972,7 @@ class FirestoreGate0Ledger:
                 pointer_ref,
                 {
                     "baseline_id": proposed_receipt.baseline_id,
+                    "production_link_id": proposed_receipt.production_link_id,
                     "receipt_id": proposed_receipt.receipt_id,
                     "created_at": now,
                 },
@@ -953,6 +1287,465 @@ class FirestoreGate0Ledger:
 
     async def get_incident_checkpoint(self, incident_id: str) -> IncidentCheckpoint | None:
         return await asyncio.to_thread(self._get_incident_checkpoint_sync, incident_id)
+
+    def _list_incident_checkpoints_sync(self) -> tuple[IncidentCheckpoint, ...]:
+        query = self.client.collection("incidents").order_by("record.updated_at").limit(200)
+        checkpoints: list[IncidentCheckpoint] = []
+        for snapshot in query.stream():
+            data = self._snapshot_data(snapshot)
+            if data is None or not isinstance(data.get("record"), dict):
+                raise LedgerIntegrityError("stored incident is malformed")
+            checkpoint = IncidentCheckpoint.model_validate(data["record"])
+            if checkpoint.report is not None and checkpoint.disposition_packet is not None:
+                checkpoints.append(checkpoint)
+        return tuple(
+            sorted(checkpoints, key=lambda checkpoint: checkpoint.updated_at, reverse=True)
+        )
+
+    async def list_incident_checkpoints(self) -> tuple[IncidentCheckpoint, ...]:
+        return await asyncio.to_thread(self._list_incident_checkpoints_sync)
+
+    def _initial_incident_review_state(
+        self,
+        checkpoint: IncidentCheckpoint,
+        *,
+        now: datetime,
+    ) -> IncidentReviewState:
+        if (
+            checkpoint.report is None
+            or checkpoint.disposition_packet is None
+            or checkpoint.report_ready_at is None
+            or checkpoint.candidate_brf is None
+        ):
+            raise IncidentReviewPrerequisiteError(
+                "report and disposition packet must exist before human review"
+            )
+        if checkpoint.stage not in {
+            IncidentWorkflowStage.REPORT_READY,
+            IncidentWorkflowStage.NEEDS_REVIEW,
+        }:
+            raise IncidentReviewPrerequisiteError("incident is not ready for professional review")
+        return IncidentReviewState(
+            incident_id=checkpoint.incident_id,
+            baseline_id=checkpoint.baseline_id,
+            state=(
+                IncidentState.NEEDS_REVIEW
+                if checkpoint.stage is IncidentWorkflowStage.NEEDS_REVIEW
+                else IncidentState.REPORT_READY
+            ),
+            state_version=0,
+            report_ready_at=checkpoint.report_ready_at,
+            current_candidate_sha256=checkpoint.candidate_brf.sha256,
+            blocking_reason=checkpoint.blocking_reason,
+            updated_at=now,
+        )
+
+    def _read_review_state(
+        self,
+        head_data: dict[str, object] | None,
+        checkpoint: IncidentCheckpoint,
+        *,
+        now: datetime,
+    ) -> IncidentReviewState:
+        if head_data is None:
+            return self._initial_incident_review_state(checkpoint, now=now)
+        record = head_data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("incident review head is malformed")
+        state = IncidentReviewState.model_validate(record)
+        if state.baseline_id != checkpoint.baseline_id:
+            raise LedgerIntegrityError("incident review head baseline lineage conflicts")
+        return state
+
+    def _record_professional_disposition_sync(
+        self,
+        *,
+        proposed_record: ProfessionalDisposition,
+    ) -> ProfessionalDispositionCommit:
+        _require_sha256(proposed_record.incident_id, label="incident ID")
+        _require_sha256(proposed_record.record_id, label="professional disposition ID")
+        key_hash = canonical_sha256(
+            {"scope": "professional-disposition", "key": proposed_record.idempotency_key}
+        )
+        request_body = {
+            "incident_id": proposed_record.incident_id,
+            "record_id": proposed_record.record_id,
+            "decision": proposed_record.decision.value,
+            "selected_role": proposed_record.selected_role,
+            "expected_state_version": proposed_record.expected_state_version,
+            "note": proposed_record.note,
+            "actor_principal": proposed_record.actor_principal,
+            "idempotency_key_sha256": key_hash,
+        }
+        request_sha256 = canonical_sha256(request_body)
+        request_id = canonical_sha256(
+            {"scope": "professional-disposition-request", "idempotency_key_sha256": key_hash}
+        )
+        incident_ref = self._document("incidents", proposed_record.incident_id)
+        head_ref = self._document("incident_review_heads", proposed_record.incident_id)
+        record_ref = self._document("professional_dispositions", proposed_record.record_id)
+        event_id = canonical_sha256(
+            {
+                "kind": HumanTimelineEventKind.PROFESSIONAL_DISPOSITION.value,
+                "incident_id": proposed_record.incident_id,
+                "record_id": proposed_record.record_id,
+            }
+        )
+        event_ref = self._document("incident_timeline_events", event_id)
+        request_ref = self._document("professional_disposition_requests", request_id)
+
+        def operation(transaction: Any) -> ProfessionalDispositionCommit:
+            incident_data = self._snapshot_data(incident_ref.get(transaction=transaction))
+            head_data = self._snapshot_data(head_ref.get(transaction=transaction))
+            record_data = self._snapshot_data(record_ref.get(transaction=transaction))
+            event_data = self._snapshot_data(event_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if incident_data is None or not isinstance(incident_data.get("record"), dict):
+                raise IncidentReviewPrerequisiteError("incident report checkpoint is unavailable")
+            checkpoint = IncidentCheckpoint.model_validate(incident_data["record"])
+            now = self._clock()
+            state = self._read_review_state(head_data, checkpoint, now=now)
+            if request_data is not None:
+                if request_data.get("request_sha256") != request_sha256:
+                    raise IncidentReviewStateConflictError(
+                        "professional disposition idempotency key conflicts"
+                    )
+                if record_data is None or not isinstance(record_data.get("record"), dict):
+                    raise LedgerIntegrityError("professional disposition replay record is missing")
+                return ProfessionalDispositionCommit(
+                    state,
+                    ProfessionalDisposition.model_validate(record_data["record"]),
+                    True,
+                )
+            if record_data is not None or event_data is not None:
+                raise LedgerIntegrityError("professional disposition identity already exists")
+            record = proposed_record.model_copy(update={"recorded_at": now})
+            try:
+                require_report_precedes_action(state.report_ready_at, record.recorded_at)
+                updated_incident = transition(
+                    Incident(
+                        incident_id=state.incident_id,
+                        baseline_id=state.baseline_id,
+                        state=state.state,
+                        state_version=state.state_version,
+                        report_ready_at=state.report_ready_at,
+                        current_candidate_sha256=state.current_candidate_sha256,
+                        blocking_reason=state.blocking_reason,
+                        last_attributable_evidence_id=state.last_attributable_evidence_id,
+                    ),
+                    IncidentState(record.decision.value),
+                    expected_state_version=record.expected_state_version,
+                    at=record.recorded_at,
+                    evidence_id=record.record_id,
+                )
+            except (IllegalStateTransition, StaleStateVersion) as exc:
+                raise IncidentReviewStateConflictError(str(exc)) from exc
+            updated = state.model_copy(
+                update={
+                    "state": updated_incident.state,
+                    "state_version": updated_incident.state_version,
+                    "last_attributable_evidence_id": updated_incident.last_attributable_evidence_id,
+                    "updated_at": now,
+                }
+            )
+            event = IncidentTimelineEvent(
+                event_id=event_id,
+                incident_id=record.incident_id,
+                kind=HumanTimelineEventKind.PROFESSIONAL_DISPOSITION,
+                record_id=record.record_id,
+                state_version=updated.state_version,
+                actor_principal=record.actor_principal,
+                recorded_at=record.recorded_at,
+            )
+            head_body = {"record": updated.model_dump(mode="json")}
+            record_body = {"record": record.model_dump(mode="json")}
+            event_body = {"record": event.model_dump(mode="json")}
+            transaction.set(
+                head_ref,
+                {
+                    **head_body,
+                    "payload_sha256": canonical_sha256(head_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                record_ref,
+                {
+                    **record_body,
+                    "payload_sha256": canonical_sha256(record_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                event_ref,
+                {
+                    **event_body,
+                    "payload_sha256": canonical_sha256(event_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "created_at": now,
+                },
+            )
+            return ProfessionalDispositionCommit(updated, record, False)
+
+        return cast(ProfessionalDispositionCommit, self._transaction_runner(operation))
+
+    async def record_professional_disposition(
+        self,
+        *,
+        proposed_record: ProfessionalDisposition,
+    ) -> ProfessionalDispositionCommit:
+        return await asyncio.to_thread(
+            self._record_professional_disposition_sync,
+            proposed_record=proposed_record,
+        )
+
+    def _record_operator_attestation_sync(
+        self,
+        *,
+        proposed_record: OperatorAttestation,
+    ) -> OperatorAttestationCommit:
+        _require_sha256(proposed_record.incident_id, label="incident ID")
+        _require_sha256(proposed_record.record_id, label="operator attestation ID")
+        key_hash = canonical_sha256(
+            {"scope": "operator-attestation", "key": proposed_record.idempotency_key}
+        )
+        request_body = {
+            "incident_id": proposed_record.incident_id,
+            "record_id": proposed_record.record_id,
+            "attestation_type": proposed_record.attestation_type.value,
+            "truth_basis": proposed_record.truth_basis.value,
+            "selected_role": proposed_record.selected_role,
+            "expected_state_version": proposed_record.expected_state_version,
+            "note": proposed_record.note,
+            "actor_principal": proposed_record.actor_principal,
+            "idempotency_key_sha256": key_hash,
+        }
+        request_sha256 = canonical_sha256(request_body)
+        request_id = canonical_sha256(
+            {"scope": "operator-attestation-request", "idempotency_key_sha256": key_hash}
+        )
+        incident_ref = self._document("incidents", proposed_record.incident_id)
+        head_ref = self._document("incident_review_heads", proposed_record.incident_id)
+        record_ref = self._document("operator_attestations", proposed_record.record_id)
+        event_id = canonical_sha256(
+            {
+                "kind": HumanTimelineEventKind.OPERATOR_ATTESTATION.value,
+                "incident_id": proposed_record.incident_id,
+                "record_id": proposed_record.record_id,
+            }
+        )
+        event_ref = self._document("incident_timeline_events", event_id)
+        request_ref = self._document("operator_attestation_requests", request_id)
+
+        def operation(transaction: Any) -> OperatorAttestationCommit:
+            incident_data = self._snapshot_data(incident_ref.get(transaction=transaction))
+            head_data = self._snapshot_data(head_ref.get(transaction=transaction))
+            record_data = self._snapshot_data(record_ref.get(transaction=transaction))
+            event_data = self._snapshot_data(event_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if incident_data is None or not isinstance(incident_data.get("record"), dict):
+                raise IncidentReviewPrerequisiteError("incident report checkpoint is unavailable")
+            checkpoint = IncidentCheckpoint.model_validate(incident_data["record"])
+            now = self._clock()
+            state = self._read_review_state(head_data, checkpoint, now=now)
+            if request_data is not None:
+                if request_data.get("request_sha256") != request_sha256:
+                    raise IncidentReviewStateConflictError(
+                        "operator attestation idempotency key conflicts"
+                    )
+                if record_data is None or not isinstance(record_data.get("record"), dict):
+                    raise LedgerIntegrityError("operator attestation replay record is missing")
+                return OperatorAttestationCommit(
+                    state,
+                    OperatorAttestation.model_validate(record_data["record"]),
+                    True,
+                )
+            if record_data is not None or event_data is not None:
+                raise LedgerIntegrityError("operator attestation identity already exists")
+            record = proposed_record.model_copy(update={"recorded_at": now})
+            try:
+                require_report_precedes_action(state.report_ready_at, record.recorded_at)
+                if state.state is IncidentState.HALT_REQUESTED:
+                    updated_incident = transition(
+                        Incident(
+                            incident_id=state.incident_id,
+                            baseline_id=state.baseline_id,
+                            state=state.state,
+                            state_version=state.state_version,
+                            report_ready_at=state.report_ready_at,
+                            current_candidate_sha256=state.current_candidate_sha256,
+                            blocking_reason=state.blocking_reason,
+                            last_attributable_evidence_id=state.last_attributable_evidence_id,
+                        ),
+                        IncidentState.CONTAINMENT_IN_PROGRESS,
+                        expected_state_version=record.expected_state_version,
+                        evidence_id=record.record_id,
+                    )
+                elif state.state is IncidentState.CONTAINMENT_IN_PROGRESS:
+                    if state.state_version != record.expected_state_version:
+                        raise StaleStateVersion("incident review state is stale")
+                    updated_incident = Incident(
+                        incident_id=state.incident_id,
+                        baseline_id=state.baseline_id,
+                        state=state.state,
+                        state_version=state.state_version + 1,
+                        report_ready_at=state.report_ready_at,
+                        current_candidate_sha256=state.current_candidate_sha256,
+                        blocking_reason=state.blocking_reason,
+                        last_attributable_evidence_id=record.record_id,
+                    )
+                else:
+                    raise IncidentReviewPrerequisiteError(
+                        "an operator containment attestation requires an earlier HALT_REQUESTED"
+                    )
+            except (IllegalStateTransition, StaleStateVersion) as exc:
+                raise IncidentReviewStateConflictError(str(exc)) from exc
+            updated = state.model_copy(
+                update={
+                    "state": updated_incident.state,
+                    "state_version": updated_incident.state_version,
+                    "last_attributable_evidence_id": updated_incident.last_attributable_evidence_id,
+                    "updated_at": now,
+                }
+            )
+            event = IncidentTimelineEvent(
+                event_id=event_id,
+                incident_id=record.incident_id,
+                kind=HumanTimelineEventKind.OPERATOR_ATTESTATION,
+                record_id=record.record_id,
+                state_version=updated.state_version,
+                actor_principal=record.actor_principal,
+                recorded_at=record.recorded_at,
+            )
+            head_body = {"record": updated.model_dump(mode="json")}
+            record_body = {"record": record.model_dump(mode="json")}
+            event_body = {"record": event.model_dump(mode="json")}
+            transaction.set(
+                head_ref,
+                {
+                    **head_body,
+                    "payload_sha256": canonical_sha256(head_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                record_ref,
+                {
+                    **record_body,
+                    "payload_sha256": canonical_sha256(record_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                event_ref,
+                {
+                    **event_body,
+                    "payload_sha256": canonical_sha256(event_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "created_at": now,
+                },
+            )
+            return OperatorAttestationCommit(updated, record, False)
+
+        return cast(OperatorAttestationCommit, self._transaction_runner(operation))
+
+    async def record_operator_attestation(
+        self,
+        *,
+        proposed_record: OperatorAttestation,
+    ) -> OperatorAttestationCommit:
+        return await asyncio.to_thread(
+            self._record_operator_attestation_sync,
+            proposed_record=proposed_record,
+        )
+
+    def _get_incident_review_state_sync(self, incident_id: str) -> IncidentReviewState | None:
+        _require_sha256(incident_id, label="incident ID")
+        data = self._snapshot_data(self._document("incident_review_heads", incident_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("incident review head is malformed")
+        return IncidentReviewState.model_validate(record)
+
+    async def get_incident_review_state(self, incident_id: str) -> IncidentReviewState | None:
+        return await asyncio.to_thread(self._get_incident_review_state_sync, incident_id)
+
+    def _get_human_record_sync(
+        self,
+        *,
+        collection: str,
+        record_id: str,
+        model_type: type[ProfessionalDisposition | OperatorAttestation],
+    ) -> ProfessionalDisposition | OperatorAttestation | None:
+        _require_sha256(record_id, label="human record ID")
+        data = self._snapshot_data(self._document(collection, record_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("human review record is malformed")
+        return model_type.model_validate(record)
+
+    async def get_professional_disposition(self, record_id: str) -> ProfessionalDisposition | None:
+        value = await asyncio.to_thread(
+            self._get_human_record_sync,
+            collection="professional_dispositions",
+            record_id=record_id,
+            model_type=ProfessionalDisposition,
+        )
+        return cast(ProfessionalDisposition | None, value)
+
+    async def get_operator_attestation(self, record_id: str) -> OperatorAttestation | None:
+        value = await asyncio.to_thread(
+            self._get_human_record_sync,
+            collection="operator_attestations",
+            record_id=record_id,
+            model_type=OperatorAttestation,
+        )
+        return cast(OperatorAttestation | None, value)
+
+    def _list_incident_timeline_events_sync(
+        self,
+        incident_id: str,
+    ) -> tuple[IncidentTimelineEvent, ...]:
+        _require_sha256(incident_id, label="incident ID")
+        query = (
+            self.client.collection("incident_timeline_events")
+            .where(filter=FieldFilter("record.incident_id", "==", incident_id))
+            .order_by("record.recorded_at")
+            .limit(200)
+        )
+        events: list[IncidentTimelineEvent] = []
+        for snapshot in query.stream():
+            data = self._snapshot_data(snapshot)
+            if data is None or not isinstance(data.get("record"), dict):
+                raise LedgerIntegrityError("incident timeline record is malformed")
+            event = IncidentTimelineEvent.model_validate(data["record"])
+            if event.incident_id == incident_id:
+                events.append(event)
+        return tuple(sorted(events, key=lambda event: (event.recorded_at, event.event_id)))
+
+    async def list_incident_timeline_events(
+        self,
+        incident_id: str,
+    ) -> tuple[IncidentTimelineEvent, ...]:
+        return await asyncio.to_thread(self._list_incident_timeline_events_sync, incident_id)
 
     def _allocate_report_created_at_sync(
         self,

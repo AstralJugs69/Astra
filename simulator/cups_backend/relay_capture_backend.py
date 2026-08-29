@@ -31,6 +31,8 @@ DEFAULT_LINES_PER_PAGE = 25
 DEFAULT_PAGE_DELAY_SECONDS = 5.0
 MIN_PAGE_DELAY_SECONDS = 1.0
 MAX_PAGE_DELAY_SECONDS = 60.0
+ACCEPTANCE_FILENAME = "capture-acceptance.json"
+SIMULATED_DEMO_TRUTH_BASIS = "SIMULATED_DEMO"
 TERMINATE = False
 
 
@@ -94,6 +96,18 @@ def _set_private_descriptor_mode(descriptor: int) -> None:
         os.fchmod(descriptor, CAPTURE_FILE_MODE)
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist a completed rename before exposing immutable capture evidence."""
+
+    if os.name == "nt" or not hasattr(os, "O_DIRECTORY"):
+        return
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def load_page_delay(config_path: Path, *, require_root_owner: bool) -> float:
     """Load the single root-controlled simulator timing setting."""
 
@@ -147,10 +161,50 @@ def _atomic_write_bytes(destination: Path, data: bytes) -> None:
         os.close(descriptor)
     os.replace(part, destination)
     _set_private_file_mode(destination)
+    _fsync_directory(destination.parent)
+
+
+def _atomic_write_bytes_once(destination: Path, data: bytes) -> None:
+    """Create immutable evidence without exposing a partially written target."""
+
+    if destination.exists():
+        raise ValueError("immutable capture evidence already exists")
+    part = destination.with_name(f".{destination.name}.{os.getpid()}.{time.time_ns()}.part")
+    descriptor = os.open(
+        part,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        CAPTURE_FILE_MODE,
+    )
+    try:
+        _set_private_descriptor_mode(descriptor)
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+    try:
+        # Linking a fully synced temporary file is atomic: a reader observes
+        # either no acceptance record or the complete immutable record.
+        os.link(part, destination)
+    except FileExistsError as exc:
+        raise ValueError("immutable capture evidence already exists") from exc
+    finally:
+        if part.exists():
+            part.unlink()
+    _set_private_file_mode(destination)
+    _fsync_directory(destination.parent)
 
 
 def _atomic_write_json(destination: Path, value: dict[str, object]) -> None:
     _atomic_write_bytes(
+        destination,
+        (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"),
+    )
+
+
+def _atomic_write_json_once(destination: Path, value: dict[str, object]) -> None:
+    _atomic_write_bytes_once(
         destination,
         (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8"),
     )
@@ -199,6 +253,7 @@ class CaptureJournal:
         first_previous, terminal = verify_event_chain(path)
         self.first_previous_hash = first_previous
         self.previous_hash = terminal
+        self.last_entry: dict[str, object] | None = None
 
     def append(self, event_type: str, details: dict[str, object]) -> str:
         body = {
@@ -225,6 +280,7 @@ class CaptureJournal:
         finally:
             os.close(descriptor)
         self.previous_hash = digest
+        self.last_entry = entry
         if self.first_previous_hash is None:
             self.first_previous_hash = body["previous_event_sha256"]
         return digest
@@ -275,6 +331,29 @@ def _manifest(
     }
 
 
+def _acceptance_record(
+    *,
+    job_id: int,
+    title: str,
+    data: bytes,
+    accepted_at: str,
+    accepted_event_hash: str,
+    previous_event_hash: str | None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "capture-acceptance.v1",
+        "scheduler_job_id": job_id,
+        "job_title": title,
+        "received_sha256": sha256_bytes(data),
+        "byte_length_received": len(data),
+        "simulated_endpoint_id": DEVICE_URI,
+        "accepted_at": accepted_at,
+        "accepted_event_sha256": accepted_event_hash,
+        "previous_event_sha256": previous_event_hash,
+        "truth_basis": SIMULATED_DEMO_TRUTH_BASIS,
+    }
+
+
 def run_backend(
     *,
     device_uri: str,
@@ -294,6 +373,8 @@ def run_backend(
     if not job_id_text.isdigit() or int(job_id_text) <= 0:
         raise ValueError("CUPS scheduler job ID must be a positive integer")
     job_id = int(job_id_text)
+    if not title or len(title) > 512:
+        raise ValueError("CUPS job title must be present and bounded")
     # Preserve the group and set-group-ID mode installed by the root-owned
     # setup script so human relay-audit readers can inspect capture evidence
     # without granting access to relay-observer.
@@ -303,17 +384,44 @@ def run_backend(
     if capture_root not in job_dir.parents:
         raise ValueError("capture path escaped the configured root")
     _ensure_private_directory(job_dir)
-    if (job_dir / "manifest.json").exists():
-        raise ValueError("capture already has a terminal manifest")
+    evidence_paths = (
+        job_dir / "input.brf",
+        job_dir / "events.jsonl",
+        job_dir / ACCEPTANCE_FILENAME,
+        job_dir / "manifest.json",
+    )
+    if any(path.exists() for path in evidence_paths):
+        raise ValueError("capture already has immutable evidence")
     journal = CaptureJournal(job_dir / "events.jsonl")
     previous_event_hash = journal.previous_hash
     started_at = utc_now()
     data = _read_input(input_path, max_bytes)
     pages = validate_brf(data, cells_per_line=cells_per_line, lines_per_page=lines_per_page)
     _atomic_write_bytes(job_dir / "input.brf", data)
-    journal.append(
+    accepted_event_hash = journal.append(
         "ACCEPTED",
-        {"scheduler_job_id": job_id, "job_title": title, "received_sha256": sha256_bytes(data)},
+        {
+            "scheduler_job_id": job_id,
+            "job_title": title,
+            "received_sha256": sha256_bytes(data),
+            "byte_length_received": len(data),
+            "simulated_endpoint_id": DEVICE_URI,
+            "truth_basis": SIMULATED_DEMO_TRUTH_BASIS,
+        },
+    )
+    accepted_at = None if journal.last_entry is None else journal.last_entry.get("recorded_at")
+    if not isinstance(accepted_at, str):
+        raise TypeError("capture acceptance event was not durably recorded")
+    _atomic_write_json_once(
+        job_dir / ACCEPTANCE_FILENAME,
+        _acceptance_record(
+            job_id=job_id,
+            title=title,
+            data=data,
+            accepted_at=accepted_at,
+            accepted_event_hash=accepted_event_hash,
+            previous_event_hash=previous_event_hash,
+        ),
     )
     completed: list[bytes] = []
     state = "COMPLETED"

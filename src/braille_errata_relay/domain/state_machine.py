@@ -54,7 +54,13 @@ ALLOWED_TRANSITIONS: dict[IncidentState, frozenset[IncidentState]] = {
     IncidentState.DEFERRED: frozenset({IncidentState.ASSESSING, IncidentState.REPORT_REJECTED}),
     IncidentState.REPORT_REJECTED: frozenset({IncidentState.ASSESSING, IncidentState.DEFERRED}),
     IncidentState.NEEDS_REVIEW: frozenset(
-        {IncidentState.ASSESSING, IncidentState.DEFERRED, IncidentState.REPORT_REJECTED}
+        {
+            IncidentState.ASSESSING,
+            IncidentState.CONTINUE_ACCEPTED,
+            IncidentState.HALT_REQUESTED,
+            IncidentState.DEFERRED,
+            IncidentState.REPORT_REJECTED,
+        }
     ),
     IncidentState.RESOLVED_BY_HUMAN: frozenset(),
     IncidentState.RESOLVED_NO_REMEDIATION_BY_HUMAN: frozenset(),

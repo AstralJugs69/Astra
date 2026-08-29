@@ -14,16 +14,23 @@ from braille_errata_relay.adapters.firestore_ledger import (
     StaleCursorError,
 )
 from braille_errata_relay.adapters.gcs_artifacts import source_snapshot_ref
+from braille_errata_relay.application.professional_review import (
+    ProfessionalReviewConflict,
+    ProfessionalReviewRejected,
+    ProfessionalReviewWorkflow,
+)
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
 from braille_errata_relay.domain.errors import BaselineStateConflictError
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactOrigin,
     ArtifactRef,
+    AttestationType,
     BaselineArtifacts,
     BaselineLinkCorrection,
     BaselineProductionLink,
     BaselineStatus,
+    BlockingReason,
     CaptureState,
     DriveChangeBatch,
     DriveChangeSignal,
@@ -31,6 +38,7 @@ from braille_errata_relay.domain.models import (
     IncidentCheckpoint,
     IncidentWorkflowStage,
     ProductionBaseline,
+    ProfessionalDecision,
     RegisteredBaseline,
     SemanticAssessment,
     SiteObservation,
@@ -39,6 +47,7 @@ from braille_errata_relay.domain.models import (
     SourceProvider,
     SourceRevision,
     SourceSnapshot,
+    TruthBasis,
 )
 
 
@@ -344,6 +353,33 @@ def _production_link(idempotency_key: str) -> BaselineProductionLink:
     )
 
 
+def _superseding_production_link(
+    idempotency_key: str,
+    *,
+    link_id: str = "3" * 64,
+    scheduler_job_id: int = 43,
+) -> BaselineProductionLink:
+    return BaselineProductionLink(
+        schema_version="baseline-production-link.v3",
+        link_id=link_id,
+        baseline_id="a" * 64,
+        supersedes_production_link_id="2" * 64,
+        scheduler_job_id=scheduler_job_id,
+        scheduler_job_title=f"BER|WO-DEMO-001|{'c' * 12}|BASELINE",
+        site_observation_id="8" * 64,
+        site_id="demo-site",
+        bridge_id="single-pc-bridge",
+        queue_name="Braille-Embosser-Sim",
+        baseline_brf_sha256="c" * 64,
+        baseline_state_version=2,
+        idempotency_key_sha256=canonical_sha256(
+            {"scope": "baseline-production-link-supersession", "key": idempotency_key}
+        ),
+        evidence_observed_at=datetime(2026, 8, 29, tzinfo=UTC),
+        linked_at=datetime(2026, 8, 29, tzinfo=UTC),
+    )
+
+
 def _endpoint_receipt(idempotency_key: str, *, receipt_id: str = "6" * 64) -> EndpointReceipt:
     return EndpointReceipt(
         receipt_id=receipt_id,
@@ -435,6 +471,7 @@ async def test_production_link_transaction_is_versioned_immutable_and_idempotent
     assert first.baseline.baseline.status is BaselineStatus.PROVISIONAL_PRODUCTION_LINK
     assert first.baseline.baseline.state_version == 1
     assert sum(path.startswith("baseline_production_links/") for path in client.store) == 1
+    assert sum(path.startswith("baseline_production_link_records/") for path in client.store) == 1
     assert sum(path.startswith("baseline_production_link_requests/") for path in client.store) == 1
 
 
@@ -458,6 +495,58 @@ async def test_production_link_transaction_rejects_stale_version_without_overwri
     persisted = await ledger.get_baseline(baseline.baseline.baseline_id)
     assert persisted == updated
     assert not any(path.startswith("baseline_production_links/") for path in client.store)
+
+
+@pytest.mark.asyncio
+async def test_production_link_supersession_archives_old_link_and_replays_without_rewrite() -> None:
+    client = FakeClient()
+    ledger = _ledger(client)
+    await ledger.register_baseline(_registered_baseline())
+    initial = _production_link("initial-link")
+    await ledger.link_baseline_production(
+        proposed_link=initial,
+        expected_state_version=0,
+        idempotency_key="initial-link",
+    )
+    key = "supersede-link"
+    replacement = _superseding_production_link(key)
+
+    first = await ledger.supersede_baseline_production(
+        proposed_link=replacement,
+        expected_state_version=1,
+        idempotency_key=key,
+    )
+    replay = await ledger.get_production_link_supersession_by_idempotency(
+        baseline_id="a" * 64,
+        scheduler_job_id=43,
+        expected_state_version=1,
+        idempotency_key=key,
+    )
+
+    assert first.duplicate is False
+    assert replay is not None and replay.duplicate is True
+    assert first.link == replay.link == replacement
+    assert first.baseline.baseline.status is BaselineStatus.PROVISIONAL_PRODUCTION_LINK
+    assert first.baseline.baseline.scheduler_job_id == 43
+    assert first.baseline.baseline.state_version == 2
+    old_record = client.store["baseline_production_link_records/" + initial.link_id]
+    new_record = client.store["baseline_production_link_records/" + replacement.link_id]
+    assert BaselineProductionLink.model_validate(old_record["record"]) == initial
+    assert BaselineProductionLink.model_validate(new_record["record"]) == replacement
+    active = await ledger.get_production_link("a" * 64)
+    assert active == replacement
+
+    with pytest.raises(BaselineStateConflictError, match="stale"):
+        await ledger.supersede_baseline_production(
+            proposed_link=_superseding_production_link(
+                "parallel-supersede",
+                link_id="4" * 64,
+                scheduler_job_id=44,
+            ),
+            expected_state_version=1,
+            idempotency_key="parallel-supersede",
+        )
+    assert await ledger.get_production_link("a" * 64) == replacement
 
 
 @pytest.mark.asyncio
@@ -1012,3 +1101,231 @@ async def test_outbox_retry_uses_bounded_backoff_before_releasing_work() -> None
     )
     assert len(retry) == 1
     assert retry[0].attempts == 2
+
+
+async def _report_bearing_incident(
+    ledger: FirestoreGate0Ledger,
+    now: list[datetime],
+    *,
+    incident_id: str,
+    stage: IncidentWorkflowStage = IncidentWorkflowStage.REPORT_READY,
+    blocking_reason: BlockingReason | None = None,
+) -> IncidentCheckpoint:
+    detected = IncidentCheckpoint(
+        incident_id=incident_id,
+        baseline_id="7" * 64,
+        new_source_revision_id="drive:file:63:" + "8" * 64,
+        new_source_sha256="8" * 64,
+        production_job_lineage_id="9" * 64,
+        updated_at=now[0],
+    )
+    await ledger.claim_incident(detected)
+    semantic_ready = detected.model_copy(
+        update={
+            "stage": IncidentWorkflowStage.SEMANTIC_READY,
+            "state_version": 1,
+            "updated_at": now[0],
+        }
+    )
+    await ledger.advance_incident(semantic_ready, expected_state_version=0)
+    allocated = await ledger.allocate_report_created_at(
+        incident_id=detected.incident_id,
+        expected_state_version=1,
+    )
+    now[0] += timedelta(seconds=1)
+    report_ready = allocated.checkpoint.model_copy(
+        update={
+            "stage": stage,
+            "state_version": allocated.checkpoint.state_version + 1,
+            "candidate_brf": ArtifactRef(
+                sha256="c" * 64,
+                kind=ArtifactKind.FULL_CANDIDATE_BRF,
+                byte_length=12,
+                uri="gs://relay-test/candidates/candidate.brf",
+            ),
+            "report": ArtifactRef(
+                sha256="a" * 64,
+                kind=ArtifactKind.REPORT,
+                byte_length=10,
+                uri="gs://relay-test/reports/report.json",
+            ),
+            "disposition_packet": ArtifactRef(
+                sha256="b" * 64,
+                kind=ArtifactKind.HUMAN_DISPOSITION_PACKET,
+                byte_length=10,
+                uri="gs://relay-test/disposition/packet.json",
+            ),
+            "blocking_reason": blocking_reason,
+            "updated_at": now[0],
+        }
+    )
+    return (
+        await ledger.advance_incident(
+            report_ready,
+            expected_state_version=allocated.checkpoint.state_version,
+        )
+    ).checkpoint
+
+
+@pytest.mark.asyncio
+async def test_professional_disposition_is_append_only_replay_safe_and_version_guarded() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 30, 12, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    checkpoint = await _report_bearing_incident(ledger, now, incident_id="d" * 64)
+    workflow = ProfessionalReviewWorkflow(ledger=ledger)
+    now[0] += timedelta(seconds=1)
+
+    first = await workflow.record_disposition(
+        incident_id=checkpoint.incident_id,
+        decision=ProfessionalDecision.HALT_REQUESTED,
+        selected_role="production_coordinator",
+        expected_state_version=0,
+        note="Request the operator assess containment in the independent CUPS surface.",
+        idempotency_key="human-halt-1",
+        actor_principal="coordinator@example.test",
+    )
+    replay = await workflow.record_disposition(
+        incident_id=checkpoint.incident_id,
+        decision=ProfessionalDecision.HALT_REQUESTED,
+        selected_role="production_coordinator",
+        expected_state_version=0,
+        note="Request the operator assess containment in the independent CUPS surface.",
+        idempotency_key="human-halt-1",
+        actor_principal="coordinator@example.test",
+    )
+
+    assert first.duplicate is False
+    assert replay.duplicate is True
+    assert first.state.state.value == "HALT_REQUESTED"
+    assert first.state.state_version == 1
+    assert first.disposition.recorded_at == now[0]
+    assert first.disposition.actor_principal == "coordinator@example.test"
+    assert sum(path.startswith("professional_dispositions/") for path in client.store) == 1
+    assert sum(path.startswith("incident_timeline_events/") for path in client.store) == 1
+
+    with pytest.raises(ProfessionalReviewConflict):
+        await workflow.record_disposition(
+            incident_id=checkpoint.incident_id,
+            decision=ProfessionalDecision.DEFERRED,
+            selected_role="production_coordinator",
+            expected_state_version=1,
+            note="Different payload must not reuse an idempotency key.",
+            idempotency_key="human-halt-1",
+            actor_principal="coordinator@example.test",
+        )
+    with pytest.raises(ProfessionalReviewConflict):
+        await workflow.record_disposition(
+            incident_id=checkpoint.incident_id,
+            decision=ProfessionalDecision.DEFERRED,
+            selected_role="production_coordinator",
+            expected_state_version=0,
+            note="Second tab used the stale form.",
+            idempotency_key="human-defer-stale",
+            actor_principal="coordinator@example.test",
+        )
+
+
+@pytest.mark.asyncio
+async def test_needs_review_retains_its_blocking_reason_after_human_halt_request() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 30, 12, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    checkpoint = await _report_bearing_incident(
+        ledger,
+        now,
+        incident_id="e" * 64,
+        stage=IncidentWorkflowStage.NEEDS_REVIEW,
+        blocking_reason=BlockingReason.SEMANTIC_REVIEW_REQUIRED,
+    )
+    now[0] += timedelta(seconds=1)
+
+    result = await ProfessionalReviewWorkflow(ledger=ledger).record_disposition(
+        incident_id=checkpoint.incident_id,
+        decision=ProfessionalDecision.HALT_REQUESTED,
+        selected_role="production_coordinator",
+        expected_state_version=0,
+        note="Human review requires a manual containment request.",
+        idempotency_key="needs-review-halt",
+        actor_principal="coordinator@example.test",
+    )
+
+    assert result.state.state.value == "HALT_REQUESTED"
+    assert result.state.blocking_reason is BlockingReason.SEMANTIC_REVIEW_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_operator_attestation_requires_prior_halt_and_never_infers_containment() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 30, 12, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    checkpoint = await _report_bearing_incident(ledger, now, incident_id="f" * 64)
+    workflow = ProfessionalReviewWorkflow(ledger=ledger)
+    now[0] += timedelta(seconds=1)
+
+    with pytest.raises(ProfessionalReviewRejected, match="HALT_REQUESTED"):
+        await workflow.record_operator_attestation(
+            incident_id=checkpoint.incident_id,
+            attestation_type=AttestationType.PHYSICAL_OUTPUT_ISOLATED,
+            truth_basis=TruthBasis.SIMULATED_DEMO,
+            selected_role="machine_operator",
+            expected_state_version=0,
+            note="This must be rejected until a coordinator requests a halt.",
+            idempotency_key="attestation-before-halt",
+            actor_principal="operator@example.test",
+        )
+
+    halt = await workflow.record_disposition(
+        incident_id=checkpoint.incident_id,
+        decision=ProfessionalDecision.HALT_REQUESTED,
+        selected_role="production_coordinator",
+        expected_state_version=0,
+        note="Request containment assessment.",
+        idempotency_key="halt-before-attestation",
+        actor_principal="coordinator@example.test",
+    )
+    now[0] += timedelta(seconds=1)
+    attestation = await workflow.record_operator_attestation(
+        incident_id=checkpoint.incident_id,
+        attestation_type=AttestationType.PHYSICAL_OUTPUT_ISOLATED,
+        truth_basis=TruthBasis.SIMULATED_DEMO,
+        selected_role="machine_operator",
+        expected_state_version=halt.state.state_version,
+        note="Simulated endpoint output was isolated by the operator.",
+        idempotency_key="isolation-after-halt",
+        actor_principal="operator@example.test",
+    )
+
+    assert attestation.state.state.value == "CONTAINMENT_IN_PROGRESS"
+    assert attestation.state.state.value != "CONTAINED_BY_HUMAN"
+    assert attestation.attestation.truth_basis is TruthBasis.SIMULATED_DEMO
+    assert len(await ledger.list_incident_timeline_events(checkpoint.incident_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_human_review_rejects_missing_report_and_wrong_selected_role() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 30, 12, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    workflow = ProfessionalReviewWorkflow(ledger=ledger)
+
+    with pytest.raises(ProfessionalReviewRejected, match="checkpoint"):
+        await workflow.record_disposition(
+            incident_id="1" * 64,
+            decision=ProfessionalDecision.HALT_REQUESTED,
+            selected_role="production_coordinator",
+            expected_state_version=0,
+            note="No report exists.",
+            idempotency_key="missing-report",
+            actor_principal="coordinator@example.test",
+        )
+    with pytest.raises(ProfessionalReviewRejected, match="selected role"):
+        await workflow.record_disposition(
+            incident_id="1" * 64,
+            decision=ProfessionalDecision.HALT_REQUESTED,
+            selected_role="machine_operator",
+            expected_state_version=0,
+            note="Wrong role.",
+            idempotency_key="wrong-role",
+            actor_principal="coordinator@example.test",
+        )

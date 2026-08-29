@@ -11,6 +11,7 @@ from braille_errata_relay.application.production_link import (
     ProductionLinkWorkflow,
     canonical_baseline_job_title,
     production_link_idempotency_key,
+    production_link_supersession_idempotency_key,
 )
 from braille_errata_relay.domain.errors import BaselineStateConflictError
 from braille_errata_relay.domain.models import (
@@ -108,6 +109,10 @@ class MemoryLinkLedger:
         self.baseline = baseline
         self.observation = observation
         self.commits: dict[str, ProductionLinkCommit] = {}
+        self.supersession_commits: dict[str, ProductionLinkCommit] = {}
+        self.active_link: BaselineProductionLink | None = None
+        self.records: dict[str, BaselineProductionLink] = {}
+        self.confirmed_link_id: str | None = None
 
     async def get_baseline(self, baseline_id: str) -> RegisteredBaseline | None:
         return self.baseline if baseline_id == self.baseline.baseline.baseline_id else None
@@ -148,6 +153,65 @@ class MemoryLinkLedger:
         )
         commit = ProductionLinkCommit(self.baseline, proposed_link, False)
         self.commits[idempotency_key] = commit
+        self.active_link = proposed_link
+        self.records[proposed_link.link_id] = proposed_link
+        return commit
+
+    async def get_production_link(self, baseline_id: str) -> BaselineProductionLink | None:
+        if baseline_id != self.baseline.baseline.baseline_id:
+            return None
+        return self.active_link
+
+    async def get_endpoint_receipt_for_link(
+        self,
+        *,
+        baseline_id: str,
+        production_link_id: str,
+    ) -> object | None:
+        if baseline_id == self.baseline.baseline.baseline_id and (
+            production_link_id == self.confirmed_link_id
+        ):
+            return object()
+        return None
+
+    async def get_production_link_supersession_by_idempotency(
+        self,
+        **values: object,
+    ) -> ProductionLinkCommit | None:
+        commit = self.supersession_commits.get(str(values["idempotency_key"]))
+        if commit is None:
+            return None
+        assert commit.link.scheduler_job_id == values["scheduler_job_id"]
+        return ProductionLinkCommit(commit.baseline, commit.link, True)
+
+    async def supersede_baseline_production(
+        self,
+        *,
+        proposed_link: BaselineProductionLink,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit:
+        if self.baseline.baseline.state_version != expected_state_version:
+            raise BaselineStateConflictError("stale")
+        assert self.active_link is not None
+        assert proposed_link.supersedes_production_link_id == self.active_link.link_id
+        self.records.setdefault(self.active_link.link_id, self.active_link)
+        self.records[proposed_link.link_id] = proposed_link
+        self.active_link = proposed_link
+        self.baseline = self.baseline.model_copy(
+            update={
+                "baseline": self.baseline.baseline.model_copy(
+                    update={
+                        "scheduler_job_id": proposed_link.scheduler_job_id,
+                        "scheduler_job_title": proposed_link.scheduler_job_title,
+                        "status": BaselineStatus.PROVISIONAL_PRODUCTION_LINK,
+                        "state_version": expected_state_version + 1,
+                    }
+                )
+            }
+        )
+        commit = ProductionLinkCommit(self.baseline, proposed_link, False)
+        self.supersession_commits[idempotency_key] = commit
         return commit
 
 
@@ -288,3 +352,139 @@ async def test_stale_expected_version_conflicts_without_overwrite() -> None:
 
     assert caught.value.reason is ProductionLinkBlockingReason.STALE_STATE_VERSION
     assert ledger.baseline == baseline
+
+
+@pytest.mark.asyncio
+async def test_supersession_appends_a_distinct_active_link_and_preserves_the_old_link() -> None:
+    baseline = _baseline()
+    ledger = MemoryLinkLedger(baseline, _observation(baseline))
+    workflow = ProductionLinkWorkflow(
+        ledger=ledger,
+        bridge_id="single-pc-bridge",
+        clock=lambda: NOW,
+    )
+    initial = await workflow.link(
+        baseline_id=baseline.baseline.baseline_id,
+        scheduler_job_id=42,
+        expected_state_version=0,
+        idempotency_key=_key(baseline),
+    )
+    ledger.observation = _observation(ledger.baseline, scheduler_job_id=43)
+    key = production_link_supersession_idempotency_key(
+        baseline_id=baseline.baseline.baseline_id,
+        supersedes_production_link_id=initial.link.link_id,
+        scheduler_job_id=43,
+        expected_state_version=1,
+    )
+
+    first = await workflow.supersede(
+        baseline_id=baseline.baseline.baseline_id,
+        scheduler_job_id=43,
+        expected_state_version=1,
+        idempotency_key=key,
+    )
+    replay = await workflow.supersede(
+        baseline_id=baseline.baseline.baseline_id,
+        scheduler_job_id=43,
+        expected_state_version=1,
+        idempotency_key=key,
+    )
+
+    assert first.duplicate is False
+    assert replay.duplicate is True
+    assert first.baseline.baseline.status is BaselineStatus.PROVISIONAL_PRODUCTION_LINK
+    assert first.baseline.baseline.scheduler_job_id == 43
+    assert first.baseline.baseline.state_version == 2
+    assert first.link.schema_version == "baseline-production-link.v3"
+    assert first.link.supersedes_production_link_id == initial.link.link_id
+    assert ledger.records[initial.link.link_id] == initial.link
+    assert ledger.records[first.link.link_id] == first.link
+    assert ledger.active_link == first.link
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scheduler_job_id", "confirmed", "reason"),
+    [
+        (42, False, ProductionLinkBlockingReason.DUPLICATE_SCHEDULER_JOB),
+        (43, True, ProductionLinkBlockingReason.ACTIVE_LINK_ALREADY_CONFIRMED),
+    ],
+)
+async def test_supersession_fails_closed_for_same_job_or_confirmed_active_link(
+    scheduler_job_id: int,
+    confirmed: bool,
+    reason: ProductionLinkBlockingReason,
+) -> None:
+    baseline = _baseline()
+    ledger = MemoryLinkLedger(baseline, _observation(baseline))
+    workflow = ProductionLinkWorkflow(
+        ledger=ledger,
+        bridge_id="single-pc-bridge",
+        clock=lambda: NOW,
+    )
+    initial = await workflow.link(
+        baseline_id=baseline.baseline.baseline_id,
+        scheduler_job_id=42,
+        expected_state_version=0,
+        idempotency_key=_key(baseline),
+    )
+    ledger.observation = _observation(ledger.baseline, scheduler_job_id=43)
+    if confirmed:
+        ledger.confirmed_link_id = initial.link.link_id
+    key = production_link_supersession_idempotency_key(
+        baseline_id=baseline.baseline.baseline_id,
+        supersedes_production_link_id=initial.link.link_id,
+        scheduler_job_id=scheduler_job_id,
+        expected_state_version=1,
+    )
+
+    error_type = ProductionLinkConflict if confirmed else ProductionLinkRejected
+    with pytest.raises(error_type) as caught:
+        await workflow.supersede(
+            baseline_id=baseline.baseline.baseline_id,
+            scheduler_job_id=scheduler_job_id,
+            expected_state_version=1,
+            idempotency_key=key,
+        )
+
+    assert caught.value.reason is reason
+    assert ledger.active_link == initial.link
+    assert ledger.baseline.baseline.scheduler_job_id == 42
+
+
+@pytest.mark.asyncio
+async def test_supersession_stale_version_recovers_without_replacing_active_pointer() -> None:
+    baseline = _baseline()
+    ledger = MemoryLinkLedger(baseline, _observation(baseline))
+    workflow = ProductionLinkWorkflow(
+        ledger=ledger,
+        bridge_id="single-pc-bridge",
+        clock=lambda: NOW,
+    )
+    initial = await workflow.link(
+        baseline_id=baseline.baseline.baseline_id,
+        scheduler_job_id=42,
+        expected_state_version=0,
+        idempotency_key=_key(baseline),
+    )
+    ledger.observation = _observation(ledger.baseline, scheduler_job_id=43)
+    ledger.baseline = ledger.baseline.model_copy(
+        update={"baseline": ledger.baseline.baseline.model_copy(update={"state_version": 2})}
+    )
+    key = production_link_supersession_idempotency_key(
+        baseline_id=baseline.baseline.baseline_id,
+        supersedes_production_link_id=initial.link.link_id,
+        scheduler_job_id=43,
+        expected_state_version=1,
+    )
+
+    with pytest.raises(ProductionLinkConflict) as caught:
+        await workflow.supersede(
+            baseline_id=baseline.baseline.baseline_id,
+            scheduler_job_id=43,
+            expected_state_version=1,
+            idempotency_key=key,
+        )
+
+    assert caught.value.reason is ProductionLinkBlockingReason.STALE_STATE_VERSION
+    assert ledger.active_link == initial.link

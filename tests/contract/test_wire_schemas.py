@@ -7,12 +7,22 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
-from braille_errata_relay.domain.models import SiteObservation
+from braille_errata_relay.domain.models import (
+    AttestationType,
+    HumanTimelineEventKind,
+    IncidentTimelineEvent,
+    OperatorAttestation,
+    ProfessionalDecision,
+    ProfessionalDisposition,
+    SiteObservation,
+    TruthBasis,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE_PATH = ROOT / "local_bridge" / "src" / "relay_bridge" / "observation_builder.py"
 BACKEND_PATH = ROOT / "simulator" / "cups_backend" / "relay_capture_backend.py"
 LIVE_CLOSURE_EVIDENCE = ROOT / "demo" / "evidence" / "report-first-live-closure.json"
+ACTIVE_REVIEW_EVIDENCE = ROOT / "demo" / "evidence" / "active-professional-review.json"
 
 
 def _load_module(name: str, path: Path):
@@ -112,6 +122,14 @@ def test_capture_manifest_and_event_chain_match_schema(tmp_path: Path) -> None:
     assert terminal == manifest["terminal_event_sha256"]
     assert manifest["events_sha256"] == manifest["terminal_event_sha256"]
     assert manifest["completed_at"] == manifest["finished_at"]
+
+    acceptance = json.loads((job_dir / "capture-acceptance.json").read_text(encoding="utf-8"))
+    acceptance_errors = sorted(
+        _validator("capture-acceptance.v1.json").iter_errors(acceptance), key=str
+    )
+    assert acceptance_errors == []
+    assert acceptance["received_sha256"] == manifest["received_sha256"]
+    assert acceptance["truth_basis"] == "SIMULATED_DEMO"
 
 
 def test_sanitized_cloud_gate0_evidence_matches_schema() -> None:
@@ -356,6 +374,74 @@ def test_advisory_production_link_and_endpoint_receipt_match_versioned_schemas()
     assert sorted(_validator("endpoint-receipt.v1.json").iter_errors(receipt), key=str) == []
 
 
+def test_active_endpoint_receipt_submission_and_receipt_match_v2_schemas() -> None:
+    submission = {
+        "schema_version": "endpoint-evidence-submission.v2",
+        "baseline_id": "1" * 64,
+        "production_link_id": "2" * 64,
+        "scheduler_job_id": 20,
+        "scheduler_job_title": f"BER|WO-DEMO-001|{'3' * 12}|BASELINE",
+        "site_id": "demo-site",
+        "queue_name": "Braille-Embosser-Sim",
+        "simulated_endpoint_id": "relay-capture://demo-embosser",
+        "approved_baseline_brf_sha256": "3" * 64,
+        "endpoint_received_sha256": "3" * 64,
+        "capture_manifest_sha256": None,
+        "terminal_event_sha256": None,
+        "capture_acceptance_sha256": "4" * 64,
+        "accepted_event_sha256": "5" * 64,
+        "previous_event_sha256": None,
+        "capture_state": "RECEIVED",
+        "evidence_timestamp": "2026-08-30T12:00:00+00:00",
+        "truth_basis": "SIMULATED_DEMO",
+        "expected_baseline_state_version": 2,
+        "idempotency_key": "6" * 64,
+    }
+    receipt = {
+        **submission,
+        "schema_version": "endpoint-receipt.v2",
+        "receipt_id": "7" * 64,
+        "verified_at": "2026-08-30T12:00:01+00:00",
+        "submitting_principal": "endpoint@example.iam.gserviceaccount.com",
+        "idempotency_key_sha256": "8" * 64,
+        "baseline_state_version": 3,
+        "artifact_uri": "gs://test/endpoint-receipts/receipt.json",
+    }
+    del receipt["idempotency_key"]
+
+    assert (
+        sorted(_validator("endpoint-evidence-submission.v2.json").iter_errors(submission), key=str)
+        == []
+    )
+    assert sorted(_validator("endpoint-receipt.v2.json").iter_errors(receipt), key=str) == []
+
+
+def test_superseding_production_link_matches_append_only_v3_schema() -> None:
+    payload = {
+        "schema_version": "baseline-production-link.v3",
+        "link_id": "1" * 64,
+        "baseline_id": "2" * 64,
+        "supersedes_production_link_id": "3" * 64,
+        "scheduler_job_id": 43,
+        "scheduler_job_title": f"BER|WO-DEMO-001|{'4' * 12}|BASELINE",
+        "site_observation_id": "5" * 64,
+        "site_id": "demo-site",
+        "bridge_id": "single-pc-bridge",
+        "queue_name": "Braille-Embosser-Sim",
+        "baseline_brf_sha256": "4" * 64,
+        "baseline_state_version": 2,
+        "idempotency_key_sha256": "6" * 64,
+        "evidence_observed_at": "2026-08-30T12:00:00+00:00",
+        "linked_at": "2026-08-30T12:00:01+00:00",
+        "verified_at": None,
+        "verification_basis": "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY",
+    }
+
+    assert (
+        sorted(_validator("baseline-production-link.v3.json").iter_errors(payload), key=str) == []
+    )
+
+
 def test_historical_link_correction_matches_append_only_schema() -> None:
     payload = {
         "schema_version": "baseline-link-correction.v1",
@@ -386,3 +472,89 @@ def test_slice_2_1_1_evidence_matches_sanitized_schema() -> None:
         sorted(_validator("byte-confirmed-link-evidence.v1.json").iter_errors(payload), key=str)
         == []
     )
+
+
+def test_human_review_records_match_append_only_contract_schemas() -> None:
+    disposition = ProfessionalDisposition(
+        record_id="1" * 64,
+        incident_id="2" * 64,
+        decision=ProfessionalDecision.HALT_REQUESTED,
+        selected_role="production_coordinator",
+        expected_state_version=0,
+        idempotency_key="human-halt-1",
+        note="Request manual containment review.",
+        actor_principal="coordinator@example.test",
+        recorded_at="2026-08-30T12:00:00+00:00",
+    )
+    attestation = OperatorAttestation(
+        record_id="3" * 64,
+        incident_id=disposition.incident_id,
+        attestation_type=AttestationType.PHYSICAL_OUTPUT_ISOLATED,
+        truth_basis=TruthBasis.SIMULATED_DEMO,
+        selected_role="machine_operator",
+        expected_state_version=1,
+        idempotency_key="human-isolation-1",
+        note="The simulated endpoint output was isolated.",
+        actor_principal="operator@example.test",
+        recorded_at="2026-08-30T12:01:00+00:00",
+    )
+    timeline = IncidentTimelineEvent(
+        event_id="4" * 64,
+        incident_id=disposition.incident_id,
+        kind=HumanTimelineEventKind.OPERATOR_ATTESTATION,
+        record_id=attestation.record_id,
+        state_version=2,
+        actor_principal=attestation.actor_principal,
+        recorded_at=attestation.recorded_at,
+    )
+
+    assert (
+        sorted(
+            _validator("professional-disposition.v1.json").iter_errors(
+                disposition.model_dump(mode="json")
+            ),
+            key=str,
+        )
+        == []
+    )
+    assert (
+        sorted(
+            _validator("operator-attestation.v1.json").iter_errors(
+                attestation.model_dump(mode="json")
+            ),
+            key=str,
+        )
+        == []
+    )
+    assert (
+        sorted(
+            _validator("incident-timeline-event.v1.json").iter_errors(
+                timeline.model_dump(mode="json")
+            ),
+            key=str,
+        )
+        == []
+    )
+
+
+def test_active_professional_review_evidence_is_sanitized_and_does_not_claim_a_live_run() -> None:
+    payload = json.loads(ACTIVE_REVIEW_EVIDENCE.read_text(encoding="utf-8"))
+
+    assert (
+        sorted(
+            _validator("active-professional-review-evidence.v1.json").iter_errors(payload), key=str
+        )
+        == []
+    )
+    assert payload["live_story"]["status"] == "NOT_RUN"
+    rendered = json.dumps(payload).casefold()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "credentials",
+        "private_key",
+        "client_email",
+        "drive.google.com",
+    ):
+        assert forbidden not in rendered

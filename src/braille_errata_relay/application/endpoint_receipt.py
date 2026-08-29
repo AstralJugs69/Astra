@@ -21,6 +21,7 @@ from braille_errata_relay.domain.models import (
     BaselineLinkCorrection,
     BaselineProductionLink,
     BaselineStatus,
+    CaptureState,
     EndpointEvidenceSubmission,
     EndpointReceipt,
     ProductionLinkBlockingReason,
@@ -146,6 +147,9 @@ class EndpointReceiptWorkflow:
                 or receipt.endpoint_received_sha256 != submission.endpoint_received_sha256
                 or receipt.capture_manifest_sha256 != submission.capture_manifest_sha256
                 or receipt.terminal_event_sha256 != submission.terminal_event_sha256
+                or receipt.capture_acceptance_sha256 != submission.capture_acceptance_sha256
+                or receipt.accepted_event_sha256 != submission.accepted_event_sha256
+                or receipt.previous_event_sha256 != submission.previous_event_sha256
                 or receipt.capture_state != submission.capture_state
                 or receipt.evidence_timestamp != submission.evidence_timestamp
                 or receipt.submitting_principal != submitting_principal
@@ -183,9 +187,14 @@ class EndpointReceiptWorkflow:
         idempotency_key_sha256 = canonical_sha256(
             {"scope": "endpoint-receipt", "key": submission.idempotency_key}
         )
+        submission_body = submission.model_dump(
+            mode="json",
+            exclude={"idempotency_key"},
+            exclude_none=submission.schema_version == "endpoint-evidence-submission.v1",
+        )
         evidence_identity_sha256 = canonical_sha256(
             {
-                **submission.model_dump(mode="json", exclude={"idempotency_key"}),
+                **submission_body,
                 "submitting_principal": submitting_principal,
                 "idempotency_key_sha256": idempotency_key_sha256,
             }
@@ -206,8 +215,12 @@ class EndpointReceiptWorkflow:
         if now.tzinfo is None:
             now = now.replace(tzinfo=UTC)
         evidence_body = {
-            **submission.model_dump(mode="json", exclude={"idempotency_key"}),
-            "schema_version": "endpoint-receipt-evidence.v1",
+            **submission_body,
+            "schema_version": (
+                "endpoint-receipt-evidence.v2"
+                if submission.capture_state is CaptureState.RECEIVED
+                else "endpoint-receipt-evidence.v1"
+            ),
             "submitting_principal": submitting_principal,
             "idempotency_key_sha256": idempotency_key_sha256,
             "verified_at": now.isoformat(),
@@ -229,6 +242,11 @@ class EndpointReceiptWorkflow:
             }
         )
         receipt = EndpointReceipt(
+            schema_version=(
+                "endpoint-receipt.v2"
+                if submission.capture_state is CaptureState.RECEIVED
+                else "endpoint-receipt.v1"
+            ),
             receipt_id=receipt_id,
             baseline_id=submission.baseline_id,
             production_link_id=submission.production_link_id,
@@ -240,6 +258,9 @@ class EndpointReceiptWorkflow:
             endpoint_received_sha256=submission.endpoint_received_sha256,
             capture_manifest_sha256=submission.capture_manifest_sha256,
             terminal_event_sha256=submission.terminal_event_sha256,
+            capture_acceptance_sha256=submission.capture_acceptance_sha256,
+            accepted_event_sha256=submission.accepted_event_sha256,
+            previous_event_sha256=submission.previous_event_sha256,
             capture_state=submission.capture_state,
             evidence_timestamp=submission.evidence_timestamp,
             verified_at=now,

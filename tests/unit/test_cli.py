@@ -115,6 +115,70 @@ def test_link_cli_posts_only_read_only_lineage(monkeypatch: Any, capsys: Any) ->
     assert "secret" not in capsys.readouterr().out
 
 
+def test_supersession_cli_appends_advisory_lineage_without_a_cups_command(
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_identity_token", lambda **_values: "secret")
+
+    class SupersessionResponse:
+        status_code = 201
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "status": "PROVISIONAL_PRODUCTION_LINK",
+                "duplicate": False,
+                "production_link": {
+                    "link_id": "d" * 64,
+                    "supersedes_production_link_id": "b" * 64,
+                    "scheduler_job_id": 43,
+                },
+            }
+
+    def post(url: str, **values: object) -> SupersessionResponse:
+        captured.update({"url": url, **values})
+        return SupersessionResponse()
+
+    monkeypatch.setattr(cli.httpx, "post", post)
+    exit_code = cli.main(
+        [
+            "supersede-baseline-production",
+            "--service-url",
+            "https://relay.example.run.app",
+            "--audience",
+            "https://relay.example.run.app",
+            "--baseline-id",
+            "a" * 64,
+            "--supersedes-production-link-id",
+            "b" * 64,
+            "--scheduler-job-id",
+            "43",
+            "--expected-state-version",
+            "2",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["url"] == (
+        "https://relay.example.run.app/api/v1/baselines/"
+        + "a" * 64
+        + "/production-link-supersessions"
+    )
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert set(payload) == {
+        "schema_version",
+        "scheduler_job_id",
+        "expected_state_version",
+        "idempotency_key",
+    }
+    assert set(payload).isdisjoint({"submit", "cancel", "hold", "release", "restart"})
+    assert "secret" not in capsys.readouterr().out
+
+
 def test_telemetry_cli_publishes_completed_json_without_command_surface(
     tmp_path: Path,
     monkeypatch: Any,

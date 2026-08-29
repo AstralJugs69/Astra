@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -43,6 +44,11 @@ from braille_errata_relay.application.production_link import (
     ProductionLinkRejected,
     ProductionLinkWorkflow,
 )
+from braille_errata_relay.application.professional_review import (
+    ProfessionalReviewConflict,
+    ProfessionalReviewRejected,
+    ProfessionalReviewWorkflow,
+)
 from braille_errata_relay.application.semantic_workflow import (
     IdempotentSemanticWorkflow,
     SemanticExecutionInProgress,
@@ -56,10 +62,22 @@ from braille_errata_relay.braille.readiness import check_liblouis_readiness
 from braille_errata_relay.cloud_settings import CloudSettings
 from braille_errata_relay.configuration import resolve_config_path
 from braille_errata_relay.domain.models import (
+    ArtifactRef,
     AssessmentInput,
+    AttestationType,
     BlockingReason,
     EndpointEvidenceSubmission,
+    HumanTimelineEventKind,
+    IncidentCheckpoint,
+    IncidentReviewState,
+    IncidentState,
+    IncidentWorkflowStage,
+    JobState,
+    OperatorAttestation,
     ProductionLinkBlockingReason,
+    ProfessionalDecision,
+    ProfessionalDisposition,
+    TruthBasis,
 )
 
 
@@ -112,6 +130,17 @@ class BaselineProductionLinkRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class BaselineProductionLinkSupersessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["baseline-production-link-supersession-request.v1"] = (
+        "baseline-production-link-supersession-request.v1"
+    )
+    scheduler_job_id: int = Field(gt=0)
+    expected_state_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 class OutboxDrainRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -129,6 +158,31 @@ class HistoricalLinkCorrectionRequest(BaseModel):
     production_link_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     expected_state_version: int = Field(ge=1)
     prior_report_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class ProfessionalDispositionRequest(BaseModel):
+    """A human decision record; never a CUPS or device-control request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: ProfessionalDecision
+    selected_role: Literal["production_coordinator"]
+    expected_state_version: int = Field(ge=0)
+    note: str = Field(default="", max_length=2_000)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class OperatorAttestationRequest(BaseModel):
+    """A human physical/device fact; it never performs the asserted action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attestation_type: AttestationType
+    truth_basis: TruthBasis
+    selected_role: Literal["machine_operator"]
+    expected_state_version: int = Field(ge=0)
+    note: str = Field(default="", max_length=2_000)
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
@@ -153,6 +207,7 @@ def create_app(
     historical_link_correction_workflow: HistoricalLinkCorrectionWorkflow | None = None,
     telemetry_workflow: TelemetryIngestionWorkflow | None = None,
     incident_workflow: IncidentWorkflow | None = None,
+    professional_review_workflow: ProfessionalReviewWorkflow | None = None,
     outbox_workflow: OutboxDrainWorkflow | None = None,
     identity_verifier: IdentityVerifier | None = None,
 ) -> FastAPI:
@@ -430,7 +485,47 @@ def create_app(
                 "status": "PROVISIONAL_PRODUCTION_LINK",
                 "duplicate": result.duplicate,
                 "baseline": result.baseline.model_dump(mode="json"),
-                "production_link": result.link.model_dump(mode="json"),
+                "production_link": result.link.model_dump(mode="json", exclude_none=True),
+            },
+        )
+
+    @app.post("/api/v1/baselines/{baseline_id}/production-link-supersessions")
+    async def supersede_baseline_production(
+        baseline_id: str,
+        payload: BaselineProductionLinkSupersessionRequest,
+    ) -> JSONResponse:
+        if production_link_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "production link is not configured"},
+            )
+        try:
+            result = await production_link_workflow.supersede(
+                baseline_id=baseline_id,
+                scheduler_job_id=payload.scheduler_job_id,
+                expected_state_version=payload.expected_state_version,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ProductionLinkConflict as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": exc.reason.value},
+            )
+        except ProductionLinkRejected as exc:
+            status_code = (
+                404 if exc.reason is ProductionLinkBlockingReason.BASELINE_NOT_FOUND else 422
+            )
+            return JSONResponse(
+                status_code=status_code,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": exc.reason.value},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": "PROVISIONAL_PRODUCTION_LINK",
+                "duplicate": result.duplicate,
+                "baseline": result.baseline.model_dump(mode="json"),
+                "production_link": result.link.model_dump(mode="json", exclude_none=True),
             },
         )
 
@@ -515,8 +610,177 @@ def create_app(
             },
         )
 
-    @app.get("/api/v1/incidents/{incident_id}")
-    async def get_incident(incident_id: str) -> JSONResponse:
+    async def _review_state_for_checkpoint(
+        checkpoint: IncidentCheckpoint,
+    ) -> IncidentReviewState:
+        if professional_review_workflow is not None:
+            persisted = await professional_review_workflow.ledger.get_incident_review_state(
+                checkpoint.incident_id
+            )
+            if persisted is not None:
+                return persisted
+        if checkpoint.report_ready_at is None or checkpoint.candidate_brf is None:
+            raise ValueError("incident has no report-ready human-review state")
+        return IncidentReviewState(
+            incident_id=checkpoint.incident_id,
+            baseline_id=checkpoint.baseline_id,
+            state=(
+                IncidentState.NEEDS_REVIEW
+                if checkpoint.stage is IncidentWorkflowStage.NEEDS_REVIEW
+                else IncidentState.REPORT_READY
+            ),
+            state_version=0,
+            report_ready_at=checkpoint.report_ready_at,
+            current_candidate_sha256=checkpoint.candidate_brf.sha256,
+            blocking_reason=checkpoint.blocking_reason,
+            updated_at=checkpoint.updated_at,
+        )
+
+    async def _read_json_artifact(ref: ArtifactRef) -> dict[str, object]:
+        if incident_workflow is None:
+            raise RuntimeError("incident workflow is not configured")
+        value = json.loads((await incident_workflow.artifact_store.read(ref)).decode("utf-8"))
+        if not isinstance(value, dict):
+            raise TypeError("incident artifact payload must be an object")
+        return value
+
+    async def _incident_timeline(
+        checkpoint: IncidentCheckpoint,
+    ) -> list[dict[str, object]]:
+        if ledger is None:
+            return []
+        entries: list[tuple[datetime, dict[str, object]]] = []
+        if checkpoint.report_ready_at is not None:
+            entries.append(
+                (
+                    checkpoint.report_ready_at,
+                    {
+                        "kind": "REPORT_READY",
+                        "truth_basis": "DETERMINISTIC_REPORT",
+                        "recorded_at": checkpoint.report_ready_at.isoformat(),
+                        "state_version": 0,
+                    },
+                )
+            )
+        if professional_review_workflow is not None:
+            for event in await professional_review_workflow.ledger.list_incident_timeline_events(
+                checkpoint.incident_id
+            ):
+                record: ProfessionalDisposition | OperatorAttestation | None
+                if event.kind is HumanTimelineEventKind.PROFESSIONAL_DISPOSITION:
+                    record = await ledger.get_professional_disposition(event.record_id)
+                else:
+                    record = await ledger.get_operator_attestation(event.record_id)
+                if record is None:
+                    raise ValueError("human timeline references a missing immutable record")
+                entries.append(
+                    (
+                        event.recorded_at,
+                        {
+                            "kind": event.kind.value,
+                            "truth_basis": "HUMAN_ATTESTATION",
+                            "recorded_at": event.recorded_at.isoformat(),
+                            "state_version": event.state_version,
+                            "record": record.model_dump(mode="json"),
+                        },
+                    )
+                )
+        baseline = await ledger.get_baseline(checkpoint.baseline_id)
+        if baseline is None:
+            return [entry for _, entry in sorted(entries, key=lambda value: value[0])]
+        observation = await ledger.get_latest_site_observation(
+            site_id=baseline.baseline.site_id,
+            bridge_id=incident_workflow.bridge_id if incident_workflow is not None else "",
+            queue_name=baseline.baseline.queue_name,
+        )
+        active_job_id = baseline.baseline.scheduler_job_id
+        if observation is not None and active_job_id is not None:
+            canceled_job = next(
+                (
+                    job
+                    for job in observation.observations
+                    if job.scheduler_job_id == active_job_id and job.state is JobState.CANCELED
+                ),
+                None,
+            )
+            if canceled_job is not None:
+                entries.append(
+                    (
+                        canceled_job.completed_at or observation.observed_at,
+                        {
+                            "kind": "QUEUE_CANCELLATION_OBSERVED",
+                            "truth_basis": "REAL_READ_ONLY_OBSERVATION",
+                            "recorded_at": (
+                                canceled_job.completed_at or observation.observed_at
+                            ).isoformat(),
+                            "observation_id": observation.observation_id,
+                            "scheduler_job_id": canceled_job.scheduler_job_id,
+                            "device_stop_confirmed": False,
+                            "physical_output_isolated": False,
+                        },
+                    )
+                )
+        link = await ledger.get_production_link(checkpoint.baseline_id)
+        if link is not None:
+            receipt = await ledger.get_endpoint_receipt_for_link(
+                baseline_id=checkpoint.baseline_id,
+                production_link_id=link.link_id,
+            )
+            if receipt is not None:
+                entries.append(
+                    (
+                        receipt.verified_at,
+                        {
+                            "kind": "SIMULATED_ENDPOINT_RECEIPT",
+                            "truth_basis": receipt.truth_basis,
+                            "recorded_at": receipt.verified_at.isoformat(),
+                            "scheduler_job_id": receipt.scheduler_job_id,
+                            "capture_state": receipt.capture_state.value,
+                            "receipt_id": receipt.receipt_id,
+                        },
+                    )
+                )
+        return [entry for _, entry in sorted(entries, key=lambda value: value[0])]
+
+    async def _incident_detail(checkpoint: IncidentCheckpoint) -> dict[str, object]:
+        if ledger is None:
+            raise RuntimeError("ledger is not configured")
+        report = (
+            await _read_json_artifact(checkpoint.report) if checkpoint.report is not None else None
+        )
+        source_correction = (
+            await _read_json_artifact(checkpoint.source_diff)
+            if checkpoint.source_diff is not None
+            else None
+        )
+        packet = (
+            await _read_json_artifact(checkpoint.disposition_packet)
+            if checkpoint.disposition_packet is not None
+            else None
+        )
+        baseline = await ledger.get_baseline(checkpoint.baseline_id)
+        observation = None
+        if baseline is not None and incident_workflow is not None:
+            observation = await ledger.get_latest_site_observation(
+                site_id=baseline.baseline.site_id,
+                bridge_id=incident_workflow.bridge_id,
+                queue_name=baseline.baseline.queue_name,
+            )
+        return {
+            "checkpoint": checkpoint.model_dump(mode="json"),
+            "review_state": (await _review_state_for_checkpoint(checkpoint)).model_dump(
+                mode="json"
+            ),
+            "baseline": baseline.model_dump(mode="json") if baseline is not None else None,
+            "source_correction": source_correction,
+            "report": report,
+            "human_disposition_packet": packet,
+            "current_site_observation": (
+                observation.model_dump(mode="json") if observation is not None else None
+            ),
+        }
+
+    async def _lookup_incident(incident_id: str) -> IncidentCheckpoint | JSONResponse:
         if ledger is None or incident_workflow is None:
             return JSONResponse(status_code=503, content={"status": "BLOCKED"})
         try:
@@ -525,28 +789,135 @@ def create_app(
             return JSONResponse(status_code=404, content={"detail": "incident not found"})
         if checkpoint is None:
             return JSONResponse(status_code=404, content={"detail": "incident not found"})
-        report = (
-            json.loads(
-                (await incident_workflow.artifact_store.read(checkpoint.report)).decode("utf-8")
+        return checkpoint
+
+    @app.get("/api/v1/incidents")
+    async def list_incidents() -> JSONResponse:
+        if ledger is None or incident_workflow is None:
+            return JSONResponse(status_code=503, content={"status": "BLOCKED"})
+        rows: list[dict[str, object]] = []
+        for checkpoint in await ledger.list_incident_checkpoints():
+            state = await _review_state_for_checkpoint(checkpoint)
+            rows.append(
+                {
+                    "incident_id": checkpoint.incident_id,
+                    "baseline_id": checkpoint.baseline_id,
+                    "workflow_stage": checkpoint.stage.value,
+                    "review_state": state.model_dump(mode="json"),
+                    "blocking_reason": checkpoint.blocking_reason.value
+                    if checkpoint.blocking_reason is not None
+                    else None,
+                    "updated_at": checkpoint.updated_at.isoformat(),
+                }
             )
-            if checkpoint.report is not None
-            else None
-        )
-        packet = (
-            json.loads(
-                (await incident_workflow.artifact_store.read(checkpoint.disposition_packet)).decode(
-                    "utf-8"
-                )
-            )
-            if checkpoint.disposition_packet is not None
-            else None
-        )
+        return JSONResponse(status_code=200, content={"incidents": rows})
+
+    @app.get("/api/v1/incidents/{incident_id}")
+    async def get_incident(incident_id: str) -> JSONResponse:
+        checkpoint = await _lookup_incident(incident_id)
+        if isinstance(checkpoint, JSONResponse):
+            return checkpoint
+        return JSONResponse(status_code=200, content=await _incident_detail(checkpoint))
+
+    @app.get("/api/v1/incidents/{incident_id}/timeline")
+    async def get_incident_timeline(incident_id: str) -> JSONResponse:
+        checkpoint = await _lookup_incident(incident_id)
+        if isinstance(checkpoint, JSONResponse):
+            return checkpoint
         return JSONResponse(
             status_code=200,
             content={
-                "checkpoint": checkpoint.model_dump(mode="json"),
-                "report": report,
-                "human_disposition_packet": packet,
+                "incident_id": checkpoint.incident_id,
+                "events": await _incident_timeline(checkpoint),
+            },
+        )
+
+    @app.post("/api/v1/incidents/{incident_id}/professional-dispositions")
+    async def record_professional_disposition(
+        incident_id: str,
+        payload: ProfessionalDispositionRequest,
+        request: Request,
+    ) -> JSONResponse:
+        if professional_review_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "professional review is not configured"},
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            result = await professional_review_workflow.record_disposition(
+                incident_id=incident_id,
+                decision=payload.decision,
+                selected_role=payload.selected_role,
+                expected_state_version=payload.expected_state_version,
+                note=payload.note,
+                idempotency_key=payload.idempotency_key,
+                actor_principal=principal,
+            )
+        except ProfessionalReviewConflict:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": "STALE_STATE_VERSION"},
+            )
+        except (ProfessionalReviewRejected, ValueError) as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"status": "NEEDS_REVIEW", "sanitized_detail": str(exc)},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": result.state.state.value,
+                "duplicate": result.duplicate,
+                "review_state": result.state.model_dump(mode="json"),
+                "professional_disposition": result.disposition.model_dump(mode="json"),
+            },
+        )
+
+    @app.post("/api/v1/incidents/{incident_id}/operator-attestations")
+    async def record_operator_attestation(
+        incident_id: str,
+        payload: OperatorAttestationRequest,
+        request: Request,
+    ) -> JSONResponse:
+        if professional_review_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "professional review is not configured"},
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            result = await professional_review_workflow.record_operator_attestation(
+                incident_id=incident_id,
+                attestation_type=payload.attestation_type,
+                truth_basis=payload.truth_basis,
+                selected_role=payload.selected_role,
+                expected_state_version=payload.expected_state_version,
+                note=payload.note,
+                idempotency_key=payload.idempotency_key,
+                actor_principal=principal,
+            )
+        except ProfessionalReviewConflict:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": "STALE_STATE_VERSION"},
+            )
+        except (ProfessionalReviewRejected, ValueError) as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"status": "NEEDS_REVIEW", "sanitized_detail": str(exc)},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": result.state.state.value,
+                "duplicate": result.duplicate,
+                "review_state": result.state.model_dump(mode="json"),
+                "operator_attestation": result.attestation.model_dump(mode="json"),
             },
         )
 
@@ -565,6 +936,7 @@ app = create_app(
     historical_link_correction_workflow=_runtime.historical_link_correction_workflow,
     telemetry_workflow=_runtime.telemetry_workflow,
     incident_workflow=_runtime.incident_workflow,
+    professional_review_workflow=_runtime.professional_review_workflow,
     outbox_workflow=_runtime.outbox_workflow,
     identity_verifier=_runtime.identity_verifier,
 )

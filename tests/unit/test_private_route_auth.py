@@ -314,6 +314,30 @@ def test_production_link_route_is_demonstrator_only() -> None:
     assert denied.status_code == 403
 
 
+def test_production_link_supersession_route_is_demonstrator_only() -> None:
+    payload = {
+        "schema_version": "baseline-production-link-supersession-request.v1",
+        "scheduler_job_id": 43,
+        "expected_state_version": 1,
+        "idempotency_key": "a" * 64,
+    }
+    path = "/api/v1/baselines/" + "b" * 64 + "/production-link-supersessions"
+
+    admitted = _client().post(
+        path,
+        json=payload,
+        headers={"Authorization": "Bearer demonstrator@example.com"},
+    )
+    denied = _client().post(
+        path,
+        json=payload,
+        headers={"Authorization": "Bearer telemetry@example.iam.gserviceaccount.com"},
+    )
+
+    assert admitted.status_code == 503
+    assert denied.status_code == 403
+
+
 def test_endpoint_evidence_routes_use_only_the_dedicated_verified_principal() -> None:
     receipt = {
         "schema_version": "endpoint-evidence-submission.v1",

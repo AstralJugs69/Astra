@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "incident-timeline-event.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "incident_id", "kind", "record_id", "state_version",
+    "actor_principal", "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "incident-timeline-event.v1"},
+    "event_id": {"$ref": "#/$defs/sha256"},
+    "incident_id": {"$ref": "#/$defs/sha256"},
+    "kind": {"enum": ["PROFESSIONAL_DISPOSITION", "OPERATOR_ATTESTATION"]},
+    "record_id": {"$ref": "#/$defs/sha256"},
+    "state_version": {"type": "integer", "minimum": 1},
+    "actor_principal": {"type": "string", "minLength": 1, "maxLength": 512},
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

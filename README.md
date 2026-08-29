@@ -16,7 +16,8 @@ and replacement submission remain separate human-owned facts.
 
 ## Implemented slice
 
-Slice 2 implements the minimum report-first path for Stories 1 and 2:
+Slice 2.2 implements the report-first path for Stories 1 and 2 plus the
+smallest active-production human-review seam for Story 3:
 
 ```text
 durable Drive revision
@@ -50,13 +51,22 @@ The implementation includes:
   recommendation;
 - a bounded scheduler drain for the durable Drive outbox with leases, retries,
   backoff, dead-letter thresholds, and restart recovery; and
-- authenticated baseline, incident, source, telemetry, and scheduler routes with
-  principal separation.
+- immutable active `RECEIVED` endpoint acceptance evidence, separate from a
+  terminal capture manifest, so exact bytes can verify an active human-submitted
+  baseline job without claiming completion;
+- append-only advisory production-link supersession that preserves the prior
+  historical link while switching only the active baseline pointer;
+- authenticated coordinator disposition and operator-attestation routes with
+  optimistic human-state versions, deterministic replay, and an append-only
+  attributable timeline; and
+- a loopback-only, server-rendered presentation shell with signed strict
+  sessions, per-form CSRF/origin checks, server-side short-lived Cloud Run ID
+  tokens, and no CUPS/device-control surface.
 
-The slice intentionally stops at `REPORT_READY` or a visible `NEEDS_REVIEW`.
-There is no dashboard, professional-decision submission, proof approval,
-replacement submission, notification-delivery claim, or production-device
-control in this repository slice.
+The slice intentionally stops after human disposition and containment
+attestation records. There is no proof approval, replacement submission,
+notification-delivery claim, production-device control, or final closure in
+this repository slice.
 
 ## Interfaces
 
@@ -64,7 +74,12 @@ The private FastAPI application exposes:
 
 - `POST /api/v1/baselines` and `GET /api/v1/baselines/{baseline_id}` for the
   demonstrator baseline seam;
-- `GET /api/v1/incidents/{incident_id}` for immutable report and packet retrieval;
+- `GET /api/v1/incidents`, `GET /api/v1/incidents/{incident_id}`, and
+  `GET /api/v1/incidents/{incident_id}/timeline` for the professional-review
+  view;
+- `POST /api/v1/incidents/{incident_id}/professional-dispositions` and
+  `POST /api/v1/incidents/{incident_id}/operator-attestations` for attributable
+  human records only;
 - `POST /internal/drive-reconcile` for the source principal;
 - `POST /internal/site-observations` for the telemetry principal;
 - `POST /internal/outbox-drain` for the scheduler principal; and
@@ -73,8 +88,8 @@ The private FastAPI application exposes:
   `/healthz` remains available for container checks, but Cloud Run reserves some
   paths ending in `z`, so live callers use `/health`.
 
-The narrow CLI registers only a demo baseline. It cannot submit or mutate a
-production job:
+The narrow CLI records only evidence and advisory lineage. It cannot submit or
+mutate a production job:
 
 ```text
 braille-relay register-demo-baseline \
@@ -83,6 +98,12 @@ braille-relay register-demo-baseline \
   --file-id DRIVE_FILE_ID \
   --revision-id DRIVE_REVISION_ID
 ```
+
+`braille-relay supersede-baseline-production` appends a new advisory production
+link for an independently human-submitted job. It does not submit, hold,
+release, cancel, or otherwise control that job. The local presentation shell is
+started separately with `python -m braille_errata_relay.presentation.app`; it
+always binds only `127.0.0.1`.
 
 ## Verification
 
@@ -126,6 +147,11 @@ Sanitized Slice 2.1 closure evidence is recorded separately in
 [`demo/evidence/report-first-live-closure.json`](demo/evidence/report-first-live-closure.json)
 and validated by
 [`schemas/report-first-live-closure-evidence.v1.json`](schemas/report-first-live-closure-evidence.v1.json).
+Slice 2.2 adds a separate, sanitized
+[`demo/evidence/active-professional-review.json`](demo/evidence/active-professional-review.json)
+record. It truthfully records implementation and verification state while the
+new active Story 3 live walkthrough remains `NOT_RUN`; it does not claim any
+human disposition, CUPS cancellation, endpoint completion, or attestation.
 
 The frozen container was built, its real Liblouis output matched WSL byte for
 byte, and a private Frankfurt revision was deployed by immutable image digest.

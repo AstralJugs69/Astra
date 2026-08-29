@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "baseline-production-link-supersession-request.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scheduler_job_id", "expected_state_version", "idempotency_key"],
+  "properties": {
+    "schema_version": {"const": "baseline-production-link-supersession-request.v1"},
+    "scheduler_job_id": {"type": "integer", "minimum": 1},
+    "expected_state_version": {"type": "integer", "minimum": 1},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512}
+  }
+}

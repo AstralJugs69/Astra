@@ -20,6 +20,7 @@ from braille_errata_relay.application.baseline_registration import (
 )
 from braille_errata_relay.application.production_link import (
     production_link_idempotency_key,
+    production_link_supersession_idempotency_key,
 )
 
 
@@ -76,6 +77,16 @@ def _parser() -> argparse.ArgumentParser:
     link.add_argument("--scheduler-job-id", required=True, type=int)
     link.add_argument("--expected-state-version", type=int, default=0)
     link.add_argument("--idempotency-key")
+    supersede = commands.add_parser(
+        "supersede-baseline-production",
+        help="Append an advisory replacement for a human-submitted baseline job; never controls CUPS.",
+    )
+    _add_auth_arguments(supersede)
+    supersede.add_argument("--baseline-id", required=True)
+    supersede.add_argument("--supersedes-production-link-id", required=True)
+    supersede.add_argument("--scheduler-job-id", required=True, type=int)
+    supersede.add_argument("--expected-state-version", type=int, required=True)
+    supersede.add_argument("--idempotency-key")
     telemetry = commands.add_parser(
         "publish-site-observation",
         help="Publish one completed read-only observation JSON; never accepts commands.",
@@ -196,6 +207,8 @@ def _link_baseline_production(args: argparse.Namespace) -> int:
         return 1
     body = response.json()
     link = body.get("production_link", {})
+    baseline_record = body.get("baseline", {})
+    baseline = baseline_record.get("baseline", {}) if isinstance(baseline_record, dict) else {}
     print(
         json.dumps(
             {
@@ -204,6 +217,78 @@ def _link_baseline_production(args: argparse.Namespace) -> int:
                 "link_id": link.get("link_id") if isinstance(link, dict) else None,
                 "scheduler_job_id": (
                     link.get("scheduler_job_id") if isinstance(link, dict) else None
+                ),
+                "baseline_state_version": (
+                    baseline.get("state_version") if isinstance(baseline, dict) else None
+                ),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _supersede_baseline_production(args: argparse.Namespace) -> int:
+    idempotency_key = args.idempotency_key or production_link_supersession_idempotency_key(
+        baseline_id=args.baseline_id,
+        supersedes_production_link_id=args.supersedes_production_link_id,
+        scheduler_job_id=args.scheduler_job_id,
+        expected_state_version=args.expected_state_version,
+    )
+    token = _identity_token(
+        audience=args.audience,
+        impersonate_service_account=args.impersonate_service_account,
+    )
+    response = httpx.post(
+        (
+            f"{args.service_url.rstrip('/')}/api/v1/baselines/{args.baseline_id}"
+            "/production-link-supersessions"
+        ),
+        json={
+            "schema_version": "baseline-production-link-supersession-request.v1",
+            "scheduler_job_id": args.scheduler_job_id,
+            "expected_state_version": args.expected_state_version,
+            "idempotency_key": idempotency_key,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60.0,
+    )
+    if response.status_code not in {200, 201}:
+        body = (
+            response.json()
+            if response.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "BLOCKED",
+                    "http_status": response.status_code,
+                    "blocking_reason": body.get("blocking_reason"),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    body = response.json()
+    link = body.get("production_link", {})
+    baseline_record = body.get("baseline", {})
+    baseline = baseline_record.get("baseline", {}) if isinstance(baseline_record, dict) else {}
+    print(
+        json.dumps(
+            {
+                "status": body.get("status"),
+                "duplicate": body.get("duplicate"),
+                "link_id": link.get("link_id") if isinstance(link, dict) else None,
+                "supersedes_production_link_id": (
+                    link.get("supersedes_production_link_id") if isinstance(link, dict) else None
+                ),
+                "scheduler_job_id": (
+                    link.get("scheduler_job_id") if isinstance(link, dict) else None
+                ),
+                "baseline_state_version": (
+                    baseline.get("state_version") if isinstance(baseline, dict) else None
                 ),
             },
             sort_keys=True,
@@ -272,6 +357,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _register_demo_baseline(args)
     if args.command == "link-baseline-production":
         return _link_baseline_production(args)
+    if args.command == "supersede-baseline-production":
+        return _supersede_baseline_production(args)
     if args.command == "publish-site-observation":
         return _publish_site_observation(args)
     raise AssertionError("unreachable command")

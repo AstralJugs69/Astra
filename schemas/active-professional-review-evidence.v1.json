@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "active-professional-review-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "recorded_at", "branch", "base_commit", "governing_documents",
+    "implementation", "live_story", "verification", "remaining_blockers"
+  ],
+  "properties": {
+    "schema_version": {"const": "active-professional-review-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "branch": {"const": "codex/slice-2-2-active-professional-review"},
+    "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "governing_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction.md", "architecture.md"],
+      "properties": {
+        "instruction.md": {"$ref": "#/$defs/sha256"},
+        "architecture.md": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_acceptance", "append_only_supersession", "professional_review_api",
+        "loopback_presentation", "print_only_human_harness"
+      ],
+      "properties": {
+        "active_acceptance": {"const": "PASS"},
+        "append_only_supersession": {"const": "PASS"},
+        "professional_review_api": {"const": "PASS"},
+        "loopback_presentation": {"const": "PASS"},
+        "print_only_human_harness": {"const": "PASS"}
+      }
+    },
+    "live_story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "active_acceptance", "supersession", "professional_disposition",
+        "queue_cancellation_observation", "operator_attestation"
+      ],
+      "properties": {
+        "status": {"const": "NOT_RUN"},
+        "active_acceptance": {"const": "NOT_RUN"},
+        "supersession": {"const": "NOT_RUN"},
+        "professional_disposition": {"const": "NOT_RUN"},
+        "queue_cancellation_observation": {"const": "NOT_RUN"},
+        "operator_attestation": {"const": "NOT_RUN"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frozen_tests", "ruff", "format", "mypy", "lock", "docker", "liblouis", "cups"
+      ],
+      "properties": {
+        "frozen_tests": {"enum": ["PASS", "BLOCKED"]},
+        "ruff": {"enum": ["PASS", "BLOCKED"]},
+        "format": {"enum": ["PASS", "BLOCKED"]},
+        "mypy": {"enum": ["PASS", "BLOCKED"]},
+        "lock": {"enum": ["PASS", "BLOCKED"]},
+        "docker": {"enum": ["PASS", "BLOCKED"]},
+        "liblouis": {"enum": ["PASS", "BLOCKED"]},
+        "cups": {"enum": ["PASS", "BLOCKED"]}
+      }
+    },
+    "remaining_blockers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -23,6 +23,7 @@ from braille_errata_relay.application.endpoint_receipt import (
 from braille_errata_relay.application.incident_workflow import IncidentWorkflow
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
 from braille_errata_relay.application.production_link import ProductionLinkWorkflow
+from braille_errata_relay.application.professional_review import ProfessionalReviewWorkflow
 from braille_errata_relay.application.semantic_workflow import IdempotentSemanticWorkflow
 from braille_errata_relay.application.telemetry_ingestion import (
     TelemetryAllowlist,
@@ -44,6 +45,7 @@ class RuntimeDependencies:
     production_link_workflow: ProductionLinkWorkflow | None
     endpoint_receipt_workflow: EndpointReceiptWorkflow | None
     historical_link_correction_workflow: HistoricalLinkCorrectionWorkflow | None
+    professional_review_workflow: ProfessionalReviewWorkflow | None
     telemetry_workflow: TelemetryIngestionWorkflow | None
     incident_workflow: IncidentWorkflow | None
     outbox_workflow: OutboxDrainWorkflow | None
@@ -53,35 +55,37 @@ class RuntimeDependencies:
 def build_runtime_dependencies() -> RuntimeDependencies:
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         return RuntimeDependencies(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            GoogleOidcVerifier(),
+            settings=None,
+            assessor=None,
+            ledger=None,
+            drive_workflow=None,
+            baseline_workflow=None,
+            production_link_workflow=None,
+            endpoint_receipt_workflow=None,
+            historical_link_correction_workflow=None,
+            professional_review_workflow=None,
+            telemetry_workflow=None,
+            incident_workflow=None,
+            outbox_workflow=None,
+            identity_verifier=GoogleOidcVerifier(),
         )
     try:
         settings = CloudSettings.from_env()
     except (ValidationError, ValueError):
         return RuntimeDependencies(
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            GoogleOidcVerifier(),
+            settings=None,
+            assessor=None,
+            ledger=None,
+            drive_workflow=None,
+            baseline_workflow=None,
+            production_link_workflow=None,
+            endpoint_receipt_workflow=None,
+            historical_link_correction_workflow=None,
+            professional_review_workflow=None,
+            telemetry_workflow=None,
+            incident_workflow=None,
+            outbox_workflow=None,
+            identity_verifier=GoogleOidcVerifier(),
         )
     assessor = AdkSemanticAssessor(
         model_id=settings.gemini_model,
@@ -96,6 +100,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
     production_link_workflow = None
     endpoint_receipt_workflow = None
     historical_link_correction_workflow = None
+    professional_review_workflow = None
     telemetry_workflow = None
     incident_workflow = None
     outbox_workflow = None
@@ -165,6 +170,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             historical_link_correction_workflow = HistoricalLinkCorrectionWorkflow(
                 ledger=ledger,
             )
+            professional_review_workflow = ProfessionalReviewWorkflow(ledger=ledger)
     if settings.site_id and settings.bridge_id and settings.cups_queue_name:
         telemetry_workflow = TelemetryIngestionWorkflow(
             ledger=ledger,
@@ -183,6 +189,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
         production_link_workflow,
         endpoint_receipt_workflow,
         historical_link_correction_workflow,
+        professional_review_workflow,
         telemetry_workflow,
         incident_workflow,
         outbox_workflow,

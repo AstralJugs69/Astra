@@ -13,6 +13,7 @@ from braille_errata_relay.domain.errors import BaselineStateConflictError
 from braille_errata_relay.domain.models import (
     BaselineProductionLink,
     BaselineStatus,
+    EndpointReceipt,
     ProductionLinkBlockingReason,
     RegisteredBaseline,
     SiteObservation,
@@ -57,6 +58,32 @@ class ProductionLinkLedger(Protocol):
         idempotency_key: str,
     ) -> ProductionLinkCommit: ...
 
+    async def get_production_link(self, baseline_id: str) -> BaselineProductionLink | None: ...
+
+    async def get_endpoint_receipt_for_link(
+        self,
+        *,
+        baseline_id: str,
+        production_link_id: str,
+    ) -> EndpointReceipt | None: ...
+
+    async def get_production_link_supersession_by_idempotency(
+        self,
+        *,
+        baseline_id: str,
+        scheduler_job_id: int,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit | None: ...
+
+    async def supersede_baseline_production(
+        self,
+        *,
+        proposed_link: BaselineProductionLink,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit: ...
+
 
 @dataclass(frozen=True)
 class ProductionLinkResult:
@@ -79,6 +106,24 @@ def production_link_idempotency_key(
     return canonical_sha256(
         {
             "baseline_id": baseline_id,
+            "scheduler_job_id": scheduler_job_id,
+            "expected_state_version": expected_state_version,
+        }
+    )
+
+
+def production_link_supersession_idempotency_key(
+    *,
+    baseline_id: str,
+    supersedes_production_link_id: str,
+    scheduler_job_id: int,
+    expected_state_version: int,
+) -> str:
+    return canonical_sha256(
+        {
+            "scope": "baseline-production-link-supersession",
+            "baseline_id": baseline_id,
+            "supersedes_production_link_id": supersedes_production_link_id,
             "scheduler_job_id": scheduler_job_id,
             "expected_state_version": expected_state_version,
         }
@@ -195,6 +240,137 @@ class ProductionLinkWorkflow:
         )
         try:
             commit = await self.ledger.link_baseline_production(
+                proposed_link=proposed_link,
+                expected_state_version=expected_state_version,
+                idempotency_key=idempotency_key,
+            )
+        except BaselineStateConflictError as exc:
+            raise ProductionLinkConflict(ProductionLinkBlockingReason.STALE_STATE_VERSION) from exc
+        return ProductionLinkResult(commit.baseline, commit.link, commit.duplicate)
+
+    async def supersede(
+        self,
+        *,
+        baseline_id: str,
+        scheduler_job_id: int,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkResult:
+        baseline = await self.ledger.get_baseline(baseline_id)
+        if baseline is None:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.BASELINE_NOT_FOUND)
+        replay = await self.ledger.get_production_link_supersession_by_idempotency(
+            baseline_id=baseline_id,
+            scheduler_job_id=scheduler_job_id,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+        if replay is not None:
+            expected_replay_key = production_link_supersession_idempotency_key(
+                baseline_id=baseline_id,
+                supersedes_production_link_id=(replay.link.supersedes_production_link_id or ""),
+                scheduler_job_id=scheduler_job_id,
+                expected_state_version=expected_state_version,
+            )
+            if (
+                replay.link.schema_version != "baseline-production-link.v3"
+                or replay.link.supersedes_production_link_id is None
+                or replay.link.scheduler_job_id != scheduler_job_id
+                or replay.link.baseline_state_version != expected_state_version + 1
+                or idempotency_key != expected_replay_key
+            ):
+                raise ProductionLinkConflict(ProductionLinkBlockingReason.IDEMPOTENCY_KEY_MISMATCH)
+            return ProductionLinkResult(replay.baseline, replay.link, True)
+        current_link = await self.ledger.get_production_link(baseline_id)
+        if current_link is None:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.MISSING_ENDPOINT_EVIDENCE)
+        expected_key = production_link_supersession_idempotency_key(
+            baseline_id=baseline_id,
+            supersedes_production_link_id=current_link.link_id,
+            scheduler_job_id=scheduler_job_id,
+            expected_state_version=expected_state_version,
+        )
+        if idempotency_key != expected_key:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.IDEMPOTENCY_KEY_MISMATCH)
+        if baseline.baseline.state_version != expected_state_version:
+            raise ProductionLinkConflict(ProductionLinkBlockingReason.STALE_STATE_VERSION)
+        if baseline.baseline.status is not BaselineStatus.PROVISIONAL_PRODUCTION_LINK:
+            raise ProductionLinkConflict(ProductionLinkBlockingReason.BASELINE_NOT_PROVISIONAL_LINK)
+        if scheduler_job_id == current_link.scheduler_job_id:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.DUPLICATE_SCHEDULER_JOB)
+        if (
+            await self.ledger.get_endpoint_receipt_for_link(
+                baseline_id=baseline_id,
+                production_link_id=current_link.link_id,
+            )
+            is not None
+        ):
+            raise ProductionLinkConflict(ProductionLinkBlockingReason.ACTIVE_LINK_ALREADY_CONFIRMED)
+        observation = await self.ledger.get_latest_site_observation(
+            site_id=baseline.baseline.site_id,
+            bridge_id=self.bridge_id,
+            queue_name=baseline.baseline.queue_name,
+        )
+        if observation is None:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.MISSING_SITE_OBSERVATION)
+        if (
+            observation.site_id != baseline.baseline.site_id
+            or observation.bridge_id != self.bridge_id
+            or observation.queue_name != baseline.baseline.queue_name
+        ):
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.WRONG_QUEUE)
+        now = self.clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        observed_at = observation.observed_at
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        age = (now - observed_at).total_seconds()
+        if age > self.observation_max_age_seconds or age < -self.max_future_skew_seconds:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.STALE_SITE_OBSERVATION)
+        matches = tuple(
+            job for job in observation.observations if job.scheduler_job_id == scheduler_job_id
+        )
+        if not matches:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.WRONG_JOB)
+        if len(matches) != 1:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.AMBIGUOUS_SITE_OBSERVATION)
+        job = matches[0]
+        if job.destination != baseline.baseline.queue_name:
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.WRONG_QUEUE)
+        expected_title = canonical_baseline_job_title(baseline)
+        if job.title != expected_title:
+            if baseline.baseline.approved_brf_sha256[:12] not in job.title:
+                raise ProductionLinkRejected(ProductionLinkBlockingReason.WRONG_ARTIFACT)
+            raise ProductionLinkRejected(ProductionLinkBlockingReason.WRONG_TITLE)
+        proposed_link = BaselineProductionLink(
+            schema_version="baseline-production-link.v3",
+            link_id=canonical_sha256(
+                {
+                    "baseline_id": baseline_id,
+                    "supersedes_production_link_id": current_link.link_id,
+                    "scheduler_job_id": scheduler_job_id,
+                    "site_observation_id": observation.observation_id,
+                }
+            ),
+            baseline_id=baseline_id,
+            supersedes_production_link_id=current_link.link_id,
+            scheduler_job_id=scheduler_job_id,
+            scheduler_job_title=job.title,
+            site_observation_id=observation.observation_id,
+            site_id=observation.site_id,
+            bridge_id=observation.bridge_id,
+            queue_name=observation.queue_name,
+            baseline_brf_sha256=baseline.baseline.approved_brf_sha256,
+            baseline_state_version=expected_state_version + 1,
+            idempotency_key_sha256=canonical_sha256(
+                {"scope": "baseline-production-link-supersession", "key": idempotency_key}
+            ),
+            evidence_observed_at=observation.observed_at,
+            linked_at=now,
+        )
+        try:
+            commit = await self.ledger.supersede_baseline_production(
                 proposed_link=proposed_link,
                 expected_state_version=expected_state_version,
                 idempotency_key=idempotency_key,

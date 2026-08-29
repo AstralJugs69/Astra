@@ -74,6 +74,10 @@ class ProductionLinkBlockingReason(StrEnum):
     ENDPOINT_EVIDENCE_MISMATCH = "ENDPOINT_EVIDENCE_MISMATCH"
     ENDPOINT_EVIDENCE_CONFLICT = "ENDPOINT_EVIDENCE_CONFLICT"
     HISTORICAL_CORRECTION_REQUIRED = "HISTORICAL_CORRECTION_REQUIRED"
+    BASELINE_NOT_PROVISIONAL_LINK = "BASELINE_NOT_PROVISIONAL_LINK"
+    ACTIVE_LINK_ALREADY_CONFIRMED = "ACTIVE_LINK_ALREADY_CONFIRMED"
+    DUPLICATE_SCHEDULER_JOB = "DUPLICATE_SCHEDULER_JOB"
+    SUPERSESSION_LINK_MISMATCH = "SUPERSESSION_LINK_MISMATCH"
 
 
 class IncidentState(StrEnum):
@@ -179,6 +183,7 @@ class TruthBasis(StrEnum):
 
 
 class CaptureState(StrEnum):
+    RECEIVED = "RECEIVED"
     COMPLETED = "COMPLETED"
     TERMINATED = "TERMINATED"
     FAILED = "FAILED"
@@ -393,11 +398,12 @@ class RegisteredBaseline(DomainModel):
 
 
 class BaselineProductionLink(DomainModel):
-    schema_version: Literal["baseline-production-link.v1", "baseline-production-link.v2"] = (
-        "baseline-production-link.v2"
-    )
+    schema_version: Literal[
+        "baseline-production-link.v1", "baseline-production-link.v2", "baseline-production-link.v3"
+    ] = "baseline-production-link.v2"
     link_id: HexSha256
     baseline_id: HexSha256
+    supersedes_production_link_id: HexSha256 | None = None
     scheduler_job_id: int = Field(gt=0)
     scheduler_job_title: NonEmpty
     site_observation_id: HexSha256
@@ -422,16 +428,25 @@ class BaselineProductionLink(DomainModel):
                 raise ValueError("legacy production link timestamps are inconsistent")
             if self.verification_basis != "READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX":
                 raise ValueError("legacy production link basis is inconsistent")
-        else:
+        elif self.schema_version == "baseline-production-link.v2":
             if self.linked_at is None or self.verified_at is not None:
                 raise ValueError("advisory production link timestamps are inconsistent")
             if self.verification_basis != "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY":
                 raise ValueError("advisory production link basis is inconsistent")
+            if self.supersedes_production_link_id is not None:
+                raise ValueError("initial advisory production link cannot supersede another link")
+        else:
+            if self.linked_at is None or self.verified_at is not None:
+                raise ValueError("superseding production link timestamps are inconsistent")
+            if self.verification_basis != "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY":
+                raise ValueError("superseding production link basis is inconsistent")
+            if self.supersedes_production_link_id is None:
+                raise ValueError("superseding production link must name the prior advisory link")
         return self
 
 
 class EndpointReceipt(DomainModel):
-    schema_version: Literal["endpoint-receipt.v1"] = "endpoint-receipt.v1"
+    schema_version: Literal["endpoint-receipt.v1", "endpoint-receipt.v2"] = "endpoint-receipt.v1"
     receipt_id: HexSha256
     baseline_id: HexSha256
     production_link_id: HexSha256
@@ -444,8 +459,11 @@ class EndpointReceipt(DomainModel):
     )
     approved_baseline_brf_sha256: HexSha256
     endpoint_received_sha256: HexSha256
-    capture_manifest_sha256: HexSha256
-    terminal_event_sha256: HexSha256
+    capture_manifest_sha256: HexSha256 | None = None
+    terminal_event_sha256: HexSha256 | None = None
+    capture_acceptance_sha256: HexSha256 | None = None
+    accepted_event_sha256: HexSha256 | None = None
+    previous_event_sha256: HexSha256 | None = None
     capture_state: CaptureState
     evidence_timestamp: datetime
     verified_at: datetime
@@ -460,6 +478,27 @@ class EndpointReceipt(DomainModel):
     def validate_exact_bytes_and_version(self) -> EndpointReceipt:
         if self.endpoint_received_sha256 != self.approved_baseline_brf_sha256:
             raise ValueError("endpoint-received bytes do not match the approved baseline")
+        if self.capture_state is CaptureState.RECEIVED:
+            if self.schema_version != "endpoint-receipt.v2":
+                raise ValueError("active endpoint receipt requires endpoint-receipt.v2")
+            if (
+                self.capture_manifest_sha256 is not None
+                or self.terminal_event_sha256 is not None
+                or self.capture_acceptance_sha256 is None
+                or self.accepted_event_sha256 is None
+            ):
+                raise ValueError("active receipt must contain only immutable acceptance evidence")
+        elif self.capture_manifest_sha256 is None or self.terminal_event_sha256 is None:
+            raise ValueError("terminal receipt requires a manifest and terminal event evidence")
+        elif self.schema_version == "endpoint-receipt.v1" and any(
+            value is not None
+            for value in (
+                self.capture_acceptance_sha256,
+                self.accepted_event_sha256,
+                self.previous_event_sha256,
+            )
+        ):
+            raise ValueError("legacy terminal receipt cannot carry active acceptance fields")
         if self.baseline_state_version != self.expected_baseline_state_version + 1:
             raise ValueError("endpoint receipt target version is invalid")
         if not self.artifact_uri.startswith("gs://"):
@@ -468,7 +507,9 @@ class EndpointReceipt(DomainModel):
 
 
 class EndpointEvidenceSubmission(DomainModel):
-    schema_version: Literal["endpoint-evidence-submission.v1"] = "endpoint-evidence-submission.v1"
+    schema_version: Literal[
+        "endpoint-evidence-submission.v1", "endpoint-evidence-submission.v2"
+    ] = "endpoint-evidence-submission.v1"
     baseline_id: HexSha256
     production_link_id: HexSha256
     scheduler_job_id: int = Field(gt=0)
@@ -480,8 +521,11 @@ class EndpointEvidenceSubmission(DomainModel):
     )
     approved_baseline_brf_sha256: HexSha256
     endpoint_received_sha256: HexSha256
-    capture_manifest_sha256: HexSha256
-    terminal_event_sha256: HexSha256
+    capture_manifest_sha256: HexSha256 | None = None
+    terminal_event_sha256: HexSha256 | None = None
+    capture_acceptance_sha256: HexSha256 | None = None
+    accepted_event_sha256: HexSha256 | None = None
+    previous_event_sha256: HexSha256 | None = None
     capture_state: CaptureState
     evidence_timestamp: datetime
     truth_basis: Literal["SIMULATED_DEMO"] = "SIMULATED_DEMO"
@@ -492,6 +536,29 @@ class EndpointEvidenceSubmission(DomainModel):
     def validate_exact_received_bytes(self) -> EndpointEvidenceSubmission:
         if self.endpoint_received_sha256 != self.approved_baseline_brf_sha256:
             raise ValueError("endpoint-received bytes do not match the approved baseline")
+        if self.capture_state is CaptureState.RECEIVED:
+            if self.schema_version != "endpoint-evidence-submission.v2":
+                raise ValueError(
+                    "active endpoint evidence requires endpoint-evidence-submission.v2"
+                )
+            if (
+                self.capture_manifest_sha256 is not None
+                or self.terminal_event_sha256 is not None
+                or self.capture_acceptance_sha256 is None
+                or self.accepted_event_sha256 is None
+            ):
+                raise ValueError("active evidence must not infer terminal completion")
+        elif self.capture_manifest_sha256 is None or self.terminal_event_sha256 is None:
+            raise ValueError("terminal evidence requires a manifest and terminal event evidence")
+        elif self.schema_version == "endpoint-evidence-submission.v1" and any(
+            value is not None
+            for value in (
+                self.capture_acceptance_sha256,
+                self.accepted_event_sha256,
+                self.previous_event_sha256,
+            )
+        ):
+            raise ValueError("legacy terminal evidence cannot carry active acceptance fields")
         return self
 
 
@@ -693,10 +760,11 @@ class SiteObservation(DomainModel):
 
 
 class ProfessionalDisposition(DomainModel):
+    schema_version: Literal["professional-disposition.v1"] = "professional-disposition.v1"
     record_id: HexSha256
     incident_id: HexSha256
     decision: ProfessionalDecision
-    selected_role: str = "production_coordinator"
+    selected_role: Literal["production_coordinator"] = "production_coordinator"
     expected_state_version: int = Field(ge=0)
     idempotency_key: NonEmpty
     note: BoundedNote = ""
@@ -705,14 +773,45 @@ class ProfessionalDisposition(DomainModel):
 
 
 class OperatorAttestation(DomainModel):
+    schema_version: Literal["operator-attestation.v1"] = "operator-attestation.v1"
     record_id: HexSha256
     incident_id: HexSha256
     attestation_type: AttestationType
     truth_basis: TruthBasis
-    selected_role: str = "machine_operator"
+    selected_role: Literal["machine_operator"] = "machine_operator"
     expected_state_version: int = Field(ge=0)
     idempotency_key: NonEmpty
     note: BoundedNote = ""
+    actor_principal: NonEmpty
+    recorded_at: datetime
+
+
+class IncidentReviewState(DomainModel):
+    """Mutable human-workflow head backed by immutable disposition records."""
+
+    incident_id: HexSha256
+    baseline_id: HexSha256
+    state: IncidentState
+    state_version: int = Field(ge=0)
+    report_ready_at: datetime
+    current_candidate_sha256: HexSha256
+    blocking_reason: BlockingReason | None = None
+    last_attributable_evidence_id: NonEmpty | None = None
+    updated_at: datetime
+
+
+class HumanTimelineEventKind(StrEnum):
+    PROFESSIONAL_DISPOSITION = "PROFESSIONAL_DISPOSITION"
+    OPERATOR_ATTESTATION = "OPERATOR_ATTESTATION"
+
+
+class IncidentTimelineEvent(DomainModel):
+    schema_version: Literal["incident-timeline-event.v1"] = "incident-timeline-event.v1"
+    event_id: HexSha256
+    incident_id: HexSha256
+    kind: HumanTimelineEventKind
+    record_id: HexSha256
+    state_version: int = Field(ge=1)
     actor_principal: NonEmpty
     recorded_at: datetime
 
