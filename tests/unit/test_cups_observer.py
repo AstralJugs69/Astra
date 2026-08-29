@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "local_bridge" / "src"))
 
-from relay_bridge.cups_observer import ReadOnlyCupsObserver
+from relay_bridge.cups_observer import CupsRequiredJobNotFound, ReadOnlyCupsObserver
 
 
 class _FakeConnection:
@@ -64,6 +64,8 @@ class _FakeConnection:
 
     def getJobAttributes(self, scheduler_job_id: int) -> dict[str, Any]:
         self.__class__.calls.append("getJobAttributes")
+        if scheduler_job_id == 99:
+            raise RuntimeError(1030, "client-error-not-found")
         if scheduler_job_id == 43:
             return {
                 "job-name": "foreign",
@@ -107,6 +109,32 @@ def test_observer_emits_only_normalized_get_operation_data(monkeypatch: pytest.M
 
     with pytest.raises(ValueError, match="does not match configured queue"):
         observer.job_snapshot(43)
+
+
+def test_observer_requires_exact_job_without_substituting_from_queue_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "cups", types.SimpleNamespace(Connection=_FakeConnection))
+
+    observer = ReadOnlyCupsObserver(
+        server="localhost:631",
+        queue_name="Braille-Embosser-Sim",
+    )
+    snapshot = observer.queue_snapshot(required_job_id=42)
+
+    assert [job["scheduler_job_id"] for job in snapshot["jobs"]] == [42]
+    assert snapshot["jobs"][0]["title"] == "title"
+    assert snapshot["jobs"][0]["state"] == "COMPLETED"
+    assert _FakeConnection.calls == ["getJobs", "getJobAttributes", "getPrinterAttributes"]
+
+    with pytest.raises(ValueError, match="does not match configured queue"):
+        observer.queue_snapshot(required_job_id=43)
+
+    with pytest.raises(ValueError, match="must be positive"):
+        observer.queue_snapshot(required_job_id=0)
+
+    with pytest.raises(CupsRequiredJobNotFound, match="required CUPS job 99 is unavailable"):
+        observer.queue_snapshot(required_job_id=99)
 
 
 def test_observation_builder_rejects_mixed_observation_timestamps() -> None:

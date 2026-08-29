@@ -15,6 +15,14 @@ class CupsObserverUnavailable(RuntimeError):
     pass
 
 
+class CupsRequiredJobNotFound(CupsObserverUnavailable):
+    """The explicitly attributed CUPS job is no longer observable.
+
+    A bridge caller must never substitute a queue-listing entry for this
+    condition.  The caller needs a fresh, human-supplied scheduler job ID.
+    """
+
+
 _JOB_STATE_NAMES = {
     3: "PENDING",
     4: "PENDING_HELD",
@@ -147,6 +155,17 @@ def _normalize_printer_state(value: Any) -> str:
         return "unknown"
 
 
+def _is_ipp_not_found(error: Exception) -> bool:
+    """Recognize pycups' portable representation of IPP not-found.
+
+    ``cups.IPPError`` exposes numeric and textual values in ``args`` across
+    supported pycups releases.  Avoid importing a libcups-specific constant so
+    the adapter remains usable with the pinned binding and its test double.
+    """
+
+    return any("client-error-not-found" in str(value).casefold() for value in error.args)
+
+
 def _normalize_destination(attributes: dict[str, Any]) -> str:
     value = attributes.get("printer-name")
     if value is None:
@@ -208,7 +227,15 @@ class ReadOnlyCupsObserver:
         self._connection = cups.Connection(host=host, port=port)
         self._queue_name = queue_name
 
-    def queue_snapshot(self) -> dict[str, Any]:
+    def queue_snapshot(self, *, required_job_id: int | None = None) -> dict[str, Any]:
+        """Return normalized queue state, optionally requiring one exact job.
+
+        ``Get-Jobs`` may omit a retained job under a facility's job-privacy
+        policy even when the separately authorized ``Get-Job-Attributes``
+        operation can still read it.  A caller that already has an attributable
+        scheduler ID may require that exact read.  This is never a fallback to
+        a different job: an absent or wrong-queue job fails closed.
+        """
         observed_at = datetime.now(UTC).isoformat()
         try:
             jobs = self._connection.getJobs(
@@ -218,8 +245,8 @@ class ReadOnlyCupsObserver:
             )
         except TypeError:
             jobs = self._connection.getJobs(which_jobs="all", my_jobs=False)
-        normalized_jobs = [
-            normalize_job_attributes(
+        normalized_by_id = {
+            int(job_id): normalize_job_attributes(
                 int(job_id),
                 dict(attributes),
                 queue_name=self._queue_name,
@@ -227,7 +254,29 @@ class ReadOnlyCupsObserver:
             )
             for job_id, attributes in sorted((jobs or {}).items(), key=lambda item: int(item[0]))
             if self._is_configured_queue(dict(attributes))
-        ]
+        }
+        if required_job_id is not None:
+            if required_job_id <= 0:
+                raise ValueError("required scheduler job ID must be positive")
+            try:
+                required_attributes = dict(self._connection.getJobAttributes(required_job_id))
+            except Exception as exc:
+                if _is_ipp_not_found(exc):
+                    raise CupsRequiredJobNotFound(
+                        f"required CUPS job {required_job_id} is unavailable"
+                    ) from exc
+                raise
+            required_job = normalize_job_attributes(
+                required_job_id,
+                required_attributes,
+                queue_name=self._queue_name,
+                observed_at=observed_at,
+            )
+            if required_job["destination"] != self._queue_name:
+                raise ValueError("CUPS job destination does not match configured queue")
+            # The exact response is more authoritative than a list response
+            # taken milliseconds earlier and is the only extra job permitted.
+            normalized_by_id[required_job_id] = required_job
         printer = self._connection.getPrinterAttributes(
             self._queue_name,
             requested_attributes=[
@@ -239,7 +288,7 @@ class ReadOnlyCupsObserver:
         return {
             "queue_name": self._queue_name,
             "observed_at": observed_at,
-            "jobs": normalized_jobs,
+            "jobs": [normalized_by_id[job_id] for job_id in sorted(normalized_by_id)],
             "printer": normalize_printer_attributes(dict(printer)),
         }
 

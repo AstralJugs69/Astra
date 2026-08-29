@@ -49,6 +49,10 @@ def test_cups_policy_allows_system_setup_reads_but_not_observer_mutations() -> N
     mutation_start = policy.index("<Limit Create-Job")
     mutation = policy[mutation_start : policy.index("</Limit>", mutation_start)]
 
+    assert "JobPrivateAccess default" in policy
+    assert "JobPrivateValues job-originating-host-name job-originating-user-name phone" in policy
+    assert "JobPrivateValues default" not in policy
+    assert "JobPrivateValues none" not in policy
     assert "Require user relay-observer relay-operator @SYSTEM" in policy
     assert "Require user relay-operator @SYSTEM" in mutation
     assert "relay-observer" not in mutation

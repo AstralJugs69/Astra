@@ -11,7 +11,6 @@ from typing import Protocol
 
 from braille_errata_relay.adapters.adk_assessor import (
     SemanticAssessmentBlocked,
-    SemanticAssessmentUnavailable,
 )
 from braille_errata_relay.adapters.firestore_ledger import (
     IncidentCheckpointCommit,
@@ -20,7 +19,6 @@ from braille_errata_relay.adapters.firestore_ledger import (
 from braille_errata_relay.adapters.gcs_artifacts import content_addressed_ref
 from braille_errata_relay.application.semantic_workflow import (
     IdempotentSemanticWorkflow,
-    SemanticExecutionInProgress,
     SemanticWorkflowResult,
 )
 from braille_errata_relay.braille.diff import diff_sources
@@ -41,6 +39,7 @@ from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
     AssessmentInput,
+    BaselineStatus,
     BlockingReason,
     BrailleImpact,
     EvidenceSide,
@@ -80,6 +79,13 @@ class IncidentLedger(Protocol):
         self,
         checkpoint: IncidentCheckpoint,
         *,
+        expected_state_version: int,
+    ) -> IncidentCheckpointCommit: ...
+
+    async def allocate_report_created_at(
+        self,
+        *,
+        incident_id: str,
         expected_state_version: int,
     ) -> IncidentCheckpointCommit: ...
 
@@ -272,6 +278,8 @@ class IncidentWorkflow:
                 updated_at=source.fetched_at,
             )
             return IncidentWorkflowResult(checkpoint, None, None, duplicate_source=True)
+        if baseline.baseline.status is not BaselineStatus.PRODUCTION_LINK_VERIFIED:
+            raise IncidentWorkflowError("baseline production link is not verified")
         job_lineage = production_job_lineage_id(baseline)
         identity = incident_id(
             baseline_manifest_sha256=baseline.baseline.baseline_manifest_sha256,
@@ -454,11 +462,7 @@ class IncidentWorkflow:
                 stage=IncidentWorkflowStage.NEEDS_REVIEW,
                 updates={"blocking_reason": BlockingReason.BRAILLE_ENGINE_NOT_READY},
             )
-        except (
-            SemanticAssessmentBlocked,
-            SemanticAssessmentUnavailable,
-            SemanticExecutionInProgress,
-        ):
+        except SemanticAssessmentBlocked:
             checkpoint = await self._advance(
                 checkpoint,
                 stage=IncidentWorkflowStage.NEEDS_REVIEW,
@@ -473,6 +477,11 @@ class IncidentWorkflow:
         baseline: RegisteredBaseline,
         source: StoredSourceRevision,
     ) -> IncidentCheckpoint:
+        allocation = await self.ledger.allocate_report_created_at(
+            incident_id=checkpoint.incident_id,
+            expected_state_version=checkpoint.state_version,
+        )
+        checkpoint = allocation.checkpoint
         required = (
             checkpoint.source_diff,
             checkpoint.candidate_brf,
@@ -528,6 +537,8 @@ class IncidentWorkflow:
             observation_id=observation.observation_id if observation is not None else None,
             observation_age_seconds=age,
         )
+        if checkpoint.report_created_at is None:
+            raise IncidentWorkflowError("report creation time was not durably allocated")
         report = ProductionIncidentReport(
             incident_id=checkpoint.incident_id,
             baseline_id=checkpoint.baseline_id,
@@ -539,7 +550,7 @@ class IncidentWorkflow:
             production_context=context,
             recommended_human_steps=tuple(step.value for step in recommendation.steps),
             blocking_reason=recommendation.blocking_reason,
-            created_at=source.fetched_at,
+            created_at=checkpoint.report_created_at,
         )
         report_body = report.model_dump(mode="json")
         report_ref = await self._store_json(

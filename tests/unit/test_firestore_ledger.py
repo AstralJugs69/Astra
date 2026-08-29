@@ -14,9 +14,20 @@ from braille_errata_relay.adapters.firestore_ledger import (
 )
 from braille_errata_relay.adapters.gcs_artifacts import source_snapshot_ref
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
+from braille_errata_relay.domain.errors import BaselineStateConflictError
 from braille_errata_relay.domain.models import (
+    ArtifactKind,
+    ArtifactOrigin,
+    ArtifactRef,
+    BaselineArtifacts,
+    BaselineProductionLink,
+    BaselineStatus,
     DriveChangeBatch,
     DriveChangeSignal,
+    IncidentCheckpoint,
+    IncidentWorkflowStage,
+    ProductionBaseline,
+    RegisteredBaseline,
     SemanticAssessment,
     SiteObservation,
     SourceLocator,
@@ -199,8 +210,134 @@ async def test_change_batch_commits_cursor_receipt_revision_execution_and_outbox
     assert content_not_present(client.store)
 
 
+@pytest.mark.asyncio
+async def test_change_batch_recovers_a_preexisting_identical_source_claim_without_rewriting_fetch_time() -> (
+    None
+):
+    client = FakeClient()
+    ledger = _ledger(client)
+    scope_hash = "d" * 64
+    await ledger.initialize_cursor(scope_hash, "cursor-start")
+    batch, refs = _batch()
+    _, revision_records, _ = ledger._prepare_change_records(
+        principal_scope_hash=scope_hash,
+        batch=batch,
+        artifact_refs=refs,
+    )
+    revision = revision_records[0]
+    original_fetched_at = datetime(2026, 8, 28, tzinfo=UTC)
+    existing = {
+        **revision,
+        "fetched_at": original_fetched_at,
+    }
+    existing["payload_sha256"] = canonical_sha256(existing)
+    client.store[f"source_revisions/{revision['revision_id']}"] = {
+        **existing,
+        "claimed_at": original_fetched_at,
+    }
+
+    committed = await ledger.commit_change_batch(
+        principal_scope_hash=scope_hash,
+        batch=batch,
+        artifact_refs=refs,
+    )
+
+    assert committed.duplicate is False
+    assert len(committed.outbox_ids) == 1
+    persisted = client.store[f"source_revisions/{revision['revision_id']}"]
+    assert persisted["fetched_at"] == original_fetched_at
+    assert sum(path.startswith("event_receipts/") for path in client.store) == 1
+    assert sum(path.startswith("outbox/") for path in client.store) == 1
+
+
+@pytest.mark.asyncio
+async def test_change_batch_rejects_a_preexisting_source_claim_with_different_immutable_lineage() -> (
+    None
+):
+    client = FakeClient()
+    ledger = _ledger(client)
+    scope_hash = "e" * 64
+    await ledger.initialize_cursor(scope_hash, "cursor-start")
+    batch, refs = _batch()
+    _, revision_records, _ = ledger._prepare_change_records(
+        principal_scope_hash=scope_hash,
+        batch=batch,
+        artifact_refs=refs,
+    )
+    revision = revision_records[0]
+    conflicting = {
+        **revision,
+        "provider_version": "different-provider-version",
+    }
+    conflicting["payload_sha256"] = canonical_sha256(conflicting)
+    client.store[f"source_revisions/{revision['revision_id']}"] = conflicting
+
+    with pytest.raises(LedgerIntegrityError, match="source revision claim conflicts"):
+        await ledger.commit_change_batch(
+            principal_scope_hash=scope_hash,
+            batch=batch,
+            artifact_refs=refs,
+        )
+
+
 def content_not_present(store: dict[str, dict[str, object]]) -> bool:
     return "# Synthetic V2" not in repr(store)
+
+
+def _registered_baseline() -> RegisteredBaseline:
+    def artifact(kind: ArtifactKind, marker: str) -> ArtifactRef:
+        return ArtifactRef(
+            sha256=marker * 64,
+            kind=kind,
+            byte_length=10,
+            uri=f"gs://relay-test/{kind.value.lower()}/{marker * 64}",
+        )
+
+    return RegisteredBaseline(
+        baseline=ProductionBaseline(
+            baseline_id="a" * 64,
+            production_id="WO-DEMO-001",
+            source_revision_id="drive:file:62:" + "b" * 64,
+            source_sha256="b" * 64,
+            source_file_id="file",
+            approved_brf_sha256="c" * 64,
+            baseline_manifest_sha256="d" * 64,
+            translation_profile_sha256="e" * 64,
+            artifact_origin=ArtifactOrigin.DEMO_GENERATED_FIXTURE,
+            approval_label="DEMO_FIXTURE_APPROVED",
+            site_id="demo-site",
+            queue_name="Braille-Embosser-Sim",
+        ),
+        artifacts=BaselineArtifacts(
+            source=artifact(ArtifactKind.SOURCE_SNAPSHOT, "b"),
+            normalized_source=artifact(ArtifactKind.NORMALIZED_SOURCE, "f"),
+            approved_brf=artifact(ArtifactKind.BASELINE_BRF, "c"),
+            source_map=artifact(ArtifactKind.SOURCE_MAP, "1"),
+            manifest=artifact(ArtifactKind.ARTIFACT_MANIFEST, "d"),
+            translation_profile=artifact(ArtifactKind.TRANSLATION_PROFILE, "e"),
+        ),
+        created_at=datetime(2026, 8, 29, tzinfo=UTC),
+    )
+
+
+def _production_link(idempotency_key: str) -> BaselineProductionLink:
+    return BaselineProductionLink(
+        link_id="2" * 64,
+        baseline_id="a" * 64,
+        scheduler_job_id=42,
+        scheduler_job_title=f"BER|WO-DEMO-001|{'c' * 12}|BASELINE",
+        site_observation_id="9" * 64,
+        site_id="demo-site",
+        bridge_id="single-pc-bridge",
+        queue_name="Braille-Embosser-Sim",
+        baseline_brf_sha256="c" * 64,
+        baseline_state_version=1,
+        idempotency_key_sha256=canonical_sha256(
+            {"scope": "baseline-production-link", "key": idempotency_key}
+        ),
+        evidence_observed_at=datetime(2026, 8, 29, tzinfo=UTC),
+        verified_at=datetime(2026, 8, 29, tzinfo=UTC),
+    )
 
 
 @pytest.mark.asyncio
@@ -233,6 +370,137 @@ async def test_initialize_cursor_never_overwrites_existing_principal_cursor() ->
 
     assert repeated == first
     assert repeated.raw_token == "cursor-original"
+
+
+@pytest.mark.asyncio
+async def test_production_link_transaction_is_versioned_immutable_and_idempotent() -> None:
+    client = FakeClient()
+    ledger = _ledger(client)
+    baseline = _registered_baseline()
+    idempotency_key = "link-request"
+    link = _production_link(idempotency_key)
+    await ledger.register_baseline(baseline)
+
+    first = await ledger.link_baseline_production(
+        proposed_link=link,
+        expected_state_version=0,
+        idempotency_key=idempotency_key,
+    )
+    replay = await ledger.get_production_link_by_idempotency(
+        baseline_id=baseline.baseline.baseline_id,
+        scheduler_job_id=42,
+        expected_state_version=0,
+        idempotency_key=idempotency_key,
+    )
+    repeated = await ledger.link_baseline_production(
+        proposed_link=link,
+        expected_state_version=0,
+        idempotency_key=idempotency_key,
+    )
+
+    assert first.duplicate is False
+    assert replay is not None and replay.duplicate is True
+    assert repeated.duplicate is True
+    assert first.link == replay.link == repeated.link
+    assert first.baseline.baseline.status is BaselineStatus.PRODUCTION_LINK_VERIFIED
+    assert first.baseline.baseline.state_version == 1
+    assert sum(path.startswith("baseline_production_links/") for path in client.store) == 1
+    assert sum(path.startswith("baseline_production_link_requests/") for path in client.store) == 1
+
+
+@pytest.mark.asyncio
+async def test_production_link_transaction_rejects_stale_version_without_overwrite() -> None:
+    client = FakeClient()
+    ledger = _ledger(client)
+    baseline = _registered_baseline()
+    updated = baseline.model_copy(
+        update={"baseline": baseline.baseline.model_copy(update={"state_version": 1})}
+    )
+    await ledger.register_baseline(updated)
+
+    with pytest.raises(BaselineStateConflictError, match="stale"):
+        await ledger.link_baseline_production(
+            proposed_link=_production_link("stale-request"),
+            expected_state_version=0,
+            idempotency_key="stale-request",
+        )
+
+    persisted = await ledger.get_baseline(baseline.baseline.baseline_id)
+    assert persisted == updated
+    assert not any(path.startswith("baseline_production_links/") for path in client.store)
+
+
+@pytest.mark.asyncio
+async def test_report_timestamps_are_transactionally_allocated_once_across_replay() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 29, 17, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    detected = IncidentCheckpoint(
+        incident_id="6" * 64,
+        baseline_id="7" * 64,
+        new_source_revision_id="drive:file:63:" + "8" * 64,
+        new_source_sha256="8" * 64,
+        production_job_lineage_id="9" * 64,
+        updated_at=now[0],
+    )
+    await ledger.claim_incident(detected)
+    semantic_ready = detected.model_copy(
+        update={
+            "stage": IncidentWorkflowStage.SEMANTIC_READY,
+            "state_version": 1,
+            "updated_at": now[0],
+        }
+    )
+    await ledger.advance_incident(semantic_ready, expected_state_version=0)
+
+    allocated = await ledger.allocate_report_created_at(
+        incident_id=detected.incident_id,
+        expected_state_version=1,
+    )
+    created_at = allocated.checkpoint.report_created_at
+    now[0] += timedelta(seconds=10)
+    allocation_replay = await ledger.allocate_report_created_at(
+        incident_id=detected.incident_id,
+        expected_state_version=1,
+    )
+    report_ref = ArtifactRef(
+        sha256="a" * 64,
+        kind=ArtifactKind.REPORT,
+        byte_length=10,
+        uri="gs://relay-test/reports/report.json",
+    )
+    packet_ref = ArtifactRef(
+        sha256="b" * 64,
+        kind=ArtifactKind.HUMAN_DISPOSITION_PACKET,
+        byte_length=10,
+        uri="gs://relay-test/disposition/packet.json",
+    )
+    report_ready = allocated.checkpoint.model_copy(
+        update={
+            "stage": IncidentWorkflowStage.REPORT_READY,
+            "state_version": allocated.checkpoint.state_version + 1,
+            "report": report_ref,
+            "disposition_packet": packet_ref,
+            "updated_at": now[0],
+        }
+    )
+    committed = await ledger.advance_incident(
+        report_ready,
+        expected_state_version=allocated.checkpoint.state_version,
+    )
+    ready_at = committed.checkpoint.report_ready_at
+    now[0] += timedelta(minutes=1)
+    ready_replay = await ledger.advance_incident(
+        report_ready,
+        expected_state_version=allocated.checkpoint.state_version,
+    )
+
+    assert created_at == datetime(2026, 8, 29, 17, 0, tzinfo=UTC)
+    assert allocation_replay.duplicate is True
+    assert allocation_replay.checkpoint.report_created_at == created_at
+    assert ready_at == datetime(2026, 8, 29, 17, 0, 10, tzinfo=UTC)
+    assert ready_replay.duplicate is True
+    assert ready_replay.checkpoint.report_ready_at == ready_at
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ demo/evidence/*.json
 !demo/evidence/gate0-local-floor.json
 !demo/evidence/cloud-gate0.json
 !demo/evidence/report-first.json
+!demo/evidence/report-first-live-closure.json
 uv-cache/
 **/uv-cache/
 *.pem
@@ -32,3 +33,4 @@ credentials*.json
 service-account*.json
 
 .pytest-local/
+.devpost-hackathon-state.json

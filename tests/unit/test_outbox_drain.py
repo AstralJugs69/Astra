@@ -10,6 +10,7 @@ import pytest
 from braille_errata_relay.adapters.firestore_ledger import OutboxLease, StoredSourceRevision
 from braille_errata_relay.application.incident_workflow import IncidentWorkflowResult
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
+from braille_errata_relay.application.semantic_workflow import SemanticExecutionInProgress
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
@@ -100,8 +101,14 @@ class MemoryOutboxLedger:
 
 
 class RecoveringIncidentWorkflow:
-    def __init__(self, *, fail_first: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_first: bool = False,
+        first_error: RuntimeError | None = None,
+    ) -> None:
         self.fail_first = fail_first
+        self.first_error = first_error
         self.calls = 0
 
     async def process_source_revision(
@@ -111,6 +118,8 @@ class RecoveringIncidentWorkflow:
         new_source_revision_id: str,
     ) -> IncidentWorkflowResult:
         self.calls += 1
+        if self.calls == 1 and self.first_error is not None:
+            raise self.first_error
         if self.fail_first and self.calls == 1:
             raise RuntimeError("simulated crash after lease")
         return IncidentWorkflowResult(
@@ -172,3 +181,28 @@ async def test_concurrent_scheduler_drains_claim_only_one_message() -> None:
     assert sum(result.leased for result in results) == 1
     assert sum(result.completed for result in results) == 1
     assert incidents.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_active_semantic_lease_retries_outbox_then_resumes_same_incident() -> None:
+    ledger = MemoryOutboxLedger()
+    incidents = RecoveringIncidentWorkflow(
+        first_error=SemanticExecutionInProgress("semantic execution is already leased")
+    )
+    workflow = OutboxDrainWorkflow(ledger=ledger, incident_workflow=incidents)
+
+    leased = await workflow.drain()
+    recovered = await workflow.drain()
+    replay = await workflow.drain()
+
+    assert leased.retried == 1
+    assert recovered.completed == 1
+    assert replay.leased == 0
+    assert ledger.retries == ["SemanticExecutionInProgress"]
+    assert ledger.completion == {
+        "incident_id": "d" * 64,
+        "stage": "REPORT_READY",
+        "duplicate_source": False,
+        "report_sha256": None,
+    }
+    assert incidents.calls == 2

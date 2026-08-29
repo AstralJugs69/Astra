@@ -11,7 +11,9 @@ def test_cloud_run_recipe_uses_frozen_lock_and_installs_runtime_environment() ->
     assert "COPY pyproject.toml uv.lock README.md /app/" in dockerfile
     assert "uv sync --frozen --no-dev --no-install-project" in dockerfile
     assert "uv pip install --python /app/.venv/bin/python --no-deps /app" in dockerfile
-    assert dockerfile.count("--mount=type=cache,target=/root/.cache/uv") == 2
+    # Cloud Build's standard Docker builder does not enable BuildKit. Keep the
+    # frozen install portable instead of depending on BuildKit-only cache mounts.
+    assert "--mount=type=cache" not in dockerfile
     assert "UV_HTTP_TIMEOUT=600" in dockerfile
     assert "UV_HTTP_RETRIES=20" in dockerfile
     assert "UV_CONCURRENT_DOWNLOADS=1" in dockerfile

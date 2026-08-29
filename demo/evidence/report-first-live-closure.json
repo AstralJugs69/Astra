@@ -1,0 +1,87 @@
+{
+  "schema_version": "report-first-live-closure-evidence.v1",
+  "recorded_at": "2026-08-29T19:06:23Z",
+  "branch": "codex/slice-2-1-live-closure",
+  "base_commit": "ac416da8db7cf147fb76aa31962ca4242af0764d",
+  "governing_documents": {
+    "instruction.md": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb",
+    "architecture.md": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+  },
+  "service": {
+    "region": "europe-west3",
+    "revision": "braille-errata-relay-00009-t6p",
+    "image_digest": "sha256:67894c390d21dc142e2be0df2787e4973e3cb3fe37e2ba051b2a51197abc143a",
+    "private": true,
+    "project_id_sha256": "58b23348cb3fb13f3aa38d3afddbbf67a7314bcf49d28cf87e57e3344a4a296c"
+  },
+  "authenticated_routes": {
+    "health_status": 200,
+    "ready_status": 200,
+    "ready": true,
+    "reserved_healthz_status": 404
+  },
+  "scheduler": {
+    "request_body_sha256": "8f311a4145ffa06584c00cf47506d2402d66c86ac802f32305366ec9090b7dbf",
+    "prior_failed_http_status": 500,
+    "scheduler_http_status": 200,
+    "uvicorn_http_status": 200,
+    "successful_execution_count": 1,
+    "recovery_after_repair": true,
+    "paused_after_evidence": true
+  },
+  "baseline_link": {
+    "baseline_id": "0cc6a91c634996a91ddeb65e2208181cb201d7843b5fd604dd4738bff6005a97",
+    "approved_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+    "scheduler_job_id": 19,
+    "site_observation_id": "b9c8078b739883ed4a51f0244c833abf5ae478e4690ef1185e0e2ede8d713fc9",
+    "production_link_id": "12da7f050d537c76cf686f315413995c62b919fc800524752f711f0784c9c924",
+    "status": "PRODUCTION_LINK_VERIFIED"
+  },
+  "source_reconciliation": {
+    "v2_source_sha256": "bc2b43f65a7fdcc7cac6e8a2712cfdc9737b74d10f1dcdf46820e4f603f30f99",
+    "reused_durable_same_file_revision": true
+  },
+  "workflow": {
+    "incident_id": "f5b27041847d8699d31bd929da09324a9a56fcb54f36dc5eac311e945b7de82e",
+    "stage": "NEEDS_REVIEW",
+    "incident_count": 1,
+    "candidate_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d",
+    "candidate_count": 1,
+    "semantic_assessment_id": "4fd05fac720411050553f2ad5da18b7bb7902ec0a15d938600f87aabdb198e62",
+    "semantic_execution_count": 1,
+    "semantic_attempt_count": 1,
+    "report_sha256": "c86d229e31593079f287a8c9f9829f198d5c3cbbd38ad0b0d69da8dbbf98132c",
+    "report_count": 1,
+    "disposition_packet_sha256": "381f5581a21e4e47a38f528ade6d632636dbe1e0498df80975d570a2e4e0fb85",
+    "disposition_packet_count": 1,
+    "report_created_at_allocated": true,
+    "report_ready_at_allocated": true
+  },
+  "replay": {
+    "same_source_converged": true,
+    "duplicate_source_receipt": true,
+    "same_outbox_converged": true,
+    "outbox_replay_http_status": 200,
+    "outbox_replay_leased": 0,
+    "outbox_replay_completed": 0,
+    "outbox_replay_retried": 0,
+    "outbox_replay_message_count": 0
+  },
+  "verification": {
+    "windows_tests": "206 passed; 3 skipped",
+    "frozen_lock": "PASS",
+    "ruff_lint": "PASS",
+    "scoped_format": "PASS",
+    "strict_mypy": "PASS",
+    "schema_validation": "PASS",
+    "local_container_build": "PASS",
+    "remote_container_build": "PASS",
+    "wsl_liblouis_goldens": "PASS",
+    "container_smoke": "PASS",
+    "wsl_container_brf_identity": "PASS",
+    "historical_gate0_evidence_preserved": true
+  },
+  "iam_cleanup": true,
+  "notifications": "NOT_CLAIMED",
+  "remaining_blockers": []
+}

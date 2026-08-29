@@ -68,8 +68,10 @@ The private FastAPI application exposes:
 - `POST /internal/drive-reconcile` for the source principal;
 - `POST /internal/site-observations` for the telemetry principal;
 - `POST /internal/outbox-drain` for the scheduler principal; and
-- `GET /healthz` and `GET /readyz`, with readiness requiring the exact installed
-  Liblouis version, table hashes, and a real translation smoke test.
+- `GET /health` and `GET /readyz`, with readiness requiring the exact installed
+  Liblouis version, table hashes, and a real translation smoke test. Local
+  `/healthz` remains available for container checks, but Cloud Run reserves some
+  paths ending in `z`, so live callers use `/health`.
 
 The narrow CLI registers only a demo baseline. It cannot submit or mutate a
 production job:
@@ -114,20 +116,53 @@ bytes, and journal hashes are real; only the physical embossing endpoint is
 simulated. No mutating CUPS operation is exposed through the application or the
 read-only bridge.
 
-## Evidence and current blocker
+## Evidence and live status
 
 Sanitized Slice 2 evidence is recorded in
 [`demo/evidence/report-first.json`](demo/evidence/report-first.json) and validated
 by [`schemas/report-first-evidence.v1.json`](schemas/report-first-evidence.v1.json).
-The historical local and cloud Gate 0 evidence is preserved unchanged.
+That historical blocked record and the accepted Gate 0 evidence remain unchanged.
+Sanitized Slice 2.1 closure evidence is recorded separately in
+[`demo/evidence/report-first-live-closure.json`](demo/evidence/report-first-live-closure.json)
+and validated by
+[`schemas/report-first-live-closure-evidence.v1.json`](schemas/report-first-live-closure-evidence.v1.json).
 
 The frozen container was built, its real Liblouis output matched WSL byte for
-byte, and a new private Frankfurt revision was deployed by immutable image
-digest. The revision reports ready, but authenticated requests currently receive
-an HTTP 404 from the Google edge before reaching Uvicorn. The outbox scheduler is
-therefore provisioned but paused and no live report-first route pass is claimed.
-Restore a valid Cloud Run default URL route or custom audience, rerun the private
-route smoke tests, then unpause and execute the scheduler once.
+byte, and a private Frankfurt revision was deployed by immutable image digest.
+Authenticated live `/health` and `/readyz` checks pass. A fresh read-only CUPS
+observation linked the exact independently submitted baseline job without Relay
+device control. The same-file corrected Drive revision then produced one durable
+report-first incident, candidate, semantic assessment, report, and human
+disposition packet. The workflow stopped visibly at `NEEDS_REVIEW`; it did not
+claim professional disposition, containment, proof, replacement, or notification.
+
+The first scheduler attempt exposed a missing Firestore composite index and
+returned HTTP 500. After the index became ready and same-revision transaction
+recovery was deployed, one guarded recovery invocation returned HTTP 200 in both
+Scheduler and Uvicorn logs. Replaying the identical Drive revision converged on
+the same receipt and outbox identity, and an authenticated empty drain leased no
+messages. The scheduler is paused after evidence capture, temporary IAM grants
+are absent, Cloud Run remains private, and Slice 2.1 has no remaining blocker.
+
+## Live production-link handoff
+
+The local Gate 0 harness keeps human CUPS authority separate from Relay code:
+
+1. A human operator independently submits a held raw baseline job to the local
+   simulator with the canonical title and approved BRF bytes.
+2. The human runs `infra/gcp/link_local_baseline_job.ps1` with the baseline ID
+   and scheduler job ID. The harness uses only read-only CUPS Get operations,
+   admits the resulting hash-chained observation, and creates the immutable
+   production link.
+3. If a prior local observation was known not to have reached telemetry and has
+   become stale, the explicit `-ArchiveUnpublishedLocalJournal` recovery switch
+   preserves it under ignored `work/` state before starting a fresh chain.
+4. Only after the immutable link passes may a human execute one bounded scheduler
+   run for the durable V2 source event. The scheduler is paused again immediately
+   after the evidence is collected.
+
+Neither the harness nor the Cloud Run service submits, releases, cancels, holds,
+restarts, pauses, or otherwise mutates a CUPS job.
 
 ## Adapter boundaries
 

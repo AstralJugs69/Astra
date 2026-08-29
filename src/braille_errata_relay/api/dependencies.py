@@ -18,6 +18,7 @@ from braille_errata_relay.application.baseline_registration import BaselineRegis
 from braille_errata_relay.application.drive_gate0 import DRIVE_READONLY_SCOPE, DriveGate0Workflow
 from braille_errata_relay.application.incident_workflow import IncidentWorkflow
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
+from braille_errata_relay.application.production_link import ProductionLinkWorkflow
 from braille_errata_relay.application.semantic_workflow import IdempotentSemanticWorkflow
 from braille_errata_relay.application.telemetry_ingestion import (
     TelemetryAllowlist,
@@ -36,6 +37,7 @@ class RuntimeDependencies:
     ledger: FirestoreGate0Ledger | None
     drive_workflow: DriveGate0Workflow | None
     baseline_workflow: BaselineRegistrationWorkflow | None
+    production_link_workflow: ProductionLinkWorkflow | None
     telemetry_workflow: TelemetryIngestionWorkflow | None
     incident_workflow: IncidentWorkflow | None
     outbox_workflow: OutboxDrainWorkflow | None
@@ -45,13 +47,13 @@ class RuntimeDependencies:
 def build_runtime_dependencies() -> RuntimeDependencies:
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         return RuntimeDependencies(
-            None, None, None, None, None, None, None, None, GoogleOidcVerifier()
+            None, None, None, None, None, None, None, None, None, GoogleOidcVerifier()
         )
     try:
         settings = CloudSettings.from_env()
     except (ValidationError, ValueError):
         return RuntimeDependencies(
-            None, None, None, None, None, None, None, None, GoogleOidcVerifier()
+            None, None, None, None, None, None, None, None, None, GoogleOidcVerifier()
         )
     assessor = AdkSemanticAssessor(
         model_id=settings.gemini_model,
@@ -63,6 +65,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
     )
     drive_workflow = None
     baseline_workflow = None
+    production_link_workflow = None
     telemetry_workflow = None
     incident_workflow = None
     outbox_workflow = None
@@ -106,6 +109,10 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             translator=LiblouisAdapter(),
         )
         if settings.bridge_id:
+            production_link_workflow = ProductionLinkWorkflow(
+                ledger=ledger,
+                bridge_id=settings.bridge_id,
+            )
             incident_workflow = IncidentWorkflow(
                 ledger=ledger,
                 artifact_store=artifact_store,
@@ -136,6 +143,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
         ledger,
         drive_workflow,
         baseline_workflow,
+        production_link_workflow,
         telemetry_workflow,
         incident_workflow,
         outbox_workflow,

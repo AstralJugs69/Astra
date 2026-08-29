@@ -32,6 +32,11 @@ from braille_errata_relay.application.baseline_registration import (
 from braille_errata_relay.application.drive_gate0 import DriveGate0Workflow
 from braille_errata_relay.application.incident_workflow import IncidentWorkflow
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
+from braille_errata_relay.application.production_link import (
+    ProductionLinkConflict,
+    ProductionLinkRejected,
+    ProductionLinkWorkflow,
+)
 from braille_errata_relay.application.semantic_workflow import (
     IdempotentSemanticWorkflow,
     SemanticExecutionInProgress,
@@ -44,7 +49,11 @@ from braille_errata_relay.braille.profile import load_translation_profile
 from braille_errata_relay.braille.readiness import check_liblouis_readiness
 from braille_errata_relay.cloud_settings import CloudSettings
 from braille_errata_relay.configuration import resolve_config_path
-from braille_errata_relay.domain.models import AssessmentInput, BlockingReason
+from braille_errata_relay.domain.models import (
+    AssessmentInput,
+    BlockingReason,
+    ProductionLinkBlockingReason,
+)
 
 
 class SourceJobRequest(BaseModel):
@@ -85,6 +94,17 @@ class BaselineRegistrationRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class BaselineProductionLinkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["baseline-production-link-request.v1"] = (
+        "baseline-production-link-request.v1"
+    )
+    scheduler_job_id: int = Field(gt=0)
+    expected_state_version: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 class OutboxDrainRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -108,6 +128,7 @@ def create_app(
     ledger: FirestoreGate0Ledger | None = None,
     drive_workflow: DriveGate0Workflow | None = None,
     baseline_workflow: BaselineRegistrationWorkflow | None = None,
+    production_link_workflow: ProductionLinkWorkflow | None = None,
     telemetry_workflow: TelemetryIngestionWorkflow | None = None,
     incident_workflow: IncidentWorkflow | None = None,
     outbox_workflow: OutboxDrainWorkflow | None = None,
@@ -130,8 +151,9 @@ def create_app(
             verifier=verifier,
         )
 
+    @app.get("/health")
     @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
+    async def health() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.get("/readyz")
@@ -318,6 +340,7 @@ def create_app(
                 approval_label=payload.approval_label,
                 site_id=payload.site_id,
                 queue_name=payload.queue_name,
+                idempotency_key=payload.idempotency_key,
             )
         except (BaselineRegistrationError, ValueError) as exc:
             return JSONResponse(
@@ -348,6 +371,46 @@ def create_app(
         if record is None:
             return JSONResponse(status_code=404, content={"detail": "baseline not found"})
         return JSONResponse(status_code=200, content=record.model_dump(mode="json"))
+
+    @app.post("/api/v1/baselines/{baseline_id}/production-links")
+    async def link_baseline_production(
+        baseline_id: str,
+        payload: BaselineProductionLinkRequest,
+    ) -> JSONResponse:
+        if production_link_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "production link is not configured"},
+            )
+        try:
+            result = await production_link_workflow.link(
+                baseline_id=baseline_id,
+                scheduler_job_id=payload.scheduler_job_id,
+                expected_state_version=payload.expected_state_version,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ProductionLinkConflict as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": exc.reason.value},
+            )
+        except ProductionLinkRejected as exc:
+            status_code = (
+                404 if exc.reason is ProductionLinkBlockingReason.BASELINE_NOT_FOUND else 422
+            )
+            return JSONResponse(
+                status_code=status_code,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": exc.reason.value},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": "PRODUCTION_LINK_VERIFIED",
+                "duplicate": result.duplicate,
+                "baseline": result.baseline.model_dump(mode="json"),
+                "production_link": result.link.model_dump(mode="json"),
+            },
+        )
 
     @app.get("/api/v1/incidents/{incident_id}")
     async def get_incident(incident_id: str) -> JSONResponse:
@@ -394,6 +457,7 @@ app = create_app(
     ledger=_runtime.ledger,
     drive_workflow=_runtime.drive_workflow,
     baseline_workflow=_runtime.baseline_workflow,
+    production_link_workflow=_runtime.production_link_workflow,
     telemetry_workflow=_runtime.telemetry_workflow,
     incident_workflow=_runtime.incident_workflow,
     outbox_workflow=_runtime.outbox_workflow,

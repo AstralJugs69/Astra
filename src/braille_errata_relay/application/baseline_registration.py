@@ -59,6 +59,29 @@ def baseline_id(
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
+def baseline_registration_idempotency_key(
+    *,
+    production_id: str,
+    source_file_id: str,
+    source_revision_id: str,
+    translation_profile_id: str,
+    approval_label: str,
+    site_id: str,
+    queue_name: str,
+) -> str:
+    return canonical_sha256(
+        {
+            "production_id": production_id,
+            "source_file_id": source_file_id,
+            "source_revision_id": source_revision_id,
+            "translation_profile_id": translation_profile_id,
+            "approval_label": approval_label,
+            "site_id": site_id,
+            "queue_name": queue_name,
+        }
+    )
+
+
 class BaselineRegistrationWorkflow:
     def __init__(
         self,
@@ -82,7 +105,19 @@ class BaselineRegistrationWorkflow:
         approval_label: str,
         site_id: str,
         queue_name: str,
+        idempotency_key: str,
     ) -> BaselineRegistrationResult:
+        expected_key = baseline_registration_idempotency_key(
+            production_id=production_id,
+            source_file_id=expected_file_id,
+            source_revision_id=source_revision_id,
+            translation_profile_id=self.profile.profile_id,
+            approval_label=approval_label,
+            site_id=site_id,
+            queue_name=queue_name,
+        )
+        if idempotency_key != expected_key:
+            raise BaselineRegistrationError("baseline registration idempotency key is invalid")
         if approval_label != "DEMO_FIXTURE_APPROVED":
             raise BaselineRegistrationError(
                 "synthetic baseline approval label must be DEMO_FIXTURE_APPROVED"

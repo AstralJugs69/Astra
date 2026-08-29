@@ -9,21 +9,36 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
+from braille_errata_relay.adapters.adk_assessor import (
+    SemanticAssessmentBlocked,
+    SemanticAssessmentUnavailable,
+)
 from braille_errata_relay.adapters.firestore_ledger import (
     IncidentCheckpointCommit,
     StoredSourceRevision,
 )
 from braille_errata_relay.adapters.gcs_artifacts import content_addressed_ref
-from braille_errata_relay.application.baseline_registration import BaselineRegistrationWorkflow
-from braille_errata_relay.application.incident_workflow import IncidentWorkflow
-from braille_errata_relay.application.semantic_workflow import SemanticWorkflowResult
+from braille_errata_relay.application.baseline_registration import (
+    BaselineRegistrationWorkflow,
+    baseline_registration_idempotency_key,
+)
+from braille_errata_relay.application.incident_workflow import (
+    IncidentWorkflow,
+    IncidentWorkflowError,
+)
+from braille_errata_relay.application.semantic_workflow import (
+    SemanticExecutionInProgress,
+    SemanticWorkflowResult,
+)
 from braille_errata_relay.braille.liblouis_adapter import LiblouisAdapter
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
     AssessmentInput,
+    BaselineStatus,
     IncidentCheckpoint,
+    IncidentWorkflowStage,
     JobState,
     QueueObservation,
     RegisteredBaseline,
@@ -76,6 +91,7 @@ class MemoryLedger:
         self.baselines: dict[str, RegisteredBaseline] = {}
         self.incidents: dict[str, IncidentCheckpoint] = {}
         self.observation: SiteObservation | None = None
+        self.now = datetime(2026, 8, 29, tzinfo=UTC)
 
     async def get_source_revision(self, revision_id: str) -> StoredSourceRevision | None:
         return self.sources.get(revision_id)
@@ -106,11 +122,44 @@ class MemoryLedger:
     ) -> IncidentCheckpointCommit:
         current = self.incidents[checkpoint.incident_id]
         if current.state_version == checkpoint.state_version:
-            assert current == checkpoint
+            replay = checkpoint
+            if current.report_ready_at is not None and checkpoint.report_ready_at is None:
+                replay = checkpoint.model_copy(update={"report_ready_at": current.report_ready_at})
+            assert current == replay
             return IncidentCheckpointCommit(current, True)
         assert current.state_version == expected_state_version
+        if (
+            checkpoint.stage
+            in {
+                IncidentWorkflowStage.REPORT_READY,
+                IncidentWorkflowStage.NEEDS_REVIEW,
+            }
+            and checkpoint.report is not None
+        ):
+            checkpoint = checkpoint.model_copy(update={"report_ready_at": self.now})
         self.incidents[checkpoint.incident_id] = checkpoint
         return IncidentCheckpointCommit(checkpoint, False)
+
+    async def allocate_report_created_at(
+        self,
+        *,
+        incident_id: str,
+        expected_state_version: int,
+    ) -> IncidentCheckpointCommit:
+        current = self.incidents[incident_id]
+        if current.report_created_at is not None:
+            return IncidentCheckpointCommit(current, True)
+        assert current.state_version == expected_state_version
+        assert current.stage is IncidentWorkflowStage.SEMANTIC_READY
+        allocated = current.model_copy(
+            update={
+                "report_created_at": self.now,
+                "state_version": current.state_version + 1,
+                "updated_at": self.now,
+            }
+        )
+        self.incidents[incident_id] = allocated
+        return IncidentCheckpointCommit(allocated, False)
 
     async def get_latest_site_observation(self, **_values: str) -> SiteObservation | None:
         return self.observation
@@ -156,6 +205,35 @@ class IdempotentSemantic:
             trace=None,
             reused=reused,
         )
+
+
+class FailOnceSemantic:
+    def __init__(self, error: RuntimeError, delegate: IdempotentSemantic) -> None:
+        self.error = error
+        self.delegate = delegate
+        self.failed = False
+
+    async def assess(
+        self,
+        evidence: AssessmentInput,
+        *,
+        analysis_revision: int = 1,
+    ) -> SemanticWorkflowResult:
+        if not self.failed:
+            self.failed = True
+            raise self.error
+        return await self.delegate.assess(evidence, analysis_revision=analysis_revision)
+
+
+class BlockedSemantic:
+    async def assess(
+        self,
+        _evidence: AssessmentInput,
+        *,
+        analysis_revision: int = 1,
+    ) -> SemanticWorkflowResult:
+        del analysis_revision
+        raise SemanticAssessmentBlocked("invalid grounded output")
 
 
 def _profile() -> TranslationProfile:
@@ -211,6 +289,7 @@ async def _system() -> tuple[
 ]:
     now = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
     ledger = MemoryLedger()
+    ledger.now = now + timedelta(seconds=2)
     artifacts = MemoryArtifacts()
     translator = LiblouisAdapter(DeterministicLouis())
     profile = _profile()
@@ -240,12 +319,26 @@ async def _system() -> tuple[
         approval_label="DEMO_FIXTURE_APPROVED",
         site_id="demo-site",
         queue_name="Braille-Embosser-Sim",
+        idempotency_key=baseline_registration_idempotency_key(
+            production_id="WO-DEMO-001",
+            source_file_id="file",
+            source_revision_id=v1.revision_id,
+            translation_profile_id="demo-ueb-40x25-v1",
+            approval_label="DEMO_FIXTURE_APPROVED",
+            site_id="demo-site",
+            queue_name="Braille-Embosser-Sim",
+        ),
     )
     title = f"BER|WO-DEMO-001|{registration.record.baseline.approved_brf_sha256[:12]}|BASELINE"
     baseline = registration.record.model_copy(
         update={
             "baseline": registration.record.baseline.model_copy(
-                update={"scheduler_job_id": 42, "scheduler_job_title": title}
+                update={
+                    "scheduler_job_id": 42,
+                    "scheduler_job_title": title,
+                    "status": BaselineStatus.PRODUCTION_LINK_VERIFIED,
+                    "state_version": 1,
+                }
             )
         }
     )
@@ -297,6 +390,9 @@ async def test_v1_to_v2_builds_one_report_first_incident_and_reuses_it() -> None
         baseline_id=baseline.baseline.baseline_id,
         new_source_revision_id=v2.revision_id,
     )
+    allocated_created_at = first.checkpoint.report_created_at
+    allocated_ready_at = first.checkpoint.report_ready_at
+    ledger.now += timedelta(hours=1)
     second = await workflow.process_source_revision(
         baseline_id=baseline.baseline.baseline_id,
         new_source_revision_id=v2.revision_id,
@@ -307,6 +403,12 @@ async def test_v1_to_v2_builds_one_report_first_incident_and_reuses_it() -> None
     assert first.report == second.report
     assert first.disposition_packet == second.disposition_packet
     assert first.report is not None and first.disposition_packet is not None
+    assert allocated_created_at is not None
+    assert allocated_ready_at is not None
+    assert first.report.created_at == allocated_created_at
+    assert first.report.created_at > v2.fetched_at
+    assert second.checkpoint.report_created_at == allocated_created_at
+    assert second.checkpoint.report_ready_at == allocated_ready_at
     assert semantic.calls == 1
     assert len(ledger.incidents) == 1
     assert first.report.braille_impact.pages_changed is True
@@ -328,6 +430,63 @@ async def test_v1_to_v2_builds_one_report_first_incident_and_reuses_it() -> None
         assert list(validator.iter_errors(payload)) == []
 
 
+@pytest.mark.parametrize(
+    "transient_error",
+    [
+        SemanticAssessmentUnavailable("model transport unavailable"),
+        SemanticExecutionInProgress("semantic lease is active"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_transient_semantic_failure_leaves_incident_resumable_at_impact_ready(
+    transient_error: RuntimeError,
+) -> None:
+    workflow, ledger, _artifacts, _semantic, baseline, v2 = await _system()
+    delegate = IdempotentSemantic()
+    workflow.semantic_workflow = FailOnceSemantic(transient_error, delegate)
+
+    with pytest.raises(type(transient_error)):
+        await workflow.process_source_revision(
+            baseline_id=baseline.baseline.baseline_id,
+            new_source_revision_id=v2.revision_id,
+        )
+
+    checkpoint = next(iter(ledger.incidents.values()))
+    assert checkpoint.stage is IncidentWorkflowStage.IMPACT_READY
+    assert checkpoint.semantic_assessment is None
+    assert checkpoint.report is None
+
+    recovered = await workflow.process_source_revision(
+        baseline_id=baseline.baseline.baseline_id,
+        new_source_revision_id=v2.revision_id,
+    )
+    replay = await workflow.process_source_revision(
+        baseline_id=baseline.baseline.baseline_id,
+        new_source_revision_id=v2.revision_id,
+    )
+
+    assert recovered.checkpoint.stage is IncidentWorkflowStage.REPORT_READY
+    assert replay.checkpoint == recovered.checkpoint
+    assert replay.report == recovered.report
+    assert delegate.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_semantic_output_terminalizes_as_needs_review() -> None:
+    workflow, ledger, _artifacts, _semantic, baseline, v2 = await _system()
+    workflow.semantic_workflow = BlockedSemantic()
+
+    result = await workflow.process_source_revision(
+        baseline_id=baseline.baseline.baseline_id,
+        new_source_revision_id=v2.revision_id,
+    )
+
+    assert result.checkpoint.stage is IncidentWorkflowStage.NEEDS_REVIEW
+    assert result.checkpoint.blocking_reason == "SEMANTIC_ASSESSMENT_INVALID"
+    assert result.checkpoint.report is None
+    assert next(iter(ledger.incidents.values())) == result.checkpoint
+
+
 @pytest.mark.asyncio
 async def test_baseline_revision_replay_does_not_create_an_incident() -> None:
     workflow, ledger, _artifacts, semantic, baseline, _v2 = await _system()
@@ -341,6 +500,33 @@ async def test_baseline_revision_replay_does_not_create_an_incident() -> None:
     assert result.report is None
     assert ledger.incidents == {}
     assert semantic.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_changed_revision_cannot_treat_unlinked_baseline_as_production_linked() -> None:
+    workflow, ledger, _artifacts, semantic, baseline, v2 = await _system()
+    unlinked = baseline.model_copy(
+        update={
+            "baseline": baseline.baseline.model_copy(
+                update={
+                    "scheduler_job_id": None,
+                    "scheduler_job_title": None,
+                    "status": BaselineStatus.AWAITING_PRODUCTION_LINK,
+                    "state_version": 0,
+                }
+            )
+        }
+    )
+    ledger.baselines[baseline.baseline.baseline_id] = unlinked
+
+    with pytest.raises(IncidentWorkflowError, match="not verified"):
+        await workflow.process_source_revision(
+            baseline_id=baseline.baseline.baseline_id,
+            new_source_revision_id=v2.revision_id,
+        )
+
+    assert semantic.calls == 0
+    assert ledger.incidents == {}
 
 
 @pytest.mark.asyncio

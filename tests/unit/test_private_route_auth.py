@@ -154,7 +154,10 @@ def _client(
 
 
 def test_health_remains_available_inside_private_service_without_route_token() -> None:
-    assert _client().get("/healthz").status_code == 200
+    client = _client()
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/healthz").status_code == 200
 
 
 def test_internal_route_requires_verified_oidc_bearer() -> None:
@@ -283,3 +286,28 @@ def test_telemetry_and_scheduler_principals_are_route_scoped() -> None:
     assert outbox.status_code == 503
     assert wrong_telemetry.status_code == 403
     assert wrong_scheduler.status_code == 403
+
+
+def test_production_link_route_is_demonstrator_only() -> None:
+    payload = {
+        "schema_version": "baseline-production-link-request.v1",
+        "scheduler_job_id": 42,
+        "expected_state_version": 0,
+        "idempotency_key": "a" * 64,
+    }
+    path = "/api/v1/baselines/" + "b" * 64 + "/production-links"
+
+    admitted = _client().post(
+        path,
+        json=payload,
+        headers={"Authorization": "Bearer demonstrator@example.com"},
+    )
+    denied = _client().post(
+        path,
+        json=payload,
+        headers={"Authorization": "Bearer telemetry@example.iam.gserviceaccount.com"},
+    )
+
+    assert admitted.status_code == 503
+    assert admitted.json()["detail"] == "production link is not configured"
+    assert denied.status_code == 403

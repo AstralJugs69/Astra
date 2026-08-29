@@ -57,6 +57,20 @@ class BaselineStatus(StrEnum):
     PRODUCTION_LINK_VERIFIED = "PRODUCTION_LINK_VERIFIED"
 
 
+class ProductionLinkBlockingReason(StrEnum):
+    BASELINE_NOT_FOUND = "BASELINE_NOT_FOUND"
+    BASELINE_NOT_AWAITING_LINK = "BASELINE_NOT_AWAITING_LINK"
+    IDEMPOTENCY_KEY_MISMATCH = "IDEMPOTENCY_KEY_MISMATCH"
+    MISSING_SITE_OBSERVATION = "MISSING_SITE_OBSERVATION"
+    STALE_SITE_OBSERVATION = "STALE_SITE_OBSERVATION"
+    AMBIGUOUS_SITE_OBSERVATION = "AMBIGUOUS_SITE_OBSERVATION"
+    WRONG_JOB = "WRONG_JOB"
+    WRONG_TITLE = "WRONG_TITLE"
+    WRONG_ARTIFACT = "WRONG_ARTIFACT"
+    WRONG_QUEUE = "WRONG_QUEUE"
+    STALE_STATE_VERSION = "STALE_STATE_VERSION"
+
+
 class IncidentState(StrEnum):
     DETECTED = "DETECTED"
     ASSESSING = "ASSESSING"
@@ -348,6 +362,7 @@ class ProductionBaseline(DomainModel):
     compatible_profile: bool = True
     production_id_origin: Literal["EXTERNAL_REFERENCE"] = "EXTERNAL_REFERENCE"
     status: BaselineStatus = BaselineStatus.AWAITING_PRODUCTION_LINK
+    state_version: int = Field(default=0, ge=0)
 
 
 class BaselineArtifacts(DomainModel):
@@ -364,6 +379,26 @@ class RegisteredBaseline(DomainModel):
     baseline: ProductionBaseline
     artifacts: BaselineArtifacts
     created_at: datetime
+
+
+class BaselineProductionLink(DomainModel):
+    schema_version: Literal["baseline-production-link.v1"] = "baseline-production-link.v1"
+    link_id: HexSha256
+    baseline_id: HexSha256
+    scheduler_job_id: int = Field(gt=0)
+    scheduler_job_title: NonEmpty
+    site_observation_id: HexSha256
+    site_id: NonEmpty
+    bridge_id: NonEmpty
+    queue_name: NonEmpty
+    baseline_brf_sha256: HexSha256
+    baseline_state_version: int = Field(ge=1)
+    idempotency_key_sha256: HexSha256
+    evidence_observed_at: datetime
+    verified_at: datetime
+    verification_basis: Literal["READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX"] = (
+        "READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX"
+    )
 
 
 class EvidenceSide(StrEnum):
@@ -493,6 +528,8 @@ class IncidentCheckpoint(DomainModel):
     semantic_assessment: ArtifactRef | None = None
     report: ArtifactRef | None = None
     disposition_packet: ArtifactRef | None = None
+    report_created_at: datetime | None = None
+    report_ready_at: datetime | None = None
     blocking_reason: BlockingReason | None = None
     updated_at: datetime
 

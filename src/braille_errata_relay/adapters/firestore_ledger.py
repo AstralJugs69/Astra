@@ -15,9 +15,12 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
+from braille_errata_relay.domain.errors import BaselineStateConflictError
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
+    BaselineProductionLink,
+    BaselineStatus,
     DriveChangeBatch,
     IncidentCheckpoint,
     IncidentWorkflowStage,
@@ -80,6 +83,13 @@ class IncidentCheckpointCommit:
 
 
 @dataclass(frozen=True)
+class ProductionLinkCommit:
+    baseline: RegisteredBaseline
+    link: BaselineProductionLink
+    duplicate: bool
+
+
+@dataclass(frozen=True)
 class OutboxLease:
     message_id: str
     kind: str
@@ -114,6 +124,35 @@ def _token_sha256(value: str) -> str:
 def _require_sha256(value: str, *, label: str) -> None:
     if _SHA256.fullmatch(value) is None:
         raise ValueError(f"{label} must be a lowercase SHA-256")
+
+
+_SOURCE_REVISION_IDENTITY_FIELDS = (
+    "revision_id",
+    "provider",
+    "file_id",
+    "mime_type",
+    "provider_version",
+    "source_sha256",
+    "byte_length",
+    "artifact_sha256",
+    "artifact_uri",
+)
+
+
+def _same_source_revision_identity(
+    existing: Mapping[str, object], proposed: Mapping[str, object]
+) -> bool:
+    """Compare immutable source lineage without a transient fetch timestamp.
+
+    A Drive retry can re-observe the same provider revision at a later wall
+    time.  The first durable observation keeps its original ``fetched_at``;
+    the immutable source, provider, and artifact fields must still match
+    exactly before the transaction can attach a missing receipt or outbox row.
+    """
+
+    return all(
+        existing.get(field) == proposed.get(field) for field in _SOURCE_REVISION_IDENTITY_FIELDS
+    )
 
 
 class FirestoreGate0Ledger:
@@ -290,6 +329,185 @@ class FirestoreGate0Ledger:
     async def find_baseline_for_file(self, file_id: str) -> RegisteredBaseline | None:
         return await asyncio.to_thread(self._find_baseline_for_file_sync, file_id)
 
+    def _link_baseline_production_sync(
+        self,
+        *,
+        proposed_link: BaselineProductionLink,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit:
+        _require_sha256(proposed_link.baseline_id, label="baseline ID")
+        _require_sha256(proposed_link.link_id, label="production link ID")
+        if expected_state_version < 0 or not idempotency_key:
+            raise ValueError("production link transition parameters are invalid")
+        idempotency_key_sha256 = canonical_sha256(
+            {"scope": "baseline-production-link", "key": idempotency_key}
+        )
+        if proposed_link.idempotency_key_sha256 != idempotency_key_sha256:
+            raise ValueError("production link idempotency hash is inconsistent")
+        request_body = {
+            "baseline_id": proposed_link.baseline_id,
+            "scheduler_job_id": proposed_link.scheduler_job_id,
+            "expected_state_version": expected_state_version,
+            "idempotency_key_sha256": idempotency_key_sha256,
+        }
+        request_sha256 = canonical_sha256(request_body)
+        request_id = canonical_sha256(
+            {
+                "scope": "baseline-production-link-request",
+                "idempotency_key_sha256": idempotency_key_sha256,
+            }
+        )
+        baseline_ref = self._document("baselines", proposed_link.baseline_id)
+        link_ref = self._document("baseline_production_links", proposed_link.baseline_id)
+        request_ref = self._document("baseline_production_link_requests", request_id)
+
+        def operation(transaction: Any) -> ProductionLinkCommit:
+            baseline_data = self._snapshot_data(baseline_ref.get(transaction=transaction))
+            link_data = self._snapshot_data(link_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise LedgerIntegrityError("baseline is missing or malformed")
+            current = RegisteredBaseline.model_validate(baseline_data["record"])
+            if request_data is not None:
+                if (
+                    request_data.get("request_sha256") != request_sha256
+                    or request_data.get("link_id") != proposed_link.link_id
+                ):
+                    raise LedgerIntegrityError("production link idempotency key conflicts")
+                if link_data is None or not isinstance(link_data.get("record"), dict):
+                    raise LedgerIntegrityError("production link receipt has no immutable link")
+                persisted_link = BaselineProductionLink.model_validate(link_data["record"])
+                return ProductionLinkCommit(current, persisted_link, True)
+            if current.baseline.state_version != expected_state_version:
+                raise BaselineStateConflictError("baseline state version is stale")
+            if current.baseline.status is not BaselineStatus.AWAITING_PRODUCTION_LINK:
+                raise BaselineStateConflictError("baseline is not awaiting a production link")
+            if link_data is not None:
+                raise LedgerIntegrityError("baseline already has an unreceipted production link")
+            if proposed_link.baseline_state_version != expected_state_version + 1:
+                raise ValueError("production link target version is invalid")
+            if proposed_link.baseline_brf_sha256 != current.baseline.approved_brf_sha256:
+                raise LedgerIntegrityError("production link changed baseline artifact lineage")
+            updated_baseline = current.model_copy(
+                update={
+                    "baseline": current.baseline.model_copy(
+                        update={
+                            "scheduler_job_id": proposed_link.scheduler_job_id,
+                            "scheduler_job_title": proposed_link.scheduler_job_title,
+                            "status": BaselineStatus.PRODUCTION_LINK_VERIFIED,
+                            "state_version": expected_state_version + 1,
+                        }
+                    )
+                }
+            )
+            baseline_body = {"record": updated_baseline.model_dump(mode="json")}
+            link_body = {"record": proposed_link.model_dump(mode="json")}
+            now = self._clock()
+            transaction.set(
+                baseline_ref,
+                {
+                    **baseline_data,
+                    **baseline_body,
+                    "payload_sha256": canonical_sha256(baseline_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                link_ref,
+                {
+                    **link_body,
+                    "payload_sha256": canonical_sha256(link_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "link_id": proposed_link.link_id,
+                    "created_at": now,
+                },
+            )
+            return ProductionLinkCommit(updated_baseline, proposed_link, False)
+
+        return cast(ProductionLinkCommit, self._transaction_runner(operation))
+
+    async def link_baseline_production(
+        self,
+        *,
+        proposed_link: BaselineProductionLink,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit:
+        return await asyncio.to_thread(
+            self._link_baseline_production_sync,
+            proposed_link=proposed_link,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
+    def _get_production_link_by_idempotency_sync(
+        self,
+        *,
+        baseline_id: str,
+        scheduler_job_id: int,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit | None:
+        _require_sha256(baseline_id, label="baseline ID")
+        if scheduler_job_id < 1 or expected_state_version < 0 or not idempotency_key:
+            raise ValueError("production link request identity is invalid")
+        idempotency_key_sha256 = canonical_sha256(
+            {"scope": "baseline-production-link", "key": idempotency_key}
+        )
+        request_body = {
+            "baseline_id": baseline_id,
+            "scheduler_job_id": scheduler_job_id,
+            "expected_state_version": expected_state_version,
+            "idempotency_key_sha256": idempotency_key_sha256,
+        }
+        request_id = canonical_sha256(
+            {
+                "scope": "baseline-production-link-request",
+                "idempotency_key_sha256": idempotency_key_sha256,
+            }
+        )
+        request_data = self._snapshot_data(
+            self._document("baseline_production_link_requests", request_id).get()
+        )
+        if request_data is None:
+            return None
+        if request_data.get("request_sha256") != canonical_sha256(request_body):
+            raise LedgerIntegrityError("production link idempotency key conflicts")
+        baseline = self._get_baseline_sync(baseline_id)
+        link_data = self._snapshot_data(
+            self._document("baseline_production_links", baseline_id).get()
+        )
+        if baseline is None or link_data is None or not isinstance(link_data.get("record"), dict):
+            raise LedgerIntegrityError("production link receipt lineage is incomplete")
+        link = BaselineProductionLink.model_validate(link_data["record"])
+        if request_data.get("link_id") != link.link_id:
+            raise LedgerIntegrityError("production link receipt identity conflicts")
+        return ProductionLinkCommit(baseline, link, True)
+
+    async def get_production_link_by_idempotency(
+        self,
+        *,
+        baseline_id: str,
+        scheduler_job_id: int,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> ProductionLinkCommit | None:
+        return await asyncio.to_thread(
+            self._get_production_link_by_idempotency_sync,
+            baseline_id=baseline_id,
+            scheduler_job_id=scheduler_job_id,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
     def _claim_incident_sync(
         self,
         checkpoint: IncidentCheckpoint,
@@ -350,6 +568,60 @@ class FirestoreGate0Ledger:
     async def get_incident_checkpoint(self, incident_id: str) -> IncidentCheckpoint | None:
         return await asyncio.to_thread(self._get_incident_checkpoint_sync, incident_id)
 
+    def _allocate_report_created_at_sync(
+        self,
+        *,
+        incident_id: str,
+        expected_state_version: int,
+    ) -> IncidentCheckpointCommit:
+        _require_sha256(incident_id, label="incident ID")
+        if expected_state_version < 0:
+            raise ValueError("expected incident state version is invalid")
+        ref = self._document("incidents", incident_id)
+
+        def operation(transaction: Any) -> IncidentCheckpointCommit:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is None or not isinstance(existing.get("record"), dict):
+                raise LedgerIntegrityError("incident checkpoint is missing or malformed")
+            current = IncidentCheckpoint.model_validate(existing["record"])
+            if current.report_created_at is not None:
+                return IncidentCheckpointCommit(current, True)
+            if current.state_version != expected_state_version:
+                raise LedgerIntegrityError("incident checkpoint state version is stale")
+            if current.stage is not IncidentWorkflowStage.SEMANTIC_READY:
+                raise LedgerIntegrityError("report timestamp requires SEMANTIC_READY")
+            now = self._clock()
+            allocated = current.model_copy(
+                update={
+                    "report_created_at": now,
+                    "state_version": current.state_version + 1,
+                    "updated_at": now,
+                }
+            )
+            transaction.set(
+                ref,
+                {
+                    **existing,
+                    "record": allocated.model_dump(mode="json"),
+                    "updated_at": now,
+                },
+            )
+            return IncidentCheckpointCommit(allocated, False)
+
+        return cast(IncidentCheckpointCommit, self._transaction_runner(operation))
+
+    async def allocate_report_created_at(
+        self,
+        *,
+        incident_id: str,
+        expected_state_version: int,
+    ) -> IncidentCheckpointCommit:
+        return await asyncio.to_thread(
+            self._allocate_report_created_at_sync,
+            incident_id=incident_id,
+            expected_state_version=expected_state_version,
+        )
+
     def _advance_incident_sync(
         self,
         checkpoint: IncidentCheckpoint,
@@ -358,7 +630,6 @@ class FirestoreGate0Ledger:
         if checkpoint.state_version != expected_state_version + 1:
             raise ValueError("target incident version must increment by exactly one")
         ref = self._document("incidents", checkpoint.incident_id)
-        target = checkpoint.model_dump(mode="json")
 
         def operation(transaction: Any) -> IncidentCheckpointCommit:
             existing = self._snapshot_data(ref.get(transaction=transaction))
@@ -369,7 +640,12 @@ class FirestoreGate0Ledger:
                 raise LedgerIntegrityError("stored incident is malformed")
             current = IncidentCheckpoint.model_validate(existing_record)
             if current.state_version == checkpoint.state_version:
-                if current != checkpoint:
+                replay_target = checkpoint
+                if current.report_ready_at is not None and checkpoint.report_ready_at is None:
+                    replay_target = checkpoint.model_copy(
+                        update={"report_ready_at": current.report_ready_at}
+                    )
+                if current != replay_target:
                     raise LedgerIntegrityError("incident checkpoint version conflicts")
                 return IncidentCheckpointCommit(current, True)
             if current.state_version != expected_state_version:
@@ -381,15 +657,32 @@ class FirestoreGate0Ledger:
                 or current.production_job_lineage_id != checkpoint.production_job_lineage_id
             ):
                 raise LedgerIntegrityError("incident immutable lineage changed")
+            committed = checkpoint
+            if (
+                checkpoint.stage
+                in {
+                    IncidentWorkflowStage.REPORT_READY,
+                    IncidentWorkflowStage.NEEDS_REVIEW,
+                }
+                and checkpoint.report is not None
+            ):
+                if (
+                    current.report_created_at is None
+                    or checkpoint.report_created_at != current.report_created_at
+                ):
+                    raise LedgerIntegrityError("report creation time lineage is missing")
+                committed = checkpoint.model_copy(
+                    update={"report_ready_at": current.report_ready_at or self._clock()}
+                )
             transaction.set(
                 ref,
                 {
                     **existing,
-                    "record": target,
+                    "record": committed.model_dump(mode="json"),
                     "updated_at": self._clock(),
                 },
             )
-            return IncidentCheckpointCommit(checkpoint, False)
+            return IncidentCheckpointCommit(committed, False)
 
         return cast(IncidentCheckpointCommit, self._transaction_runner(operation))
 
@@ -852,7 +1145,7 @@ class FirestoreGate0Ledger:
             ):
                 if existing is None:
                     transaction.create(ref, {**record, "claimed_at": now})
-                elif existing.get("payload_sha256") != record["payload_sha256"]:
+                elif not _same_source_revision_identity(existing, record):
                     raise LedgerIntegrityError("source revision claim conflicts with existing data")
             for ref, record, existing in zip(
                 outbox_refs, outbox_records, outbox_existing, strict=True

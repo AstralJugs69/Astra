@@ -20,7 +20,10 @@ def collect() -> dict[str, object]:
         relative_path="translation_profiles/demo-ueb-40x25-v1.json",
     )
     policy = load_recommendation_policy()
-    response = TestClient(create_app(profile_path=profile_path)).get("/readyz")
+    client = TestClient(create_app(profile_path=profile_path))
+    health_response = client.get("/health")
+    healthz_response = client.get("/healthz")
+    response = client.get("/readyz")
     body = response.json()
     package_path = Path(inspect.getfile(braille_errata_relay)).resolve()
     app_src = Path("/app/src").resolve()
@@ -29,6 +32,8 @@ def collect() -> dict[str, object]:
         "schema_version": "installed-container-smoke.v1",
         "policy_id": policy.policy_id,
         "profile_id": body.get("profile_id"),
+        "health_status": health_response.status_code,
+        "healthz_status": healthz_response.status_code,
         "readyz_status": response.status_code,
         "ready": body.get("ready"),
         "liblouis_version": body.get("liblouis_version"),
@@ -43,6 +48,8 @@ def main() -> int:
     passed = (
         result["policy_id"] == "relay-policy.v1"
         and result["profile_id"] == "demo-ueb-40x25-v1"
+        and result["health_status"] == 200
+        and result["healthz_status"] == 200
         and result["readyz_status"] == 200
         and result["ready"] is True
         and result["liblouis_version"] == "3.38.0"

@@ -9,6 +9,7 @@ from braille_errata_relay.adapters.firestore_ledger import StoredSourceRevision
 from braille_errata_relay.application.baseline_registration import (
     BaselineRegistrationError,
     BaselineRegistrationWorkflow,
+    baseline_registration_idempotency_key,
 )
 from braille_errata_relay.braille.liblouis_adapter import LiblouisAdapter
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
@@ -115,6 +116,15 @@ async def test_demo_baseline_registration_is_immutable_and_idempotent() -> None:
         "site_id": "demo-site",
         "queue_name": "Braille-Embosser-Sim",
     }
+    values["idempotency_key"] = baseline_registration_idempotency_key(
+        production_id="WO-DEMO-001",
+        source_file_id="file",
+        source_revision_id=revision_id,
+        translation_profile_id="demo-ueb-40x25-v1",
+        approval_label="DEMO_FIXTURE_APPROVED",
+        site_id="demo-site",
+        queue_name="Braille-Embosser-Sim",
+    )
 
     first = await workflow.register_demo_fixture(**values)
     second = await workflow.register_demo_fixture(**values)
@@ -140,6 +150,15 @@ async def test_demo_baseline_rejects_unapproved_fixture_label() -> None:
     workflow, ledger = _components()
 
     with pytest.raises(BaselineRegistrationError, match="DEMO_FIXTURE_APPROVED"):
+        idempotency_key = baseline_registration_idempotency_key(
+            production_id="WO-DEMO-001",
+            source_file_id="file",
+            source_revision_id=ledger.source.revision_id,
+            translation_profile_id="demo-ueb-40x25-v1",
+            approval_label="APPROVED",
+            site_id="demo-site",
+            queue_name="Braille-Embosser-Sim",
+        )
         await workflow.register_demo_fixture(
             production_id="WO-DEMO-001",
             source_revision_id=ledger.source.revision_id,
@@ -147,4 +166,21 @@ async def test_demo_baseline_rejects_unapproved_fixture_label() -> None:
             approval_label="APPROVED",
             site_id="demo-site",
             queue_name="Braille-Embosser-Sim",
+            idempotency_key=idempotency_key,
+        )
+
+
+@pytest.mark.asyncio
+async def test_demo_baseline_rejects_ignored_or_incorrect_idempotency_key() -> None:
+    workflow, ledger = _components()
+
+    with pytest.raises(BaselineRegistrationError, match="idempotency key"):
+        await workflow.register_demo_fixture(
+            production_id="WO-DEMO-001",
+            source_revision_id=ledger.source.revision_id,
+            expected_file_id="file",
+            approval_label="DEMO_FIXTURE_APPROVED",
+            site_id="demo-site",
+            queue_name="Braille-Embosser-Sim",
+            idempotency_key="ignored-correctness-field",
         )

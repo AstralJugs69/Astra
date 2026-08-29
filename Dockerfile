@@ -27,14 +27,12 @@ ENV UV_HTTP_TIMEOUT=600 \
     UV_CONCURRENT_DOWNLOADS=1
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md /app/
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 COPY src /app/src
 COPY config /app/config
 COPY schemas /app/schemas
 COPY infra/scripts/bind_liblouis_profile.py /app/infra/scripts/bind_liblouis_profile.py
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python /app/.venv/bin/python --no-deps /app
+RUN uv pip install --python /app/.venv/bin/python --no-deps /app
 RUN PYTHONPATH=/opt/liblouis-python \
     LD_LIBRARY_PATH=/opt/liblouis/lib \
     LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables \

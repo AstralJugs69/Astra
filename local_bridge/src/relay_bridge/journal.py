@@ -118,6 +118,15 @@ class ObservationJournal:
             previous_id = stored_id
         return previous_id
 
+    def next_position(self) -> tuple[int, str | None]:
+        """Return the next sequence and chain parent after verifying local evidence."""
+        previous_id = self.verify_chain()
+        row = self.connection.execute(
+            "SELECT sequence FROM observations ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        sequence = 1 if row is None else int(row[0]) + 1
+        return sequence, previous_id
+
     def append(self, sequence: int, observation_id: str, payload: dict[str, object]) -> bool:
         if sequence <= 0:
             raise ValueError("observation sequence must be positive")

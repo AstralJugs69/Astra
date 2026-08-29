@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-first-live-closure-evidence.v1",
+  "title": "Sanitized Slice 2.1 report-first live-closure evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "branch",
+    "base_commit",
+    "governing_documents",
+    "service",
+    "authenticated_routes",
+    "scheduler",
+    "baseline_link",
+    "source_reconciliation",
+    "workflow",
+    "replay",
+    "verification",
+    "iam_cleanup",
+    "notifications",
+    "remaining_blockers"
+  ],
+  "properties": {
+    "schema_version": {"const": "report-first-live-closure-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "branch": {"const": "codex/slice-2-1-live-closure"},
+    "base_commit": {"$ref": "#/$defs/git_commit"},
+    "governing_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction.md", "architecture.md"],
+      "properties": {
+        "instruction.md": {"$ref": "#/$defs/sha256"},
+        "architecture.md": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "revision", "image_digest", "private", "project_id_sha256"],
+      "properties": {
+        "region": {"const": "europe-west3"},
+        "revision": {"type": "string", "pattern": "^braille-errata-relay-[a-z0-9-]+$"},
+        "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "private": {"const": true},
+        "project_id_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "authenticated_routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health_status", "ready_status", "ready", "reserved_healthz_status"],
+      "properties": {
+        "health_status": {"const": 200},
+        "ready_status": {"const": 200},
+        "ready": {"const": true},
+        "reserved_healthz_status": {"const": 404}
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_body_sha256",
+        "prior_failed_http_status",
+        "scheduler_http_status",
+        "uvicorn_http_status",
+        "successful_execution_count",
+        "recovery_after_repair",
+        "paused_after_evidence"
+      ],
+      "properties": {
+        "request_body_sha256": {"$ref": "#/$defs/sha256"},
+        "prior_failed_http_status": {"const": 500},
+        "scheduler_http_status": {"const": 200},
+        "uvicorn_http_status": {"const": 200},
+        "successful_execution_count": {"const": 1},
+        "recovery_after_repair": {"const": true},
+        "paused_after_evidence": {"const": true}
+      }
+    },
+    "baseline_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_id",
+        "approved_brf_sha256",
+        "scheduler_job_id",
+        "site_observation_id",
+        "production_link_id",
+        "status"
+      ],
+      "properties": {
+        "baseline_id": {"$ref": "#/$defs/sha256"},
+        "approved_brf_sha256": {"$ref": "#/$defs/sha256"},
+        "scheduler_job_id": {"type": "integer", "minimum": 1},
+        "site_observation_id": {"$ref": "#/$defs/sha256"},
+        "production_link_id": {"$ref": "#/$defs/sha256"},
+        "status": {"const": "PRODUCTION_LINK_VERIFIED"}
+      }
+    },
+    "source_reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v2_source_sha256", "reused_durable_same_file_revision"],
+      "properties": {
+        "v2_source_sha256": {"$ref": "#/$defs/sha256"},
+        "reused_durable_same_file_revision": {"const": true}
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "incident_id",
+        "stage",
+        "incident_count",
+        "candidate_brf_sha256",
+        "candidate_count",
+        "semantic_assessment_id",
+        "semantic_execution_count",
+        "semantic_attempt_count",
+        "report_sha256",
+        "report_count",
+        "disposition_packet_sha256",
+        "disposition_packet_count",
+        "report_created_at_allocated",
+        "report_ready_at_allocated"
+      ],
+      "properties": {
+        "incident_id": {"$ref": "#/$defs/sha256"},
+        "stage": {"const": "NEEDS_REVIEW"},
+        "incident_count": {"const": 1},
+        "candidate_brf_sha256": {"$ref": "#/$defs/sha256"},
+        "candidate_count": {"const": 1},
+        "semantic_assessment_id": {"$ref": "#/$defs/sha256"},
+        "semantic_execution_count": {"const": 1},
+        "semantic_attempt_count": {"const": 1},
+        "report_sha256": {"$ref": "#/$defs/sha256"},
+        "report_count": {"const": 1},
+        "disposition_packet_sha256": {"$ref": "#/$defs/sha256"},
+        "disposition_packet_count": {"const": 1},
+        "report_created_at_allocated": {"const": true},
+        "report_ready_at_allocated": {"const": true}
+      }
+    },
+    "replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "same_source_converged",
+        "duplicate_source_receipt",
+        "same_outbox_converged",
+        "outbox_replay_http_status",
+        "outbox_replay_leased",
+        "outbox_replay_completed",
+        "outbox_replay_retried",
+        "outbox_replay_message_count"
+      ],
+      "properties": {
+        "same_source_converged": {"const": true},
+        "duplicate_source_receipt": {"const": true},
+        "same_outbox_converged": {"const": true},
+        "outbox_replay_http_status": {"const": 200},
+        "outbox_replay_leased": {"const": 0},
+        "outbox_replay_completed": {"const": 0},
+        "outbox_replay_retried": {"const": 0},
+        "outbox_replay_message_count": {"const": 0}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "windows_tests",
+        "frozen_lock",
+        "ruff_lint",
+        "scoped_format",
+        "strict_mypy",
+        "schema_validation",
+        "local_container_build",
+        "remote_container_build",
+        "wsl_liblouis_goldens",
+        "container_smoke",
+        "wsl_container_brf_identity",
+        "historical_gate0_evidence_preserved"
+      ],
+      "properties": {
+        "windows_tests": {"type": "string", "pattern": "^[1-9][0-9]* passed"},
+        "frozen_lock": {"const": "PASS"},
+        "ruff_lint": {"const": "PASS"},
+        "scoped_format": {"const": "PASS"},
+        "strict_mypy": {"const": "PASS"},
+        "schema_validation": {"const": "PASS"},
+        "local_container_build": {"const": "PASS"},
+        "remote_container_build": {"const": "PASS"},
+        "wsl_liblouis_goldens": {"const": "PASS"},
+        "container_smoke": {"const": "PASS"},
+        "wsl_container_brf_identity": {"const": "PASS"},
+        "historical_gate0_evidence_preserved": {"const": true}
+      }
+    },
+    "iam_cleanup": {"const": true},
+    "notifications": {"const": "NOT_CLAIMED"},
+    "remaining_blockers": {"type": "array", "maxItems": 0}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}
