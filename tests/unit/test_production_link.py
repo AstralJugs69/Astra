@@ -140,7 +140,7 @@ class MemoryLinkLedger:
                     update={
                         "scheduler_job_id": proposed_link.scheduler_job_id,
                         "scheduler_job_title": proposed_link.scheduler_job_title,
-                        "status": BaselineStatus.PRODUCTION_LINK_VERIFIED,
+                        "status": BaselineStatus.PROVISIONAL_PRODUCTION_LINK,
                         "state_version": expected_state_version + 1,
                     }
                 )
@@ -191,9 +191,11 @@ async def test_fresh_exact_observation_creates_one_idempotent_production_link() 
     assert first.duplicate is False
     assert replay.duplicate is True
     assert first.link == replay.link
-    assert first.baseline.baseline.status is BaselineStatus.PRODUCTION_LINK_VERIFIED
+    assert first.baseline.baseline.status is BaselineStatus.PROVISIONAL_PRODUCTION_LINK
     assert first.baseline.baseline.state_version == 1
     assert first.link.scheduler_job_title == canonical_baseline_job_title(baseline)
+    assert first.link.verification_basis == ("READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY")
+    assert first.link.verified_at is None
     assert len(ledger.commits) == 1
 
 

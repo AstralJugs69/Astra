@@ -69,7 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     baseline.add_argument("--queue-name", default="Braille-Embosser-Sim")
     link = commands.add_parser(
         "link-baseline-production",
-        help="Link read-only evidence for a human-submitted baseline job.",
+        help="Create a provisional advisory link for a human-submitted baseline job.",
     )
     _add_auth_arguments(link)
     link.add_argument("--baseline-id", required=True)

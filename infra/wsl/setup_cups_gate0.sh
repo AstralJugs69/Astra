@@ -25,6 +25,7 @@ OBSERVER_STATE_ROOT="/var/lib/braille-relay/observer"
 BACKUP_ROOT="/var/lib/braille-relay/setup-backups"
 OPERATOR="relay-operator"
 OBSERVER="relay-observer"
+ENDPOINT_AUDITOR="relay-endpoint-auditor"
 AUDIT_GROUP="relay-audit"
 
 MODE="apply"
@@ -171,6 +172,8 @@ ensure_account() {
   fi
   if [[ "$account" == "$OPERATOR" ]]; then
     useradd --create-home --shell /bin/bash "$account"
+  elif [[ "$account" == "$ENDPOINT_AUDITOR" ]]; then
+    useradd --system --no-create-home --shell /bin/bash "$account"
   else
     useradd --system --no-create-home --shell /usr/sbin/nologin "$account"
   fi
@@ -206,6 +209,20 @@ assert_observer_isolated() {
   fi
 }
 
+assert_endpoint_auditor_isolated() {
+  local groups
+  groups="$(id -nG "$ENDPOINT_AUDITOR")"
+  if tr ' ' '\n' <<< "$groups" | grep -Fxq "$CUPS_GROUP"; then
+    fail "$ENDPOINT_AUDITOR must not be a member of $CUPS_GROUP"
+  fi
+  if ! tr ' ' '\n' <<< "$groups" | grep -Fxq "$AUDIT_GROUP"; then
+    fail "$ENDPOINT_AUDITOR must be a member of $AUDIT_GROUP"
+  fi
+  if tr ' ' '\n' <<< "$(id -nG "$OPERATOR")" | grep -Fxq "$AUDIT_GROUP"; then
+    fail "$OPERATOR must not share the endpoint audit boundary"
+  fi
+}
+
 assert_installed_state() {
   systemctl is-active --quiet cups || fail "CUPS is not active"
   local device_line
@@ -234,6 +251,7 @@ assert_installed_state() {
   }
   cupsd -t -c "$CUPS_CONF" >/dev/null
   assert_observer_isolated
+  assert_endpoint_auditor_isolated
 }
 
 inspect() {
@@ -310,14 +328,18 @@ require_command systemctl
 
 ensure_account "$OPERATOR"
 ensure_account "$OBSERVER"
+ensure_account "$ENDPOINT_AUDITOR"
+usermod --shell /bin/bash "$ENDPOINT_AUDITOR"
 ensure_group "$AUDIT_GROUP"
 
 # CUPS authorization is identity/policy based. Neither Relay identity receives
 # direct spool access through lp; the human operator receives audit access only.
 remove_from_group "$OPERATOR" "$CUPS_GROUP"
 remove_from_group "$OBSERVER" "$CUPS_GROUP"
+remove_from_group "$ENDPOINT_AUDITOR" "$CUPS_GROUP"
+remove_from_group "$OPERATOR" "$AUDIT_GROUP"
 remove_from_group "$OBSERVER" "$AUDIT_GROUP"
-usermod -a -G "$AUDIT_GROUP" "$OPERATOR"
+usermod -a -G "$AUDIT_GROUP" "$ENDPOINT_AUDITOR"
 
 install -d -o lp -g "$AUDIT_GROUP" -m 2750 "$CAPTURE_ROOT"
 chown lp:"$AUDIT_GROUP" "$CAPTURE_ROOT"

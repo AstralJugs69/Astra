@@ -30,6 +30,12 @@ from braille_errata_relay.application.baseline_registration import (
     BaselineRegistrationWorkflow,
 )
 from braille_errata_relay.application.drive_gate0 import DriveGate0Workflow
+from braille_errata_relay.application.endpoint_receipt import (
+    EndpointEvidenceConflict,
+    EndpointEvidenceRejected,
+    EndpointReceiptWorkflow,
+    HistoricalLinkCorrectionWorkflow,
+)
 from braille_errata_relay.application.incident_workflow import IncidentWorkflow
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
 from braille_errata_relay.application.production_link import (
@@ -52,6 +58,7 @@ from braille_errata_relay.configuration import resolve_config_path
 from braille_errata_relay.domain.models import (
     AssessmentInput,
     BlockingReason,
+    EndpointEvidenceSubmission,
     ProductionLinkBlockingReason,
 )
 
@@ -112,6 +119,19 @@ class OutboxDrainRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=100)
 
 
+class HistoricalLinkCorrectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["baseline-link-correction-request.v1"] = (
+        "baseline-link-correction-request.v1"
+    )
+    baseline_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    production_link_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_state_version: int = Field(ge=1)
+    prior_report_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 def _default_profile_path() -> Path:
     return resolve_config_path(
         direct_env="TRANSLATION_PROFILE_PATH",
@@ -129,6 +149,8 @@ def create_app(
     drive_workflow: DriveGate0Workflow | None = None,
     baseline_workflow: BaselineRegistrationWorkflow | None = None,
     production_link_workflow: ProductionLinkWorkflow | None = None,
+    endpoint_receipt_workflow: EndpointReceiptWorkflow | None = None,
+    historical_link_correction_workflow: HistoricalLinkCorrectionWorkflow | None = None,
     telemetry_workflow: TelemetryIngestionWorkflow | None = None,
     incident_workflow: IncidentWorkflow | None = None,
     outbox_workflow: OutboxDrainWorkflow | None = None,
@@ -405,10 +427,91 @@ def create_app(
         return JSONResponse(
             status_code=200 if result.duplicate else 201,
             content={
-                "status": "PRODUCTION_LINK_VERIFIED",
+                "status": "PROVISIONAL_PRODUCTION_LINK",
                 "duplicate": result.duplicate,
                 "baseline": result.baseline.model_dump(mode="json"),
                 "production_link": result.link.model_dump(mode="json"),
+            },
+        )
+
+    @app.post("/internal/endpoint-receipts")
+    async def confirm_endpoint_receipt(
+        payload: EndpointEvidenceSubmission,
+        request: Request,
+    ) -> JSONResponse:
+        if endpoint_receipt_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "endpoint receipt is not configured"},
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            result = await endpoint_receipt_workflow.confirm(
+                payload,
+                submitting_principal=principal,
+            )
+        except EndpointEvidenceConflict as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": exc.reason.value},
+            )
+        except EndpointEvidenceRejected as exc:
+            status_code = (
+                404 if exc.reason is ProductionLinkBlockingReason.BASELINE_NOT_FOUND else 422
+            )
+            return JSONResponse(
+                status_code=status_code,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": exc.reason.value},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": "PRODUCTION_LINK_VERIFIED",
+                "duplicate": result.duplicate,
+                "baseline": result.baseline.model_dump(mode="json"),
+                "endpoint_receipt": result.receipt.model_dump(mode="json"),
+            },
+        )
+
+    @app.post("/internal/baseline-link-corrections")
+    async def correct_historical_link(
+        payload: HistoricalLinkCorrectionRequest,
+        request: Request,
+    ) -> JSONResponse:
+        if historical_link_correction_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "historical correction is not configured"},
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            baseline = await historical_link_correction_workflow.correct(
+                baseline_id=payload.baseline_id,
+                production_link_id=payload.production_link_id,
+                expected_state_version=payload.expected_state_version,
+                prior_report_id=payload.prior_report_id,
+                idempotency_key=payload.idempotency_key,
+                submitting_principal=principal,
+            )
+        except EndpointEvidenceConflict as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": exc.reason.value},
+            )
+        except EndpointEvidenceRejected as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": exc.reason.value},
+            )
+        return JSONResponse(
+            status_code=201,
+            content={
+                "status": "PROVISIONAL_PRODUCTION_LINK",
+                "baseline": baseline.model_dump(mode="json"),
             },
         )
 
@@ -458,6 +561,8 @@ app = create_app(
     drive_workflow=_runtime.drive_workflow,
     baseline_workflow=_runtime.baseline_workflow,
     production_link_workflow=_runtime.production_link_workflow,
+    endpoint_receipt_workflow=_runtime.endpoint_receipt_workflow,
+    historical_link_correction_workflow=_runtime.historical_link_correction_workflow,
     telemetry_workflow=_runtime.telemetry_workflow,
     incident_workflow=_runtime.incident_workflow,
     outbox_workflow=_runtime.outbox_workflow,

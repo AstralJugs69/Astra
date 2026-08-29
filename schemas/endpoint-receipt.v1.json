@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "endpoint-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "receipt_id", "baseline_id", "production_link_id",
+    "scheduler_job_id", "scheduler_job_title", "site_id", "queue_name",
+    "simulated_endpoint_id", "approved_baseline_brf_sha256",
+    "endpoint_received_sha256", "capture_manifest_sha256",
+    "terminal_event_sha256", "capture_state", "evidence_timestamp", "verified_at",
+    "truth_basis", "submitting_principal", "idempotency_key_sha256",
+    "expected_baseline_state_version", "baseline_state_version", "artifact_uri"
+  ],
+  "properties": {
+    "schema_version": {"const": "endpoint-receipt.v1"},
+    "receipt_id": {"$ref": "#/$defs/sha256"},
+    "baseline_id": {"$ref": "#/$defs/sha256"},
+    "production_link_id": {"$ref": "#/$defs/sha256"},
+    "scheduler_job_id": {"type": "integer", "minimum": 1},
+    "scheduler_job_title": {"type": "string", "minLength": 1, "maxLength": 512},
+    "site_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "queue_name": {"type": "string", "minLength": 1, "maxLength": 512},
+    "simulated_endpoint_id": {"const": "relay-capture://demo-embosser"},
+    "approved_baseline_brf_sha256": {"$ref": "#/$defs/sha256"},
+    "endpoint_received_sha256": {"$ref": "#/$defs/sha256"},
+    "capture_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "terminal_event_sha256": {"$ref": "#/$defs/sha256"},
+    "capture_state": {"enum": ["COMPLETED", "TERMINATED", "FAILED"]},
+    "evidence_timestamp": {"type": "string", "format": "date-time"},
+    "verified_at": {"type": "string", "format": "date-time"},
+    "truth_basis": {"const": "SIMULATED_DEMO"},
+    "submitting_principal": {"type": "string", "minLength": 1, "maxLength": 512},
+    "idempotency_key_sha256": {"$ref": "#/$defs/sha256"},
+    "expected_baseline_state_version": {"type": "integer", "minimum": 1},
+    "baseline_state_version": {"type": "integer", "minimum": 2},
+    "artifact_uri": {"type": "string", "pattern": "^gs://"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

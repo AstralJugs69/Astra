@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -20,10 +21,13 @@ from braille_errata_relay.domain.models import (
     ArtifactOrigin,
     ArtifactRef,
     BaselineArtifacts,
+    BaselineLinkCorrection,
     BaselineProductionLink,
     BaselineStatus,
+    CaptureState,
     DriveChangeBatch,
     DriveChangeSignal,
+    EndpointReceipt,
     IncidentCheckpoint,
     IncidentWorkflowStage,
     ProductionBaseline,
@@ -336,7 +340,33 @@ def _production_link(idempotency_key: str) -> BaselineProductionLink:
             {"scope": "baseline-production-link", "key": idempotency_key}
         ),
         evidence_observed_at=datetime(2026, 8, 29, tzinfo=UTC),
+        linked_at=datetime(2026, 8, 29, tzinfo=UTC),
+    )
+
+
+def _endpoint_receipt(idempotency_key: str, *, receipt_id: str = "6" * 64) -> EndpointReceipt:
+    return EndpointReceipt(
+        receipt_id=receipt_id,
+        baseline_id="a" * 64,
+        production_link_id="2" * 64,
+        scheduler_job_id=42,
+        scheduler_job_title=f"BER|WO-DEMO-001|{'c' * 12}|BASELINE",
+        site_id="demo-site",
+        queue_name="Braille-Embosser-Sim",
+        approved_baseline_brf_sha256="c" * 64,
+        endpoint_received_sha256="c" * 64,
+        capture_manifest_sha256="7" * 64,
+        terminal_event_sha256="8" * 64,
+        capture_state=CaptureState.COMPLETED,
+        evidence_timestamp=datetime(2026, 8, 29, tzinfo=UTC),
         verified_at=datetime(2026, 8, 29, tzinfo=UTC),
+        submitting_principal="endpoint@example.iam.gserviceaccount.com",
+        idempotency_key_sha256=canonical_sha256(
+            {"scope": "endpoint-receipt", "key": idempotency_key}
+        ),
+        expected_baseline_state_version=1,
+        baseline_state_version=2,
+        artifact_uri=f"gs://test/endpoint-receipts/{receipt_id}.json",
     )
 
 
@@ -402,7 +432,7 @@ async def test_production_link_transaction_is_versioned_immutable_and_idempotent
     assert replay is not None and replay.duplicate is True
     assert repeated.duplicate is True
     assert first.link == replay.link == repeated.link
-    assert first.baseline.baseline.status is BaselineStatus.PRODUCTION_LINK_VERIFIED
+    assert first.baseline.baseline.status is BaselineStatus.PROVISIONAL_PRODUCTION_LINK
     assert first.baseline.baseline.state_version == 1
     assert sum(path.startswith("baseline_production_links/") for path in client.store) == 1
     assert sum(path.startswith("baseline_production_link_requests/") for path in client.store) == 1
@@ -428,6 +458,218 @@ async def test_production_link_transaction_rejects_stale_version_without_overwri
     persisted = await ledger.get_baseline(baseline.baseline.baseline_id)
     assert persisted == updated
     assert not any(path.startswith("baseline_production_links/") for path in client.store)
+
+
+@pytest.mark.asyncio
+async def test_endpoint_receipt_transaction_is_exact_versioned_and_replay_safe() -> None:
+    client = FakeClient()
+    ledger = _ledger(client)
+    baseline = _registered_baseline()
+    await ledger.register_baseline(baseline)
+    await ledger.link_baseline_production(
+        proposed_link=_production_link("link-request"),
+        expected_state_version=0,
+        idempotency_key="link-request",
+    )
+    receipt = _endpoint_receipt("receipt-request")
+
+    first = await ledger.confirm_endpoint_receipt(
+        proposed_receipt=receipt,
+        expected_state_version=1,
+        idempotency_key="receipt-request",
+    )
+    replay = await ledger.confirm_endpoint_receipt(
+        proposed_receipt=receipt,
+        expected_state_version=1,
+        idempotency_key="receipt-request",
+    )
+
+    assert first.duplicate is False
+    assert replay.duplicate is True
+    assert first.baseline.baseline.status is BaselineStatus.PRODUCTION_LINK_VERIFIED
+    assert first.baseline.baseline.state_version == 2
+    assert sum(path.startswith("endpoint_receipts/") for path in client.store) == 1
+    assert sum(path.startswith("baseline_endpoint_confirmations/") for path in client.store) == 1
+
+
+@pytest.mark.asyncio
+async def test_endpoint_receipt_rejects_stale_and_conflicting_idempotency_without_overwrite() -> (
+    None
+):
+    client = FakeClient()
+    ledger = _ledger(client)
+    await ledger.register_baseline(_registered_baseline())
+    await ledger.link_baseline_production(
+        proposed_link=_production_link("link-request"),
+        expected_state_version=0,
+        idempotency_key="link-request",
+    )
+    receipt = _endpoint_receipt("receipt-request")
+    await ledger.confirm_endpoint_receipt(
+        proposed_receipt=receipt,
+        expected_state_version=1,
+        idempotency_key="receipt-request",
+    )
+
+    with pytest.raises(LedgerIntegrityError, match="idempotency key conflicts"):
+        await ledger.confirm_endpoint_receipt(
+            proposed_receipt=_endpoint_receipt("receipt-request", receipt_id="5" * 64),
+            expected_state_version=1,
+            idempotency_key="receipt-request",
+        )
+    with pytest.raises(BaselineStateConflictError, match="stale"):
+        await ledger.confirm_endpoint_receipt(
+            proposed_receipt=_endpoint_receipt("different-request", receipt_id="4" * 64),
+            expected_state_version=1,
+            idempotency_key="different-request",
+        )
+    assert sum(path.startswith("endpoint_receipts/") for path in client.store) == 1
+
+
+@pytest.mark.asyncio
+async def test_historical_link_correction_is_append_only_before_endpoint_repair() -> None:
+    client = FakeClient()
+    ledger = _ledger(client)
+    baseline = _registered_baseline()
+    historical = baseline.model_copy(
+        update={
+            "baseline": baseline.baseline.model_copy(
+                update={
+                    "scheduler_job_id": 42,
+                    "scheduler_job_title": f"BER|WO-DEMO-001|{'c' * 12}|BASELINE",
+                    "status": BaselineStatus.PRODUCTION_LINK_VERIFIED,
+                    "state_version": 1,
+                }
+            )
+        }
+    )
+    await ledger.register_baseline(historical)
+    legacy_link = _production_link("legacy").model_copy(
+        update={
+            "schema_version": "baseline-production-link.v1",
+            "linked_at": None,
+            "verified_at": datetime(2026, 8, 29, tzinfo=UTC),
+            "verification_basis": "READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX",
+        }
+    )
+    client.store["baseline_production_links/" + baseline.baseline.baseline_id] = {
+        "record": legacy_link.model_dump(mode="json")
+    }
+    key = "historical-correction"
+    correction = BaselineLinkCorrection(
+        correction_id="3" * 64,
+        baseline_id=baseline.baseline.baseline_id,
+        production_link_id=legacy_link.link_id,
+        expected_baseline_state_version=1,
+        baseline_state_version=2,
+        prior_report_id="4" * 64,
+        corrected_at=datetime(2026, 8, 29, tzinfo=UTC),
+        submitting_principal="endpoint@example.iam.gserviceaccount.com",
+        idempotency_key_sha256=canonical_sha256(
+            {"scope": "historical-production-link-correction", "key": key}
+        ),
+    )
+
+    corrected = await ledger.correct_historical_production_link(
+        proposed_correction=correction,
+        expected_state_version=1,
+        idempotency_key=key,
+    )
+    replay = await ledger.correct_historical_production_link(
+        proposed_correction=correction,
+        expected_state_version=1,
+        idempotency_key=key,
+    )
+
+    assert corrected.baseline.status is BaselineStatus.PROVISIONAL_PRODUCTION_LINK
+    assert corrected.baseline.state_version == 2
+    assert replay == corrected
+    assert sum(path.startswith("baseline_link_corrections/") for path in client.store) == 1
+    assert sum(path.startswith("endpoint_receipts/") for path in client.store) == 0
+
+
+@pytest.mark.asyncio
+async def test_endpoint_receipt_transaction_crash_then_retry_converges() -> None:
+    client = FakeClient()
+    setup = _ledger(client)
+    await setup.register_baseline(_registered_baseline())
+    await setup.link_baseline_production(
+        proposed_link=_production_link("link-request"),
+        expected_state_version=0,
+        idempotency_key="link-request",
+    )
+    attempts = 0
+
+    def atomic_runner(callback: Any) -> Any:
+        nonlocal attempts
+        staged = deepcopy(client.store)
+        result = callback(FakeTransaction(staged))
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("simulated crash before transaction commit")
+        client.store.clear()
+        client.store.update(staged)
+        return result
+
+    ledger = FirestoreGate0Ledger(
+        project_id="test-project",
+        client=client,  # type: ignore[arg-type]
+        transaction_runner=atomic_runner,
+        clock=lambda: datetime(2026, 8, 29, tzinfo=UTC),
+    )
+    receipt = _endpoint_receipt("receipt-request")
+
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        await ledger.confirm_endpoint_receipt(
+            proposed_receipt=receipt,
+            expected_state_version=1,
+            idempotency_key="receipt-request",
+        )
+    assert not any(path.startswith("endpoint_receipts/") for path in client.store)
+
+    recovered = await ledger.confirm_endpoint_receipt(
+        proposed_receipt=receipt,
+        expected_state_version=1,
+        idempotency_key="receipt-request",
+    )
+
+    assert recovered.baseline.baseline.status is BaselineStatus.PRODUCTION_LINK_VERIFIED
+    assert sum(path.startswith("endpoint_receipts/") for path in client.store) == 1
+
+
+@pytest.mark.asyncio
+async def test_endpoint_verification_timestamp_is_allocated_once_and_conflicts_closed() -> None:
+    client = FakeClient()
+    clock = [datetime(2026, 8, 29, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, clock)
+
+    first = await ledger.allocate_endpoint_verification_timestamp(
+        baseline_id="a" * 64,
+        expected_state_version=1,
+        idempotency_key="receipt-request",
+        evidence_identity_sha256="b" * 64,
+        submitting_principal="endpoint@example.iam.gserviceaccount.com",
+    )
+    clock[0] += timedelta(minutes=1)
+    replay = await ledger.allocate_endpoint_verification_timestamp(
+        baseline_id="a" * 64,
+        expected_state_version=1,
+        idempotency_key="receipt-request",
+        evidence_identity_sha256="b" * 64,
+        submitting_principal="endpoint@example.iam.gserviceaccount.com",
+    )
+
+    assert first.duplicate is False
+    assert replay.duplicate is True
+    assert replay.verified_at == first.verified_at
+    with pytest.raises(LedgerIntegrityError, match="idempotency key conflicts"):
+        await ledger.allocate_endpoint_verification_timestamp(
+            baseline_id="a" * 64,
+            expected_state_version=1,
+            idempotency_key="receipt-request",
+            evidence_identity_sha256="c" * 64,
+            submitting_principal="endpoint@example.iam.gserviceaccount.com",
+        )
 
 
 @pytest.mark.asyncio

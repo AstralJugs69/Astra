@@ -75,7 +75,7 @@ def test_link_cli_posts_only_read_only_lineage(monkeypatch: Any, capsys: Any) ->
         @staticmethod
         def json() -> dict[str, object]:
             return {
-                "status": "PRODUCTION_LINK_VERIFIED",
+                "status": "PROVISIONAL_PRODUCTION_LINK",
                 "duplicate": False,
                 "production_link": {"link_id": "d" * 64, "scheduler_job_id": 42},
             }

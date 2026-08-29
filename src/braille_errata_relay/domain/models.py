@@ -44,6 +44,7 @@ class ArtifactKind(StrEnum):
     SEMANTIC_ASSESSMENT = "SEMANTIC_ASSESSMENT"
     REPORT = "REPORT"
     HUMAN_DISPOSITION_PACKET = "HUMAN_DISPOSITION_PACKET"
+    ENDPOINT_RECEIPT = "ENDPOINT_RECEIPT"
 
 
 class ArtifactOrigin(StrEnum):
@@ -69,6 +70,10 @@ class ProductionLinkBlockingReason(StrEnum):
     WRONG_ARTIFACT = "WRONG_ARTIFACT"
     WRONG_QUEUE = "WRONG_QUEUE"
     STALE_STATE_VERSION = "STALE_STATE_VERSION"
+    MISSING_ENDPOINT_EVIDENCE = "MISSING_ENDPOINT_EVIDENCE"
+    ENDPOINT_EVIDENCE_MISMATCH = "ENDPOINT_EVIDENCE_MISMATCH"
+    ENDPOINT_EVIDENCE_CONFLICT = "ENDPOINT_EVIDENCE_CONFLICT"
+    HISTORICAL_CORRECTION_REQUIRED = "HISTORICAL_CORRECTION_REQUIRED"
 
 
 class IncidentState(StrEnum):
@@ -171,6 +176,12 @@ class AttestationType(StrEnum):
 class TruthBasis(StrEnum):
     HUMAN_ATTESTATION = "HUMAN_ATTESTATION"
     SIMULATED_DEMO = "SIMULATED_DEMO"
+
+
+class CaptureState(StrEnum):
+    COMPLETED = "COMPLETED"
+    TERMINATED = "TERMINATED"
+    FAILED = "FAILED"
 
 
 class ProofDecision(StrEnum):
@@ -382,7 +393,9 @@ class RegisteredBaseline(DomainModel):
 
 
 class BaselineProductionLink(DomainModel):
-    schema_version: Literal["baseline-production-link.v1"] = "baseline-production-link.v1"
+    schema_version: Literal["baseline-production-link.v1", "baseline-production-link.v2"] = (
+        "baseline-production-link.v2"
+    )
     link_id: HexSha256
     baseline_id: HexSha256
     scheduler_job_id: int = Field(gt=0)
@@ -395,10 +408,114 @@ class BaselineProductionLink(DomainModel):
     baseline_state_version: int = Field(ge=1)
     idempotency_key_sha256: HexSha256
     evidence_observed_at: datetime
-    verified_at: datetime
-    verification_basis: Literal["READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX"] = (
-        "READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX"
+    linked_at: datetime | None = None
+    verified_at: datetime | None = None
+    verification_basis: Literal[
+        "READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX",
+        "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY",
+    ] = "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY"
+
+    @model_validator(mode="after")
+    def validate_link_semantics(self) -> BaselineProductionLink:
+        if self.schema_version == "baseline-production-link.v1":
+            if self.verified_at is None or self.linked_at is not None:
+                raise ValueError("legacy production link timestamps are inconsistent")
+            if self.verification_basis != "READ_ONLY_EXACT_JOB_QUEUE_TITLE_AND_HASH_PREFIX":
+                raise ValueError("legacy production link basis is inconsistent")
+        else:
+            if self.linked_at is None or self.verified_at is not None:
+                raise ValueError("advisory production link timestamps are inconsistent")
+            if self.verification_basis != "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY":
+                raise ValueError("advisory production link basis is inconsistent")
+        return self
+
+
+class EndpointReceipt(DomainModel):
+    schema_version: Literal["endpoint-receipt.v1"] = "endpoint-receipt.v1"
+    receipt_id: HexSha256
+    baseline_id: HexSha256
+    production_link_id: HexSha256
+    scheduler_job_id: int = Field(gt=0)
+    scheduler_job_title: NonEmpty
+    site_id: NonEmpty
+    queue_name: NonEmpty
+    simulated_endpoint_id: Literal["relay-capture://demo-embosser"] = (
+        "relay-capture://demo-embosser"
     )
+    approved_baseline_brf_sha256: HexSha256
+    endpoint_received_sha256: HexSha256
+    capture_manifest_sha256: HexSha256
+    terminal_event_sha256: HexSha256
+    capture_state: CaptureState
+    evidence_timestamp: datetime
+    verified_at: datetime
+    truth_basis: Literal["SIMULATED_DEMO"] = "SIMULATED_DEMO"
+    submitting_principal: NonEmpty
+    idempotency_key_sha256: HexSha256
+    expected_baseline_state_version: int = Field(ge=1)
+    baseline_state_version: int = Field(ge=2)
+    artifact_uri: str
+
+    @model_validator(mode="after")
+    def validate_exact_bytes_and_version(self) -> EndpointReceipt:
+        if self.endpoint_received_sha256 != self.approved_baseline_brf_sha256:
+            raise ValueError("endpoint-received bytes do not match the approved baseline")
+        if self.baseline_state_version != self.expected_baseline_state_version + 1:
+            raise ValueError("endpoint receipt target version is invalid")
+        if not self.artifact_uri.startswith("gs://"):
+            raise ValueError("endpoint receipt artifact must be an immutable GCS object")
+        return self
+
+
+class EndpointEvidenceSubmission(DomainModel):
+    schema_version: Literal["endpoint-evidence-submission.v1"] = "endpoint-evidence-submission.v1"
+    baseline_id: HexSha256
+    production_link_id: HexSha256
+    scheduler_job_id: int = Field(gt=0)
+    scheduler_job_title: NonEmpty
+    site_id: NonEmpty
+    queue_name: NonEmpty
+    simulated_endpoint_id: Literal["relay-capture://demo-embosser"] = (
+        "relay-capture://demo-embosser"
+    )
+    approved_baseline_brf_sha256: HexSha256
+    endpoint_received_sha256: HexSha256
+    capture_manifest_sha256: HexSha256
+    terminal_event_sha256: HexSha256
+    capture_state: CaptureState
+    evidence_timestamp: datetime
+    truth_basis: Literal["SIMULATED_DEMO"] = "SIMULATED_DEMO"
+    expected_baseline_state_version: int = Field(ge=1)
+    idempotency_key: NonEmpty
+
+    @model_validator(mode="after")
+    def validate_exact_received_bytes(self) -> EndpointEvidenceSubmission:
+        if self.endpoint_received_sha256 != self.approved_baseline_brf_sha256:
+            raise ValueError("endpoint-received bytes do not match the approved baseline")
+        return self
+
+
+class BaselineLinkCorrection(DomainModel):
+    schema_version: Literal["baseline-link-correction.v1"] = "baseline-link-correction.v1"
+    correction_id: HexSha256
+    baseline_id: HexSha256
+    production_link_id: HexSha256
+    expected_baseline_state_version: int = Field(ge=1)
+    baseline_state_version: int = Field(ge=2)
+    reason: Literal["PRIOR_LINK_LACKED_ENDPOINT_BYTE_CONFIRMATION"] = (
+        "PRIOR_LINK_LACKED_ENDPOINT_BYTE_CONFIRMATION"
+    )
+    prior_report_id: HexSha256 | None = None
+    prior_report_created_before_endpoint_confirmation: Literal[True] = True
+    corrected_at: datetime
+    submitting_principal: NonEmpty
+    idempotency_key_sha256: HexSha256
+
+    @model_validator(mode="after")
+    def validate_target_version(self) -> BaselineLinkCorrection:
+        if self.baseline_state_version != self.expected_baseline_state_version + 1:
+            raise ValueError("correction target version is invalid")
+        return self
 
 
 class EvidenceSide(StrEnum):

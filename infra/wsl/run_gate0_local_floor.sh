@@ -15,6 +15,7 @@ CAPTURE_ROOT="/var/lib/braille-relay/captures"
 INSTALLED_BACKEND="/usr/lib/cups/backend/relay-capture"
 OPERATOR="relay-operator"
 OBSERVER="relay-observer"
+ENDPOINT_AUDITOR="relay-endpoint-auditor"
 CANDIDATE="$ROOT/demo/expected/v1.brf"
 LIFECYCLE_CANDIDATE=""
 EVIDENCE="$ROOT/demo/evidence/gate0-local-floor.json"
@@ -77,6 +78,10 @@ confirm() {
 
 operator() {
   sudo -iu "$OPERATOR" -- "$@"
+}
+
+endpoint_auditor() {
+  sudo -iu "$ENDPOINT_AUDITOR" -- "$@"
 }
 
 cleanup_probe_job() {
@@ -176,7 +181,7 @@ verify_capture() {
   local expected_state="$2"
   local candidate="$3"
   local destination="$4"
-  if ! operator python3 "$ROOT/infra/wsl/verify_capture_evidence.py" \
+  if ! endpoint_auditor python3 "$ROOT/infra/wsl/verify_capture_evidence.py" \
     --job-id "$job_id" \
     --candidate "$candidate" \
     --expected-state "$expected_state" > "$destination"; then

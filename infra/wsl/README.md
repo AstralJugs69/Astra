@@ -52,9 +52,9 @@ It configures the fixed raw queue `Braille-Embosser-Sim` with
 `printer-op-policy=relay-observer`, and creates:
 
 - `relay-observer`: CUPS read-only identity with no `lp`, spool, or capture access;
-- `relay-operator`: explicit human CUPS mutation identity;
-- `relay-audit`: human-only capture-evidence group, initially containing only
-  `relay-operator`.
+- `relay-operator`: explicit human CUPS mutation identity with no capture access;
+- `relay-endpoint-auditor`: fixed-root, read-only simulator evidence identity;
+- `relay-audit`: capture-evidence group containing only `relay-endpoint-auditor`.
 
 The installed backend reads only /etc/cups/relay-capture.conf. It fixes the
 capture root and BRF geometry and permits only the documented five-second page
@@ -183,15 +183,25 @@ not receive a capture-root setting or human audit-group membership.
 
 ## Exact-byte and recovery evidence
 
-For a completed job, run the read-only capture verifier from an operator shell
-or another human account authorized for `relay-audit`:
+For Gate 0 completed/terminated checks, run the read-only capture verifier as
+the dedicated endpoint auditor. The newer production-lineage receipt utility
+accepts no capture path and reads only the numeric job directory under the
+fixed simulator root:
 
 ~~~text
-python3 infra/wsl/verify_capture_evidence.py --job-id JOB_ID --candidate candidate.brf --expected-state COMPLETED
+sudo -u relay-endpoint-auditor python3 infra/wsl/verify_capture_evidence.py --job-id JOB_ID --candidate candidate.brf --expected-state COMPLETED
+
+python3 infra/wsl/audit_endpoint_receipt.py \
+  --baseline-id BASELINE_SHA256 \
+  --production-link-id LINK_SHA256 \
+  --job-id JOB_ID \
+  --expected-title 'BER|WORK_ORDER|HASH_PREFIX|BASELINE' \
+  --approved-brf-sha256 APPROVED_BRF_SHA256 \
+  --expected-state-version VERSION
 ~~~
 
 For a deliberately cancelled slow job, use `--expected-state TERMINATED`. The
-verifier validates the capture-manifest schema, terminal event hash, journal
+verifiers validate the capture-manifest schema, terminal event hash, journal
 chain, completion timestamp when applicable, and candidate/backend/capture
 SHA-256 equality. It emits hashes and status only; it never emits raw BRF.
 

@@ -107,6 +107,7 @@ def _settings() -> CloudSettings:
         telemetry_push_principal_email="telemetry@example.iam.gserviceaccount.com",
         scheduler_principal_email="scheduler@example.iam.gserviceaccount.com",
         demonstrator_principal_email="demonstrator@example.com",
+        endpoint_evidence_principal_email="endpoint@example.iam.gserviceaccount.com",
     )
 
 
@@ -311,3 +312,57 @@ def test_production_link_route_is_demonstrator_only() -> None:
     assert admitted.status_code == 503
     assert admitted.json()["detail"] == "production link is not configured"
     assert denied.status_code == 403
+
+
+def test_endpoint_evidence_routes_use_only_the_dedicated_verified_principal() -> None:
+    receipt = {
+        "schema_version": "endpoint-evidence-submission.v1",
+        "baseline_id": "a" * 64,
+        "production_link_id": "b" * 64,
+        "scheduler_job_id": 19,
+        "scheduler_job_title": "BER|WO-DEMO-001|cccccccccccc|BASELINE",
+        "site_id": "demo-site",
+        "queue_name": "Braille-Embosser-Sim",
+        "simulated_endpoint_id": "relay-capture://demo-embosser",
+        "approved_baseline_brf_sha256": "c" * 64,
+        "endpoint_received_sha256": "c" * 64,
+        "capture_manifest_sha256": "d" * 64,
+        "terminal_event_sha256": "e" * 64,
+        "capture_state": "COMPLETED",
+        "evidence_timestamp": "2026-08-29T20:00:00+00:00",
+        "truth_basis": "SIMULATED_DEMO",
+        "expected_baseline_state_version": 1,
+        "idempotency_key": "f" * 64,
+    }
+    correction = {
+        "schema_version": "baseline-link-correction-request.v1",
+        "baseline_id": "a" * 64,
+        "production_link_id": "b" * 64,
+        "expected_state_version": 1,
+        "prior_report_id": "c" * 64,
+        "idempotency_key": "d" * 64,
+    }
+
+    for path, payload in (
+        ("/internal/endpoint-receipts", receipt),
+        ("/internal/baseline-link-corrections", correction),
+    ):
+        admitted = _client().post(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer endpoint@example.iam.gserviceaccount.com"},
+        )
+        observer = _client().post(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer telemetry@example.iam.gserviceaccount.com"},
+        )
+        demonstrator = _client().post(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer demonstrator@example.com"},
+        )
+
+        assert admitted.status_code == 503
+        assert observer.status_code == 403
+        assert demonstrator.status_code == 403

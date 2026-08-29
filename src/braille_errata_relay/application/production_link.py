@@ -1,4 +1,4 @@
-"""Verify an independently submitted production job from read-only evidence."""
+"""Create an advisory link to an independently submitted production job."""
 
 from __future__ import annotations
 
@@ -191,7 +191,7 @@ class ProductionLinkWorkflow:
                 {"scope": "baseline-production-link", "key": idempotency_key}
             ),
             evidence_observed_at=observation.observed_at,
-            verified_at=now,
+            linked_at=now,
         )
         try:
             commit = await self.ledger.link_baseline_production(

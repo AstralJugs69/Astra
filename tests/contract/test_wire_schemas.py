@@ -304,3 +304,74 @@ def test_baseline_production_link_matches_immutable_schema() -> None:
     errors = sorted(_validator("baseline-production-link.v1.json").iter_errors(payload), key=str)
 
     assert errors == []
+
+
+def test_advisory_production_link_and_endpoint_receipt_match_versioned_schemas() -> None:
+    advisory = {
+        "schema_version": "baseline-production-link.v2",
+        "link_id": "1" * 64,
+        "baseline_id": "2" * 64,
+        "scheduler_job_id": 19,
+        "scheduler_job_title": f"BER|WO-DEMO-001|{'3' * 12}|BASELINE",
+        "site_observation_id": "4" * 64,
+        "site_id": "demo-site",
+        "bridge_id": "single-pc-bridge",
+        "queue_name": "Braille-Embosser-Sim",
+        "baseline_brf_sha256": "3" * 64,
+        "baseline_state_version": 1,
+        "idempotency_key_sha256": "5" * 64,
+        "evidence_observed_at": "2026-08-29T17:00:00+00:00",
+        "linked_at": "2026-08-29T17:00:01+00:00",
+        "verified_at": None,
+        "verification_basis": "READ_ONLY_EXACT_JOB_QUEUE_AND_TITLE_ADVISORY_ONLY",
+    }
+    receipt = {
+        "schema_version": "endpoint-receipt.v1",
+        "receipt_id": "6" * 64,
+        "baseline_id": "2" * 64,
+        "production_link_id": "1" * 64,
+        "scheduler_job_id": 19,
+        "scheduler_job_title": f"BER|WO-DEMO-001|{'3' * 12}|BASELINE",
+        "site_id": "demo-site",
+        "queue_name": "Braille-Embosser-Sim",
+        "simulated_endpoint_id": "relay-capture://demo-embosser",
+        "approved_baseline_brf_sha256": "3" * 64,
+        "endpoint_received_sha256": "3" * 64,
+        "capture_manifest_sha256": "7" * 64,
+        "terminal_event_sha256": "8" * 64,
+        "capture_state": "COMPLETED",
+        "evidence_timestamp": "2026-08-29T17:00:02+00:00",
+        "verified_at": "2026-08-29T17:00:03+00:00",
+        "truth_basis": "SIMULATED_DEMO",
+        "submitting_principal": "endpoint@example.iam.gserviceaccount.com",
+        "idempotency_key_sha256": "9" * 64,
+        "expected_baseline_state_version": 1,
+        "baseline_state_version": 2,
+        "artifact_uri": "gs://test/endpoint-receipts/receipt.json",
+    }
+
+    assert (
+        sorted(_validator("baseline-production-link.v2.json").iter_errors(advisory), key=str) == []
+    )
+    assert sorted(_validator("endpoint-receipt.v1.json").iter_errors(receipt), key=str) == []
+
+
+def test_historical_link_correction_matches_append_only_schema() -> None:
+    payload = {
+        "schema_version": "baseline-link-correction.v1",
+        "correction_id": "1" * 64,
+        "baseline_id": "2" * 64,
+        "production_link_id": "3" * 64,
+        "expected_baseline_state_version": 1,
+        "baseline_state_version": 2,
+        "reason": "PRIOR_LINK_LACKED_ENDPOINT_BYTE_CONFIRMATION",
+        "prior_report_id": "4" * 64,
+        "prior_report_created_before_endpoint_confirmation": True,
+        "corrected_at": "2026-08-29T20:00:00+00:00",
+        "submitting_principal": "endpoint@example.iam.gserviceaccount.com",
+        "idempotency_key_sha256": "5" * 64,
+    }
+
+    assert (
+        sorted(_validator("baseline-link-correction.v1.json").iter_errors(payload), key=str) == []
+    )

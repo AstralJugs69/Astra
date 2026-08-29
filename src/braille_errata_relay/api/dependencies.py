@@ -16,6 +16,10 @@ from braille_errata_relay.adapters.gcs_artifacts import GcsArtifactStore
 from braille_errata_relay.api.security import GoogleOidcVerifier, IdentityVerifier
 from braille_errata_relay.application.baseline_registration import BaselineRegistrationWorkflow
 from braille_errata_relay.application.drive_gate0 import DRIVE_READONLY_SCOPE, DriveGate0Workflow
+from braille_errata_relay.application.endpoint_receipt import (
+    EndpointReceiptWorkflow,
+    HistoricalLinkCorrectionWorkflow,
+)
 from braille_errata_relay.application.incident_workflow import IncidentWorkflow
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
 from braille_errata_relay.application.production_link import ProductionLinkWorkflow
@@ -38,6 +42,8 @@ class RuntimeDependencies:
     drive_workflow: DriveGate0Workflow | None
     baseline_workflow: BaselineRegistrationWorkflow | None
     production_link_workflow: ProductionLinkWorkflow | None
+    endpoint_receipt_workflow: EndpointReceiptWorkflow | None
+    historical_link_correction_workflow: HistoricalLinkCorrectionWorkflow | None
     telemetry_workflow: TelemetryIngestionWorkflow | None
     incident_workflow: IncidentWorkflow | None
     outbox_workflow: OutboxDrainWorkflow | None
@@ -47,13 +53,35 @@ class RuntimeDependencies:
 def build_runtime_dependencies() -> RuntimeDependencies:
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         return RuntimeDependencies(
-            None, None, None, None, None, None, None, None, None, GoogleOidcVerifier()
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            GoogleOidcVerifier(),
         )
     try:
         settings = CloudSettings.from_env()
     except (ValidationError, ValueError):
         return RuntimeDependencies(
-            None, None, None, None, None, None, None, None, None, GoogleOidcVerifier()
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            GoogleOidcVerifier(),
         )
     assessor = AdkSemanticAssessor(
         model_id=settings.gemini_model,
@@ -66,6 +94,8 @@ def build_runtime_dependencies() -> RuntimeDependencies:
     drive_workflow = None
     baseline_workflow = None
     production_link_workflow = None
+    endpoint_receipt_workflow = None
+    historical_link_correction_workflow = None
     telemetry_workflow = None
     incident_workflow = None
     outbox_workflow = None
@@ -128,6 +158,13 @@ def build_runtime_dependencies() -> RuntimeDependencies:
                 ledger=ledger,
                 incident_workflow=incident_workflow,
             )
+            endpoint_receipt_workflow = EndpointReceiptWorkflow(
+                ledger=ledger,
+                artifact_store=artifact_store,
+            )
+            historical_link_correction_workflow = HistoricalLinkCorrectionWorkflow(
+                ledger=ledger,
+            )
     if settings.site_id and settings.bridge_id and settings.cups_queue_name:
         telemetry_workflow = TelemetryIngestionWorkflow(
             ledger=ledger,
@@ -144,6 +181,8 @@ def build_runtime_dependencies() -> RuntimeDependencies:
         drive_workflow,
         baseline_workflow,
         production_link_workflow,
+        endpoint_receipt_workflow,
+        historical_link_correction_workflow,
         telemetry_workflow,
         incident_workflow,
         outbox_workflow,

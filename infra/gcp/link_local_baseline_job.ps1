@@ -343,12 +343,13 @@ try {
         -ContentType "application/json" `
         -Body $linkBody `
         -TimeoutSec 60
-    if ($linkResult.status -ne "PRODUCTION_LINK_VERIFIED") {
-        throw "Production-link admission did not verify the immutable evidence."
+    if ($linkResult.status -ne "PROVISIONAL_PRODUCTION_LINK") {
+        throw "Production-link admission did not preserve the advisory boundary."
     }
     Write-Output "PASS: fresh read-only observation accepted"
     Write-Output "PASS: local observation outbox acknowledged after cloud acceptance"
-    Write-Output "PASS: baseline production link verified for the exact held job"
+    Write-Output "PASS: advisory production link is provisional pending endpoint bytes"
+    $linkResult | ConvertTo-Json -Depth 12 -Compress
 }
 finally {
     $telemetryToken = $null

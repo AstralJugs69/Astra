@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "baseline-link-correction.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "correction_id", "baseline_id", "production_link_id",
+    "expected_baseline_state_version", "baseline_state_version", "reason",
+    "prior_report_id", "prior_report_created_before_endpoint_confirmation",
+    "corrected_at", "submitting_principal", "idempotency_key_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "baseline-link-correction.v1"},
+    "correction_id": {"$ref": "#/$defs/sha256"},
+    "baseline_id": {"$ref": "#/$defs/sha256"},
+    "production_link_id": {"$ref": "#/$defs/sha256"},
+    "expected_baseline_state_version": {"type": "integer", "minimum": 1},
+    "baseline_state_version": {"type": "integer", "minimum": 2},
+    "reason": {"const": "PRIOR_LINK_LACKED_ENDPOINT_BYTE_CONFIRMATION"},
+    "prior_report_id": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "prior_report_created_before_endpoint_confirmation": {"const": true},
+    "corrected_at": {"type": "string", "format": "date-time"},
+    "submitting_principal": {"type": "string", "minLength": 1, "maxLength": 512},
+    "idempotency_key_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

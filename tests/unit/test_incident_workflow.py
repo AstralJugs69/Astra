@@ -503,16 +503,35 @@ async def test_baseline_revision_replay_does_not_create_an_incident() -> None:
 
 
 @pytest.mark.asyncio
-async def test_changed_revision_cannot_treat_unlinked_baseline_as_production_linked() -> None:
+@pytest.mark.parametrize(
+    "status",
+    [
+        BaselineStatus.AWAITING_PRODUCTION_LINK,
+        BaselineStatus.PROVISIONAL_PRODUCTION_LINK,
+    ],
+)
+async def test_changed_revision_cannot_treat_unverified_baseline_as_production_linked(
+    status: BaselineStatus,
+) -> None:
     workflow, ledger, _artifacts, semantic, baseline, v2 = await _system()
     unlinked = baseline.model_copy(
         update={
             "baseline": baseline.baseline.model_copy(
                 update={
-                    "scheduler_job_id": None,
-                    "scheduler_job_title": None,
-                    "status": BaselineStatus.AWAITING_PRODUCTION_LINK,
-                    "state_version": 0,
+                    "scheduler_job_id": (
+                        None
+                        if status is BaselineStatus.AWAITING_PRODUCTION_LINK
+                        else baseline.baseline.scheduler_job_id
+                    ),
+                    "scheduler_job_title": (
+                        None
+                        if status is BaselineStatus.AWAITING_PRODUCTION_LINK
+                        else baseline.baseline.scheduler_job_title
+                    ),
+                    "status": status,
+                    "state_version": (
+                        0 if status is BaselineStatus.AWAITING_PRODUCTION_LINK else 1
+                    ),
                 }
             )
         }

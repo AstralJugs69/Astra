@@ -27,6 +27,7 @@ class CloudSettings(BaseModel):
     telemetry_push_principal_email: str | None = None
     scheduler_principal_email: str | None = None
     demonstrator_principal_email: str | None = None
+    endpoint_evidence_principal_email: str | None = None
     site_id: str | None = None
     bridge_id: str | None = None
     cups_queue_name: str | None = None
@@ -55,6 +56,9 @@ class CloudSettings(BaseModel):
             ),
             scheduler_principal_email=(values.get("INTERNAL_SCHEDULER_PRINCIPAL_EMAIL") or None),
             demonstrator_principal_email=values.get("DEMONSTRATOR_PRINCIPAL_EMAIL") or None,
+            endpoint_evidence_principal_email=(
+                values.get("ENDPOINT_EVIDENCE_PRINCIPAL_EMAIL") or None
+            ),
             site_id=values.get("RELAY_SITE_ID") or None,
             bridge_id=values.get("RELAY_BRIDGE_ID") or None,
             cups_queue_name=values.get("RELAY_CUPS_QUEUE_NAME") or None,

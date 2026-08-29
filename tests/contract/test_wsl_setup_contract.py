@@ -13,7 +13,9 @@ def test_setup_script_repairs_partial_state_without_granting_observer_spool_acce
     assert 'remove_from_group "$OBSERVER" "$CUPS_GROUP"' in script
     assert 'remove_from_group "$OBSERVER" "$AUDIT_GROUP"' in script
     assert 'remove_from_group "$OPERATOR" "$CUPS_GROUP"' in script
-    assert 'usermod -a -G "$AUDIT_GROUP" "$OPERATOR"' in script
+    assert 'ENDPOINT_AUDITOR="relay-endpoint-auditor"' in script
+    assert 'remove_from_group "$OPERATOR" "$AUDIT_GROUP"' in script
+    assert 'usermod -a -G "$AUDIT_GROUP" "$ENDPOINT_AUDITOR"' in script
     assert "printer-op-policy=relay-observer" in script
     assert 'cupsd -t -c "$CANDIDATE_CONF"' in script
     assert "ROLLBACK_ARMED=true" in script

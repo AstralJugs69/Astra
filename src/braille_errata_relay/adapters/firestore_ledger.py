@@ -19,9 +19,11 @@ from braille_errata_relay.domain.errors import BaselineStateConflictError
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
+    BaselineLinkCorrection,
     BaselineProductionLink,
     BaselineStatus,
     DriveChangeBatch,
+    EndpointReceipt,
     IncidentCheckpoint,
     IncidentWorkflowStage,
     RegisteredBaseline,
@@ -86,6 +88,19 @@ class IncidentCheckpointCommit:
 class ProductionLinkCommit:
     baseline: RegisteredBaseline
     link: BaselineProductionLink
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class EndpointReceiptCommit:
+    baseline: RegisteredBaseline
+    receipt: EndpointReceipt
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class EndpointVerificationClaim:
+    verified_at: datetime
     duplicate: bool
 
 
@@ -395,7 +410,7 @@ class FirestoreGate0Ledger:
                         update={
                             "scheduler_job_id": proposed_link.scheduler_job_id,
                             "scheduler_job_title": proposed_link.scheduler_job_title,
-                            "status": BaselineStatus.PRODUCTION_LINK_VERIFIED,
+                            "status": BaselineStatus.PROVISIONAL_PRODUCTION_LINK,
                             "state_version": expected_state_version + 1,
                         }
                     )
@@ -504,6 +519,377 @@ class FirestoreGate0Ledger:
             self._get_production_link_by_idempotency_sync,
             baseline_id=baseline_id,
             scheduler_job_id=scheduler_job_id,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
+    def _get_production_link_sync(self, baseline_id: str) -> BaselineProductionLink | None:
+        _require_sha256(baseline_id, label="baseline ID")
+        data = self._snapshot_data(self._document("baseline_production_links", baseline_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("stored production link is malformed")
+        return BaselineProductionLink.model_validate(record)
+
+    async def get_production_link(self, baseline_id: str) -> BaselineProductionLink | None:
+        return await asyncio.to_thread(self._get_production_link_sync, baseline_id)
+
+    def _confirm_endpoint_receipt_sync(
+        self,
+        *,
+        proposed_receipt: EndpointReceipt,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> EndpointReceiptCommit:
+        _require_sha256(proposed_receipt.baseline_id, label="baseline ID")
+        _require_sha256(proposed_receipt.receipt_id, label="endpoint receipt ID")
+        if expected_state_version < 1 or not idempotency_key:
+            raise ValueError("endpoint receipt transition parameters are invalid")
+        key_hash = canonical_sha256({"scope": "endpoint-receipt", "key": idempotency_key})
+        if proposed_receipt.idempotency_key_sha256 != key_hash:
+            raise ValueError("endpoint receipt idempotency hash is inconsistent")
+        request_body = {
+            "baseline_id": proposed_receipt.baseline_id,
+            "production_link_id": proposed_receipt.production_link_id,
+            "receipt_id": proposed_receipt.receipt_id,
+            "expected_state_version": expected_state_version,
+            "idempotency_key_sha256": key_hash,
+        }
+        request_sha256 = canonical_sha256(request_body)
+        request_id = canonical_sha256(
+            {"scope": "endpoint-receipt-request", "idempotency_key_sha256": key_hash}
+        )
+        baseline_ref = self._document("baselines", proposed_receipt.baseline_id)
+        link_ref = self._document("baseline_production_links", proposed_receipt.baseline_id)
+        pointer_ref = self._document(
+            "baseline_endpoint_confirmations", proposed_receipt.baseline_id
+        )
+        receipt_ref = self._document("endpoint_receipts", proposed_receipt.receipt_id)
+        request_ref = self._document("endpoint_receipt_requests", request_id)
+
+        def operation(transaction: Any) -> EndpointReceiptCommit:
+            baseline_data = self._snapshot_data(baseline_ref.get(transaction=transaction))
+            link_data = self._snapshot_data(link_ref.get(transaction=transaction))
+            pointer_data = self._snapshot_data(pointer_ref.get(transaction=transaction))
+            receipt_data = self._snapshot_data(receipt_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise LedgerIntegrityError("baseline is missing or malformed")
+            current = RegisteredBaseline.model_validate(baseline_data["record"])
+            if request_data is not None:
+                if request_data.get("request_sha256") != request_sha256:
+                    raise LedgerIntegrityError("endpoint receipt idempotency key conflicts")
+                if receipt_data is None or not isinstance(receipt_data.get("record"), dict):
+                    raise LedgerIntegrityError("endpoint receipt request has no receipt")
+                persisted = EndpointReceipt.model_validate(receipt_data["record"])
+                return EndpointReceiptCommit(current, persisted, True)
+            if current.baseline.state_version != expected_state_version:
+                raise BaselineStateConflictError("baseline state version is stale")
+            if current.baseline.status is not BaselineStatus.PROVISIONAL_PRODUCTION_LINK:
+                raise BaselineStateConflictError("baseline production link is not provisional")
+            if link_data is None or not isinstance(link_data.get("record"), dict):
+                raise LedgerIntegrityError("provisional baseline has no immutable production link")
+            link = BaselineProductionLink.model_validate(link_data["record"])
+            if (
+                link.link_id != proposed_receipt.production_link_id
+                or link.scheduler_job_id != proposed_receipt.scheduler_job_id
+                or link.scheduler_job_title != proposed_receipt.scheduler_job_title
+                or link.queue_name != proposed_receipt.queue_name
+                or link.site_id != proposed_receipt.site_id
+                or link.baseline_brf_sha256 != proposed_receipt.approved_baseline_brf_sha256
+            ):
+                raise LedgerIntegrityError("endpoint receipt conflicts with production link")
+            if pointer_data is not None or receipt_data is not None:
+                raise LedgerIntegrityError("baseline already has conflicting endpoint evidence")
+            if proposed_receipt.baseline_state_version != expected_state_version + 1:
+                raise ValueError("endpoint receipt target version is invalid")
+            updated = current.model_copy(
+                update={
+                    "baseline": current.baseline.model_copy(
+                        update={
+                            "status": BaselineStatus.PRODUCTION_LINK_VERIFIED,
+                            "state_version": expected_state_version + 1,
+                        }
+                    )
+                }
+            )
+            baseline_body = {"record": updated.model_dump(mode="json")}
+            receipt_body = {"record": proposed_receipt.model_dump(mode="json")}
+            now = self._clock()
+            transaction.set(
+                baseline_ref,
+                {
+                    **baseline_data,
+                    **baseline_body,
+                    "payload_sha256": canonical_sha256(baseline_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                receipt_ref,
+                {
+                    **receipt_body,
+                    "payload_sha256": canonical_sha256(receipt_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                pointer_ref,
+                {
+                    "baseline_id": proposed_receipt.baseline_id,
+                    "receipt_id": proposed_receipt.receipt_id,
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "created_at": now,
+                },
+            )
+            return EndpointReceiptCommit(updated, proposed_receipt, False)
+
+        return cast(EndpointReceiptCommit, self._transaction_runner(operation))
+
+    async def confirm_endpoint_receipt(
+        self,
+        *,
+        proposed_receipt: EndpointReceipt,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> EndpointReceiptCommit:
+        return await asyncio.to_thread(
+            self._confirm_endpoint_receipt_sync,
+            proposed_receipt=proposed_receipt,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
+    def _get_endpoint_receipt_by_idempotency_sync(
+        self,
+        *,
+        baseline_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> EndpointReceiptCommit | None:
+        _require_sha256(baseline_id, label="baseline ID")
+        key_hash = canonical_sha256({"scope": "endpoint-receipt", "key": idempotency_key})
+        request_id = canonical_sha256(
+            {"scope": "endpoint-receipt-request", "idempotency_key_sha256": key_hash}
+        )
+        request = self._snapshot_data(self._document("endpoint_receipt_requests", request_id).get())
+        if request is None:
+            return None
+        if (
+            request.get("baseline_id") != baseline_id
+            or request.get("expected_state_version") != expected_state_version
+            or request.get("idempotency_key_sha256") != key_hash
+        ):
+            raise LedgerIntegrityError("endpoint receipt idempotency key conflicts")
+        receipt_id = request.get("receipt_id")
+        if not isinstance(receipt_id, str):
+            raise LedgerIntegrityError("endpoint receipt request identity is malformed")
+        receipt_data = self._snapshot_data(self._document("endpoint_receipts", receipt_id).get())
+        baseline = self._get_baseline_sync(baseline_id)
+        if (
+            baseline is None
+            or receipt_data is None
+            or not isinstance(receipt_data.get("record"), dict)
+        ):
+            raise LedgerIntegrityError("endpoint receipt replay lineage is incomplete")
+        return EndpointReceiptCommit(
+            baseline,
+            EndpointReceipt.model_validate(receipt_data["record"]),
+            True,
+        )
+
+    async def get_endpoint_receipt_by_idempotency(
+        self,
+        *,
+        baseline_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> EndpointReceiptCommit | None:
+        return await asyncio.to_thread(
+            self._get_endpoint_receipt_by_idempotency_sync,
+            baseline_id=baseline_id,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+        )
+
+    def _allocate_endpoint_verification_timestamp_sync(
+        self,
+        *,
+        baseline_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+        evidence_identity_sha256: str,
+        submitting_principal: str,
+    ) -> EndpointVerificationClaim:
+        _require_sha256(baseline_id, label="baseline ID")
+        _require_sha256(evidence_identity_sha256, label="endpoint evidence identity")
+        key_hash = canonical_sha256({"scope": "endpoint-receipt", "key": idempotency_key})
+        claim_id = canonical_sha256(
+            {"scope": "endpoint-receipt-verification-claim", "key": key_hash}
+        )
+        identity = {
+            "baseline_id": baseline_id,
+            "expected_state_version": expected_state_version,
+            "idempotency_key_sha256": key_hash,
+            "evidence_identity_sha256": evidence_identity_sha256,
+            "submitting_principal": submitting_principal,
+        }
+        identity_sha256 = canonical_sha256(identity)
+        ref = self._document("endpoint_receipt_verification_claims", claim_id)
+
+        def operation(transaction: Any) -> EndpointVerificationClaim:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is not None:
+                if existing.get("identity_sha256") != identity_sha256:
+                    raise LedgerIntegrityError("endpoint receipt idempotency key conflicts")
+                verified_at = existing.get("verified_at")
+                if not isinstance(verified_at, datetime):
+                    raise LedgerIntegrityError("endpoint verification claim is malformed")
+                return EndpointVerificationClaim(verified_at=verified_at, duplicate=True)
+            verified_at = self._clock()
+            transaction.create(
+                ref,
+                {
+                    **identity,
+                    "identity_sha256": identity_sha256,
+                    "verified_at": verified_at,
+                },
+            )
+            return EndpointVerificationClaim(verified_at=verified_at, duplicate=False)
+
+        return cast(EndpointVerificationClaim, self._transaction_runner(operation))
+
+    async def allocate_endpoint_verification_timestamp(
+        self,
+        *,
+        baseline_id: str,
+        expected_state_version: int,
+        idempotency_key: str,
+        evidence_identity_sha256: str,
+        submitting_principal: str,
+    ) -> EndpointVerificationClaim:
+        return await asyncio.to_thread(
+            self._allocate_endpoint_verification_timestamp_sync,
+            baseline_id=baseline_id,
+            expected_state_version=expected_state_version,
+            idempotency_key=idempotency_key,
+            evidence_identity_sha256=evidence_identity_sha256,
+            submitting_principal=submitting_principal,
+        )
+
+    def _correct_historical_production_link_sync(
+        self,
+        *,
+        proposed_correction: BaselineLinkCorrection,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> RegisteredBaseline:
+        key_hash = canonical_sha256(
+            {"scope": "historical-production-link-correction", "key": idempotency_key}
+        )
+        if proposed_correction.idempotency_key_sha256 != key_hash:
+            raise ValueError("historical correction idempotency hash is inconsistent")
+        request_id = canonical_sha256(
+            {"scope": "historical-production-link-correction-request", "key": key_hash}
+        )
+        request_sha256 = canonical_sha256(
+            {
+                "baseline_id": proposed_correction.baseline_id,
+                "correction_id": proposed_correction.correction_id,
+                "expected_state_version": expected_state_version,
+                "idempotency_key_sha256": key_hash,
+            }
+        )
+        baseline_ref = self._document("baselines", proposed_correction.baseline_id)
+        pointer_ref = self._document(
+            "baseline_endpoint_confirmations", proposed_correction.baseline_id
+        )
+        correction_ref = self._document(
+            "baseline_link_corrections", proposed_correction.correction_id
+        )
+        request_ref = self._document("baseline_link_correction_requests", request_id)
+
+        def operation(transaction: Any) -> RegisteredBaseline:
+            baseline_data = self._snapshot_data(baseline_ref.get(transaction=transaction))
+            pointer_data = self._snapshot_data(pointer_ref.get(transaction=transaction))
+            correction_data = self._snapshot_data(correction_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise LedgerIntegrityError("baseline is missing or malformed")
+            current = RegisteredBaseline.model_validate(baseline_data["record"])
+            if request_data is not None:
+                if request_data.get("request_sha256") != request_sha256:
+                    raise LedgerIntegrityError("historical correction idempotency key conflicts")
+                if correction_data is None:
+                    raise LedgerIntegrityError("historical correction request has no audit record")
+                return current
+            if current.baseline.state_version != expected_state_version:
+                raise BaselineStateConflictError("baseline state version is stale")
+            if current.baseline.status is not BaselineStatus.PRODUCTION_LINK_VERIFIED:
+                raise BaselineStateConflictError("baseline is not historically verified")
+            if pointer_data is not None:
+                raise LedgerIntegrityError("baseline already has endpoint confirmation")
+            updated = current.model_copy(
+                update={
+                    "baseline": current.baseline.model_copy(
+                        update={
+                            "status": BaselineStatus.PROVISIONAL_PRODUCTION_LINK,
+                            "state_version": expected_state_version + 1,
+                        }
+                    )
+                }
+            )
+            baseline_body = {"record": updated.model_dump(mode="json")}
+            correction_body = {"record": proposed_correction.model_dump(mode="json")}
+            now = self._clock()
+            transaction.set(
+                baseline_ref,
+                {
+                    **baseline_data,
+                    **baseline_body,
+                    "payload_sha256": canonical_sha256(baseline_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                correction_ref,
+                {
+                    **correction_body,
+                    "payload_sha256": canonical_sha256(correction_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    "request_sha256": request_sha256,
+                    "correction_id": proposed_correction.correction_id,
+                    "created_at": now,
+                },
+            )
+            return updated
+
+        return cast(RegisteredBaseline, self._transaction_runner(operation))
+
+    async def correct_historical_production_link(
+        self,
+        *,
+        proposed_correction: BaselineLinkCorrection,
+        expected_state_version: int,
+        idempotency_key: str,
+    ) -> RegisteredBaseline:
+        return await asyncio.to_thread(
+            self._correct_historical_production_link_sync,
+            proposed_correction=proposed_correction,
             expected_state_version=expected_state_version,
             idempotency_key=idempotency_key,
         )
