@@ -29,6 +29,8 @@ param(
 
     [switch]$CorrectHistoricalLink,
 
+    [switch]$CorrectionOnly,
+
     [string]$Region = 'europe-west3',
 
     [string]$ServiceName = 'braille-errata-relay'
@@ -37,11 +39,56 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ($CorrectionOnly -and -not $CorrectHistoricalLink) {
+    throw '-CorrectionOnly requires -CorrectHistoricalLink.'
+}
+
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Value)
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
-    $digest = [System.Security.Cryptography.SHA256]::HashData($bytes)
-    return [Convert]::ToHexString($digest).ToLowerInvariant()
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $algorithm.ComputeHash($bytes)
+    }
+    finally {
+        $algorithm.Dispose()
+    }
+    return ([BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()
+}
+
+function Get-IamPolicyBindings {
+    param([Parameter(Mandatory = $true)][object]$Policy)
+    $property = $Policy.PSObject.Properties['bindings']
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return @()
+    }
+    return @($property.Value)
+}
+
+function New-AudienceToken {
+    param(
+        [Parameter(Mandatory = $true)][string]$Identity,
+        [Parameter(Mandatory = $true)][string]$Audience
+    )
+    for ($attempt = 1; $attempt -le 24; $attempt++) {
+        Start-Sleep -Seconds 5
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $candidate = & gcloud.cmd auth print-identity-token `
+                --impersonate-service-account=$Identity `
+                --audiences=$Audience `
+                --include-email 2>$null
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        if ($exitCode -eq 0 -and $candidate) {
+            return ([string]$candidate).Trim()
+        }
+    }
+    throw 'Audience-bound endpoint identity token did not become available.'
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -77,7 +124,7 @@ try {
         --project=$project `
         --format=json | ConvertFrom-Json
     $existing = @(
-        $policy.bindings | Where-Object {
+        Get-IamPolicyBindings -Policy $policy | Where-Object {
             $_.role -eq 'roles/iam.serviceAccountTokenCreator' -and
             $_.members -contains $member
         }
@@ -91,10 +138,7 @@ try {
             --quiet | Out-Null
         $grantAdded = $true
     }
-    $token = [string](gcloud auth print-identity-token `
-        --impersonate-service-account=$endpointPrincipal `
-        --audiences=$audience `
-        --include-email)
+    $token = New-AudienceToken -Identity $endpointPrincipal -Audience $audience
     if (-not $token) {
         throw 'Could not mint the short-lived endpoint-evidence identity token.'
     }
@@ -125,6 +169,10 @@ try {
         }
         $receiptStateVersion = $CurrentStateVersion + 1
         Write-Output 'PASS: append-only historical correction restored provisional status'
+        if ($CorrectionOnly) {
+            $correctionResult | ConvertTo-Json -Depth 12 -Compress
+            return
+        }
     }
 
     $wslRepoRoot = [string](wsl.exe wslpath -a ($repoRoot -replace '\\', '/'))

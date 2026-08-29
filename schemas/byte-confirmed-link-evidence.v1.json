@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "byte-confirmed-link-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "recorded_at", "branch", "base_commit", "final_code_commit",
+    "governing_documents", "deployment", "provisional_link", "endpoint_receipt",
+    "historical_correction", "local_floor", "verification", "cloud_safety",
+    "remaining_blockers"
+  ],
+  "properties": {
+    "schema_version": {"const": "byte-confirmed-link-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "branch": {"const": "codex/slice-2-1-1-byte-confirmed-link"},
+    "base_commit": {"$ref": "#/$defs/git_sha"},
+    "final_code_commit": {"$ref": "#/$defs/git_sha"},
+    "governing_documents": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instruction.md", "architecture.md"],
+      "properties": {
+        "instruction.md": {"$ref": "#/$defs/sha256"},
+        "architecture.md": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "deployment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["region", "revision", "image_digest", "private"],
+      "properties": {
+        "region": {"const": "europe-west3"},
+        "revision": {"type": "string", "minLength": 1},
+        "image_digest": {"pattern": "^sha256:[0-9a-f]{64}$"},
+        "private": {"const": true}
+      }
+    },
+    "provisional_link": {"type": "object"},
+    "endpoint_receipt": {"type": "object"},
+    "historical_correction": {"type": "object"},
+    "local_floor": {"type": "object"},
+    "verification": {"type": "object"},
+    "cloud_safety": {"type": "object"},
+    "remaining_blockers": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+  }
+}

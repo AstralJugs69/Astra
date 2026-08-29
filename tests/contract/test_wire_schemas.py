@@ -375,3 +375,14 @@ def test_historical_link_correction_matches_append_only_schema() -> None:
     assert (
         sorted(_validator("baseline-link-correction.v1.json").iter_errors(payload), key=str) == []
     )
+
+
+def test_slice_2_1_1_evidence_matches_sanitized_schema() -> None:
+    payload = json.loads(
+        (ROOT / "demo" / "evidence" / "byte-confirmed-link.json").read_text(encoding="utf-8")
+    )
+
+    assert (
+        sorted(_validator("byte-confirmed-link-evidence.v1.json").iter_errors(payload), key=str)
+        == []
+    )

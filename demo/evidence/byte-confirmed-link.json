@@ -1,0 +1,93 @@
+{
+  "schema_version": "byte-confirmed-link-evidence.v1",
+  "recorded_at": "2026-08-29T20:57:21Z",
+  "branch": "codex/slice-2-1-1-byte-confirmed-link",
+  "base_commit": "0ba9349174812ecc1aa10393f9badf96307cb564",
+  "final_code_commit": "9616dfc717495a4c2f83cb8f0e0ab684fdf8f190",
+  "governing_documents": {
+    "instruction.md": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb",
+    "architecture.md": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+  },
+  "deployment": {
+    "region": "europe-west3",
+    "revision": "braille-errata-relay-00010-wmh",
+    "image_digest": "sha256:88b50b3b94769d8bb40d47f4e41df6e793214738a73188a8c0de8804253f54cf",
+    "private": true
+  },
+  "provisional_link": {
+    "baseline_id": "0cc6a91c634996a91ddeb65e2208181cb201d7843b5fd604dd4738bff6005a97",
+    "production_link_id": "12da7f050d537c76cf686f315413995c62b919fc800524752f711f0784c9c924",
+    "scheduler_job_id": 19,
+    "scheduler_job_title": "BER|WO-DEMO-001|9b13336e1833|BASELINE",
+    "approved_baseline_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+    "status": "PROVISIONAL_PRODUCTION_LINK",
+    "state_version": 2,
+    "incident_processing_blocked": true
+  },
+  "endpoint_receipt": {
+    "status": "BLOCKED_MISSING_JOB_19_CAPTURE",
+    "receipt_id": null,
+    "endpoint_received_sha256": null,
+    "capture_manifest_sha256": null,
+    "terminal_event_sha256": null,
+    "exact_received_byte_equality": false,
+    "truth_basis": "SIMULATED_DEMO",
+    "endpoint_confirmations_in_firestore": 0,
+    "endpoint_receipts_in_firestore": 0
+  },
+  "historical_correction": {
+    "correction_id": "285856b251df594346a79f244078ec8812fd62c06753c2ff6c1575f611cf025b",
+    "reason": "PRIOR_LINK_LACKED_ENDPOINT_BYTE_CONFIRMATION",
+    "prior_report_artifact_sha256": "c86d229e31593079f287a8c9f9829f198d5c3cbbd38ad0b0d69da8dbbf98132c",
+    "prior_report_created_before_endpoint_confirmation": true,
+    "historical_immutable_records_preserved": true,
+    "replay_converged": true,
+    "correction_record_count": 1
+  },
+  "local_floor": {
+    "simulated_endpoint": "SIMULATED_DEMO",
+    "endpoint_auditor_identity": "relay-endpoint-auditor",
+    "fixed_capture_root_only": true,
+    "caller_selected_capture_root_rejected": true,
+    "observer_capture_access_denied": true,
+    "endpoint_auditor_cups_spool_access_denied": true,
+    "cups_configuration_valid": true,
+    "job_19_capture_present": false,
+    "independent_gate0_capture_validation": {
+      "scope": "AUDITOR_BOUNDARY_ONLY_NOT_BASELINE_LINEAGE",
+      "scheduler_job_id": 13,
+      "received_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+      "capture_manifest_sha256": "7d9321f5f30464b61914f1ae6f147a1461f9e1546586cc45c544589426692410",
+      "terminal_event_sha256": "178498f4a6c45ffce462fa2438cfe2b7b9a50dbfd0a717fe79477892d179fce5",
+      "exact_received_byte_equality": true
+    },
+    "observer_ipp_mutation_denials": "PRESERVED_GATE0_EVIDENCE_NOT_REENTERED_AFTER_IDENTITY_CHANGE"
+  },
+  "verification": {
+    "tests": "230 passed; 3 explicit platform skips",
+    "frozen_lock": "PASS",
+    "ruff_lint": "PASS",
+    "scoped_format": "PASS",
+    "strict_mypy": "PASS",
+    "schema_contracts": "PASS",
+    "wsl_liblouis_goldens_twice": "PASS",
+    "local_container_build": "PASS",
+    "container_readiness": "PASS",
+    "container_wsl_brf_identity": "PASS",
+    "profile_sha256": "7011f99e9351d9d70da9eddf89a2d38c3c88318e325cb4422ec98f492a9d2772",
+    "v1_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+    "v2_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d"
+  },
+  "cloud_safety": {
+    "endpoint_evidence_principal_isolated": true,
+    "public_invoker_present": false,
+    "scheduler_state": "PAUSED",
+    "persistent_token_creator_grants": 0,
+    "service_ready": true
+  },
+  "remaining_blockers": [
+    "The original Ubuntu distro VHD is unavailable and the active WSL2 simulator has no capture directory for scheduler job 19.",
+    "The production link must remain provisional until genuine exact-byte endpoint evidence for the selected immutable job lineage exists.",
+    "The observer IPP denial matrix requires a fresh interactive local credential run after the endpoint-auditor identity update."
+  ]
+}

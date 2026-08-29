@@ -23,6 +23,7 @@ demo/evidence/*.json
 !demo/evidence/cloud-gate0.json
 !demo/evidence/report-first.json
 !demo/evidence/report-first-live-closure.json
+!demo/evidence/byte-confirmed-link.json
 uv-cache/
 **/uv-cache/
 *.pem
