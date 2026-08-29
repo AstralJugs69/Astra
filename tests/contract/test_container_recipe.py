@@ -9,13 +9,19 @@ def test_cloud_run_recipe_uses_frozen_lock_and_installs_runtime_environment() ->
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "COPY pyproject.toml uv.lock README.md /app/" in dockerfile
-    assert "uv sync --frozen --no-dev --no-editable" in dockerfile
+    assert "uv sync --frozen --no-dev --no-install-project" in dockerfile
+    assert "uv pip install --python /app/.venv/bin/python --no-deps /app" in dockerfile
+    assert dockerfile.count("--mount=type=cache,target=/root/.cache/uv") == 2
+    assert "UV_HTTP_TIMEOUT=600" in dockerfile
+    assert "UV_HTTP_RETRIES=20" in dockerfile
+    assert "UV_CONCURRENT_DOWNLOADS=1" in dockerfile
     assert "COPY --from=application /app/.venv /app/.venv" in dockerfile
     assert (
         "COPY infra/scripts/bind_liblouis_profile.py /app/infra/scripts/bind_liblouis_profile.py"
         in dockerfile
     )
-    assert "uv run --frozen --no-dev python infra/scripts/bind_liblouis_profile.py" in dockerfile
+    assert "/app/.venv/bin/python infra/scripts/bind_liblouis_profile.py" in dockerfile
+    assert "uv run" not in dockerfile
     assert (
         "translation-profile.bound.json /app/config/translation_profiles/demo-ueb-40x25-v1.json"
         in dockerfile
@@ -23,7 +29,16 @@ def test_cloud_run_recipe_uses_frozen_lock_and_installs_runtime_environment() ->
     assert "PYTHONPATH=/opt/liblouis-python" in dockerfile
     assert "LD_LIBRARY_PATH=/opt/liblouis/lib" in dockerfile
     assert "LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables" in dockerfile
-    assert "--no-deps" not in dockerfile
+    assert "RELAY_CONFIG_ROOT=/app/config" in dockerfile
+    assert (
+        "TRANSLATION_PROFILE_PATH=/app/config/translation_profiles/demo-ueb-40x25-v1.json"
+        in dockerfile
+    )
+    assert "RELAY_RECOMMENDATION_POLICY=/app/config/policies/recommendation.v1.json" in dockerfile
+    assert dockerfile.count("COPY src /app/src") == 1
+    assert dockerfile.index("uv sync --frozen --no-dev --no-install-project") < dockerfile.index(
+        "COPY src /app/src"
+    )
 
 
 def test_dependency_lock_is_committed_input_for_the_recipe() -> None:

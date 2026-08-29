@@ -1,15 +1,31 @@
 {
   "schema_version": "preflight.v1",
-  "recorded_at": "2026-08-28T22:21:52.402656+00:00",
+  "recorded_at": "2026-08-29T11:47:17.124820+00:00",
   "platform": "Linux-5.15.167.4-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "governing_documents": {
+    "instruction.md": {
+      "sha256": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb"
+    },
+    "architecture.md": {
+      "sha256": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+    }
+  },
   "checks": {
     "python_3_11_or_3_12": {
       "status": "PASS",
       "detail": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]"
     },
     "adk_gemini_structured_output": {
-      "status": "BLOCKED",
-      "detail": "No deployed private Cloud Run smoke test was exercised; local gcloud credential/log writes are permission-denied."
+      "status": "PASS",
+      "detail": "deployed ADK agent returned the closed semantic schema using attached identity"
+    },
+    "cloud_run_private_service": {
+      "status": "PASS",
+      "detail": "Frankfurt Cloud Run service rejected unauthenticated access"
+    },
+    "firestore_execution_ledger": {
+      "status": "PASS",
+      "detail": "Firestore receipt, execution, cursor, and outbox replay converged idempotently"
     },
     "liblouis_profile": {
       "status": "PASS",
@@ -38,32 +54,82 @@
       "status": "PASS",
       "detail": "two repeat renders matched checked-in V1/V2 BRF bytes",
       "repeat_runs": 2,
+      "profile_id": "demo-ueb-40x25-v1",
       "profile_sha256": "7011f99e9351d9d70da9eddf89a2d38c3c88318e325cb4422ec98f492a9d2772",
+      "table_hashes": [
+        {
+          "name": "en-ueb-g2.ctb",
+          "sha256": "45b83481438667b57f57793d9369aeb44a5e5c50980767c69ba99ea83f442059"
+        },
+        {
+          "name": "en-us-brf.dis",
+          "sha256": "47ff9400f4b8a0206b0c1942e13c32b539d17ec099dcd1097873a1b9f5cb8b3c"
+        }
+      ],
       "brf_sha256": {
         "v1": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
         "v2": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d"
       }
     },
     "container_brf_comparison": {
-      "status": "BLOCKED",
-      "detail": "Docker=The command 'docker' could not be found in this WSL 2 distro.\nWe recommend to activate the WSL integration in Docker Desktop settings.\n\nFor details about using Docker Desktop with WSL 2, visit:\n\nhttps://docs.docker.com/go/wsl2/; image build and cross-environment BRF comparison were not exercised"
+      "status": "PASS",
+      "detail": "exact V1/V2 BRF bytes, profile identity, and table hashes matched",
+      "image": "braille-errata-relay:cloud-gate-0",
+      "image_id": "sha256:369645345e26a3c4f44633e63b3a8e29e36d6643f603c25c8a8002f208aac9c2",
+      "profile_id": "demo-ueb-40x25-v1",
+      "profile_sha256": "7011f99e9351d9d70da9eddf89a2d38c3c88318e325cb4422ec98f492a9d2772",
+      "table_hashes": [
+        {
+          "name": "en-ueb-g2.ctb",
+          "sha256": "45b83481438667b57f57793d9369aeb44a5e5c50980767c69ba99ea83f442059"
+        },
+        {
+          "name": "en-us-brf.dis",
+          "sha256": "47ff9400f4b8a0206b0c1942e13c32b539d17ec099dcd1097873a1b9f5cb8b3c"
+        }
+      ],
+      "brf_sha256": {
+        "v1": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+        "v2": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d"
+      },
+      "byte_comparison": "exact",
+      "installed_smoke": {
+        "app_src_present": false,
+        "liblouis_version": "3.38.0",
+        "package_from_app_src": false,
+        "policy_id": "relay-policy.v1",
+        "profile_id": "demo-ueb-40x25-v1",
+        "ready": true,
+        "readyz_status": 200,
+        "schema_version": "installed-container-smoke.v1"
+      }
     },
     "cups_raw_passthrough_and_policy": {
-      "status": "BLOCKED",
-      "detail": "WSL=Default Distribution: Ubuntu-24.04\n\nDefault Version: 2; Docker=The command 'docker' could not be found in this WSL 2 distro.\nWe recommend to activate the WSL integration in Docker Desktop settings.\n\nFor details about using Docker Desktop with WSL 2, visit:\n\nhttps://docs.docker.com/go/wsl2/; native CUPS tools=present; exact-byte passthrough and negative authorization tests were not exercised"
+      "status": "PASS",
+      "detail": "real CUPS scheduling, exact-byte capture, terminal journal, operator lifecycle, observer denials, and filesystem isolation were evidenced",
+      "evidence_schema": "gate0-local-floor-evidence.v1",
+      "queue": "Braille-Embosser-Sim",
+      "simulated_endpoint": true
     },
     "drive_same_file_detection": {
-      "status": "BLOCKED",
-      "detail": "No DRIVE_FILE_ID is configured and no Workspace Events/change-feed refetch was exercised."
+      "status": "PASS",
+      "detail": "Drive change feed advanced and refetched exact V1/V2 bytes for one file identity"
+    },
+    "gcs_immutable_artifacts": {
+      "status": "PASS",
+      "detail": "content-addressed GCS create and immediate read/rehash matched V2 bytes"
     }
   },
   "safe_diagnostics": {
-    "gcloud_binary": "present",
+    "gcloud_binary": "missing",
     "louis_binding_installed": true,
     "liblouis_readiness": true,
     "liblouis_golden_repeat": true,
-    "wsl_status_command_succeeded": true,
-    "docker_server_reachable": false,
+    "container_brf_comparison": true,
+    "cups_raw_passthrough_and_policy": true,
+    "cloud_gate0": true,
+    "wsl_status_command_succeeded": false,
+    "docker_server_reachable": true,
     "cups_tools_present": true,
     "secrets_logged": false
   }

@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from jsonschema import Draft202012Validator, FormatChecker  # type: ignore[import-untyped]
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -30,7 +32,10 @@ PROFILE = Path(
 )
 EVIDENCE = ROOT / "demo" / "evidence" / "preflight.json"
 LOCAL_CUPS_EVIDENCE = ROOT / "demo" / "evidence" / "gate0-local-floor.json"
-DEFAULT_GATE0_IMAGE = "braille-errata-relay:gate-0-local-floor"
+LOCAL_CUPS_SCHEMA = ROOT / "schemas" / "gate0-local-floor-evidence.v1.json"
+CLOUD_GATE0_EVIDENCE = ROOT / "demo" / "evidence" / "cloud-gate0.json"
+CLOUD_GATE0_SCHEMA = ROOT / "schemas" / "cloud-gate0-evidence.v1.json"
+DEFAULT_GATE0_IMAGE = "braille-errata-relay:cloud-gate-0"
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CUPS_CHECKS = {
@@ -245,6 +250,49 @@ print(json.dumps({
 """
 
 
+def _installed_container_smoke(image: str) -> dict[str, object]:
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--pids-limit",
+        "64",
+        "--memory",
+        "256m",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,noexec,size=16m",
+        "--entrypoint",
+        "python",
+        image,
+        "-m",
+        "braille_errata_relay.container_smoke",
+    ]
+    result = _run(command, timeout=45)
+    if not result.succeeded:
+        raise RuntimeError(f"installed container smoke failed: {result.detail}")
+    payload = json.loads(result.stdout.splitlines()[-1])
+    if not isinstance(payload, dict):
+        raise TypeError("installed container smoke did not return an object")
+    expected = {
+        "schema_version": "installed-container-smoke.v1",
+        "policy_id": "relay-policy.v1",
+        "profile_id": "demo-ueb-40x25-v1",
+        "readyz_status": 200,
+        "ready": True,
+        "liblouis_version": "3.38.0",
+        "app_src_present": False,
+        "package_from_app_src": False,
+    }
+    if payload != expected:
+        raise ValueError("installed container smoke predicates did not all pass")
+    return payload
+
+
 def _container_brf_comparison() -> tuple[dict[str, object], bool]:
     image = os.environ.get("RELAY_GATE0_IMAGE", DEFAULT_GATE0_IMAGE)
     if _command("docker") is None:
@@ -260,9 +308,11 @@ def _container_brf_comparison() -> tuple[dict[str, object], bool]:
             "detail": f"named image is unavailable without a build: {inspected.detail or image}",
         }, False
     try:
+        installed_smoke = _installed_container_smoke(image)
         profile, local_outputs = _render_local_goldens()
         expected_hashes = _expected_golden_identity(profile)
-        fixture_mount = f"type=bind,src={ROOT / 'demo'},dst=/demo,readonly"
+        fixture_source = os.environ.get("RELAY_DEMO_MOUNT_SOURCE", str(ROOT / "demo"))
+        fixture_mount = f"type=bind,src={fixture_source},dst=/demo,readonly"
         command = [
             "docker",
             "run",
@@ -326,6 +376,7 @@ def _container_brf_comparison() -> tuple[dict[str, object], bool]:
             "table_hashes": _table_identity(profile),
             "brf_sha256": hashes,
             "byte_comparison": "exact",
+            "installed_smoke": installed_smoke,
         }, True
     except Exception as exc:  # noqa: BLE001 - a preflight must block rather than infer success
         return {
@@ -364,15 +415,29 @@ def _capture_evidence_valid(value: object, *, expected_state: str) -> bool:
 
 def _cups_floor_check(
     evidence_path: Path = LOCAL_CUPS_EVIDENCE,
+    *,
+    fixture_path: Path | None = None,
+    schema_path: Path = LOCAL_CUPS_SCHEMA,
 ) -> tuple[dict[str, object], bool]:
     try:
         payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        if next(iter(validator.iter_errors(payload)), None) is not None:
+            raise ValueError("local CUPS evidence does not satisfy its complete schema")
+        current_fixture = fixture_path or ROOT / "demo" / "expected" / "v1.brf"
+        fixture_bytes = current_fixture.read_bytes()
+    except (OSError, ValueError, TypeError):
         return {
             "status": "BLOCKED",
             "detail": "sanitized local CUPS Gate 0 evidence is unavailable or invalid",
         }, False
+    completed_sha256 = hashlib.sha256(fixture_bytes).hexdigest()
+    lifecycle_sha256 = hashlib.sha256(b"\x0c".join([fixture_bytes] * 12)).hexdigest()
     checks = payload.get("checks") if isinstance(payload, dict) else None
+    full_capture = payload.get("full_capture") if isinstance(payload, dict) else None
+    terminated_capture = payload.get("terminated_capture") if isinstance(payload, dict) else None
     valid = (
         isinstance(payload, dict)
         and payload.get("schema_version") == "gate0-local-floor-evidence.v1"
@@ -382,8 +447,16 @@ def _cups_floor_check(
         and isinstance(checks, dict)
         and set(checks) == _CUPS_CHECKS
         and all(checks.get(name) == "PASS" for name in _CUPS_CHECKS)
-        and _capture_evidence_valid(payload.get("full_capture"), expected_state="COMPLETED")
-        and _capture_evidence_valid(payload.get("terminated_capture"), expected_state="TERMINATED")
+        and _capture_evidence_valid(full_capture, expected_state="COMPLETED")
+        and _capture_evidence_valid(terminated_capture, expected_state="TERMINATED")
+        and isinstance(full_capture, dict)
+        and full_capture.get("candidate_sha256") == completed_sha256
+        and full_capture.get("backend_received_sha256") == completed_sha256
+        and full_capture.get("captured_output_sha256") == completed_sha256
+        and isinstance(terminated_capture, dict)
+        and terminated_capture.get("candidate_sha256") == lifecycle_sha256
+        and terminated_capture.get("backend_received_sha256") == lifecycle_sha256
+        and terminated_capture.get("captured_output_sha256") is None
     )
     if not valid:
         return {
@@ -402,6 +475,128 @@ def _cups_floor_check(
     }, True
 
 
+def _cloud_floor_checks(
+    evidence_path: Path = CLOUD_GATE0_EVIDENCE,
+    *,
+    schema_path: Path = CLOUD_GATE0_SCHEMA,
+) -> tuple[dict[str, dict[str, object]], bool]:
+    names = {
+        "adk_gemini_structured_output": "ADK/Gemini structured-output evidence",
+        "cloud_run_private_service": "private Cloud Run evidence",
+        "firestore_execution_ledger": "Firestore idempotency evidence",
+        "drive_same_file_detection": "Drive same-file revision evidence",
+        "gcs_immutable_artifacts": "immutable GCS create/read evidence",
+    }
+
+    def blocked(detail: str) -> tuple[dict[str, dict[str, object]], bool]:
+        return {
+            name: {"status": "BLOCKED", "detail": f"{label} {detail}"}
+            for name, label in names.items()
+        }, False
+
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        if next(iter(validator.iter_errors(payload)), None) is not None:
+            raise ValueError("cloud evidence does not satisfy its complete schema")
+        expected_v1 = hashlib.sha256(
+            (ROOT / "demo" / "fixtures" / "source-v1-hero.md").read_bytes()
+        ).hexdigest()
+        expected_v2 = hashlib.sha256(
+            (ROOT / "demo" / "fixtures" / "source-v2-hero.md").read_bytes()
+        ).hexdigest()
+    except (OSError, ValueError, TypeError):
+        return blocked("is unavailable or invalid")
+
+    assert isinstance(payload, dict)
+    service = payload.get("service")
+    semantic = payload.get("semantic")
+    drive = payload.get("drive")
+    firestore_evidence = payload.get("firestore")
+    storage = payload.get("storage")
+    checks = payload.get("checks")
+    if not all(
+        isinstance(value, dict)
+        for value in (service, semantic, drive, firestore_evidence, storage, checks)
+    ):
+        return blocked("failed closed structural validation")
+    assert isinstance(service, dict)
+    assert isinstance(semantic, dict)
+    assert isinstance(drive, dict)
+    assert isinstance(firestore_evidence, dict)
+    assert isinstance(storage, dict)
+    assert isinstance(checks, dict)
+
+    check_keys = {
+        "private_cloud_run",
+        "adk_gemini_structured_output",
+        "drive_same_file_refetch",
+        "firestore_idempotency",
+        "immutable_gcs",
+    }
+    all_evidence_checks_pass = set(checks) == check_keys and all(
+        isinstance(checks.get(name), dict) and checks[name].get("status") == "PASS"
+        for name in check_keys
+    )
+    valid = (
+        payload.get("schema_version") == "cloud-gate0-evidence.v1"
+        and payload.get("region") == "europe-west3"
+        and service.get("name") == "braille-errata-relay"
+        and service.get("private") is True
+        and isinstance(service.get("image_id"), str)
+        and _IMAGE_ID.fullmatch(str(service["image_id"])) is not None
+        and isinstance(service.get("image_digest"), str)
+        and _IMAGE_ID.fullmatch(str(service["image_digest"])) is not None
+        and isinstance(service.get("runtime_identity_sha256"), str)
+        and _SHA256.fullmatch(str(service["runtime_identity_sha256"])) is not None
+        and semantic.get("status") == "PASS"
+        and isinstance(semantic.get("assessment_id"), str)
+        and _SHA256.fullmatch(str(semantic["assessment_id"])) is not None
+        and isinstance(semantic.get("assessment_sha256"), str)
+        and _SHA256.fullmatch(str(semantic["assessment_sha256"])) is not None
+        and isinstance(semantic.get("latency_ms"), int)
+        and not isinstance(semantic.get("latency_ms"), bool)
+        and drive.get("status") == "PASS"
+        and drive.get("same_file_id") is True
+        and drive.get("v1_sha256") == expected_v1
+        and drive.get("v2_sha256") == expected_v2
+        and drive.get("start_cursor_sha256") != drive.get("final_cursor_sha256")
+        and firestore_evidence.get("status") == "PASS"
+        and firestore_evidence.get("duplicate_replay") is True
+        and storage.get("status") == "PASS"
+        and storage.get("artifact_sha256") == expected_v2
+        and storage.get("create_read_match") is True
+        and all_evidence_checks_pass
+    )
+    if not valid:
+        return blocked("failed closed invariant validation")
+
+    return {
+        "adk_gemini_structured_output": {
+            "status": "PASS",
+            "detail": "deployed ADK agent returned the closed semantic schema using attached identity",
+        },
+        "cloud_run_private_service": {
+            "status": "PASS",
+            "detail": "Frankfurt Cloud Run service rejected unauthenticated access",
+        },
+        "firestore_execution_ledger": {
+            "status": "PASS",
+            "detail": "Firestore receipt, execution, cursor, and outbox replay converged idempotently",
+        },
+        "drive_same_file_detection": {
+            "status": "PASS",
+            "detail": "Drive change feed advanced and refetched exact V1/V2 bytes for one file identity",
+        },
+        "gcs_immutable_artifacts": {
+            "status": "PASS",
+            "detail": "content-addressed GCS create and immediate read/rehash matched V2 bytes",
+        },
+    }, True
+
+
 def collect() -> dict[str, object]:
     python_supported = (3, 11) <= sys.version_info[:2] < (3, 13)
     wsl_ok, _wsl_detail = _probe(["wsl.exe", "--status"])
@@ -413,6 +608,7 @@ def collect() -> dict[str, object]:
     golden_result, golden_ready = _golden_check()
     container_result, container_ready = _container_brf_comparison()
     cups_result, cups_ready = _cups_floor_check()
+    cloud_results, cloud_ready = _cloud_floor_checks()
     return {
         "schema_version": "preflight.v1",
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -423,26 +619,15 @@ def collect() -> dict[str, object]:
                 "status": "PASS" if python_supported else "BLOCKED",
                 "detail": sys.version,
             },
-            "adk_gemini_structured_output": {
-                "status": "BLOCKED",
-                "detail": "No deployed ADK/Gemini structured-output smoke test was exercised.",
-            },
-            "cloud_run_private_service": {
-                "status": "BLOCKED",
-                "detail": "No private Cloud Run service was deployed or exercised.",
-            },
-            "firestore_execution_ledger": {
-                "status": "BLOCKED",
-                "detail": "No Firestore execution/evidence ledger was configured or exercised.",
-            },
+            "adk_gemini_structured_output": cloud_results["adk_gemini_structured_output"],
+            "cloud_run_private_service": cloud_results["cloud_run_private_service"],
+            "firestore_execution_ledger": cloud_results["firestore_execution_ledger"],
             "liblouis_profile": liblouis_result,
             "liblouis_golden_repeat": golden_result,
             "container_brf_comparison": container_result,
             "cups_raw_passthrough_and_policy": cups_result,
-            "drive_same_file_detection": {
-                "status": "BLOCKED",
-                "detail": "No Workspace Events/change-feed refetch was exercised.",
-            },
+            "drive_same_file_detection": cloud_results["drive_same_file_detection"],
+            "gcs_immutable_artifacts": cloud_results["gcs_immutable_artifacts"],
         },
         "safe_diagnostics": {
             "gcloud_binary": "present" if gcloud else "missing",
@@ -451,6 +636,7 @@ def collect() -> dict[str, object]:
             "liblouis_golden_repeat": golden_ready,
             "container_brf_comparison": container_ready,
             "cups_raw_passthrough_and_policy": cups_ready,
+            "cloud_gate0": cloud_ready,
             "wsl_status_command_succeeded": wsl_ok,
             "docker_server_reachable": docker_ok,
             "cups_tools_present": cups_tools,

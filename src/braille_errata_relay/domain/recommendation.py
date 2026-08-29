@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
+from braille_errata_relay.configuration import resolve_config_path
+
 from .models import (
     BlockingReason,
     BrailleImpact,
@@ -60,7 +62,10 @@ class RecommendationPolicy:
 
 
 def _default_recommendation_policy_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "config" / "policies" / "recommendation.v1.json"
+    return resolve_config_path(
+        direct_env=_POLICY_PATH_ENV,
+        relative_path="policies/recommendation.v1.json",
+    )
 
 
 def load_recommendation_policy(path: str | Path | None = None) -> RecommendationPolicy:

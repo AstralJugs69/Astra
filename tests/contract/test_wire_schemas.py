@@ -111,3 +111,21 @@ def test_capture_manifest_and_event_chain_match_schema(tmp_path: Path) -> None:
     assert terminal == manifest["terminal_event_sha256"]
     assert manifest["events_sha256"] == manifest["terminal_event_sha256"]
     assert manifest["completed_at"] == manifest["finished_at"]
+
+
+def test_sanitized_cloud_gate0_evidence_matches_schema() -> None:
+    payload = json.loads(
+        (ROOT / "demo" / "evidence" / "cloud-gate0.json").read_text(encoding="utf-8")
+    )
+    errors = sorted(_validator("cloud-gate0-evidence.v1.json").iter_errors(payload), key=str)
+    assert errors == []
+    serialized = json.dumps(payload).lower()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "credentials",
+        "raw_cursor",
+        "source_content",
+    ):
+        assert forbidden not in serialized

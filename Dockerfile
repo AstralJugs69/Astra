@@ -22,16 +22,22 @@ RUN git clone --depth 1 --branch v${LIBLOUIS_VERSION} https://github.com/libloui
 
 FROM build AS application
 COPY --from=ghcr.io/astral-sh/uv:0.6.8@sha256:cb641b1979723dc5ab87d61f079000009edc107d30ae7cbb6e7419fdac044e9f /uv /uvx /usr/local/bin/
+ENV UV_HTTP_TIMEOUT=600 \
+    UV_HTTP_RETRIES=20 \
+    UV_CONCURRENT_DOWNLOADS=1
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md /app/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 COPY src /app/src
 COPY config /app/config
 COPY infra/scripts/bind_liblouis_profile.py /app/infra/scripts/bind_liblouis_profile.py
-RUN uv sync --frozen --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python --no-deps /app
 RUN PYTHONPATH=/opt/liblouis-python \
     LD_LIBRARY_PATH=/opt/liblouis/lib \
     LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables \
-    uv run --frozen --no-dev python infra/scripts/bind_liblouis_profile.py
+    /app/.venv/bin/python infra/scripts/bind_liblouis_profile.py
 
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -40,13 +46,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/opt/liblouis-python \
     LD_LIBRARY_PATH=/opt/liblouis/lib \
-    LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables
+    LIBLOUIS_TABLEPATH=/opt/liblouis/share/liblouis/tables \
+    RELAY_CONFIG_ROOT=/app/config \
+    TRANSLATION_PROFILE_PATH=/app/config/translation_profiles/demo-ueb-40x25-v1.json \
+    RELAY_RECOMMENDATION_POLICY=/app/config/policies/recommendation.v1.json
 
 COPY --from=build /opt/liblouis /opt/liblouis
 COPY --from=build /opt/liblouis-python /opt/liblouis-python
 COPY --from=application /app/.venv /app/.venv
 COPY config /app/config
-COPY src /app/src
 COPY --from=application /app/work/translation-profile.bound.json /app/config/translation_profiles/demo-ueb-40x25-v1.json
 
 WORKDIR /app

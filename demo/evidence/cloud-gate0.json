@@ -1,0 +1,67 @@
+{
+  "schema_version": "cloud-gate0-evidence.v1",
+  "recorded_at": "2026-08-29T11:19:46.2902059Z",
+  "project_id_sha256": "58b23348cb3fb13f3aa38d3afddbbf67a7314bcf49d28cf87e57e3344a4a296c",
+  "region": "europe-west3",
+  "service": {
+    "name": "braille-errata-relay",
+    "image_id": "sha256:369645345e26a3c4f44633e63b3a8e29e36d6643f603c25c8a8002f208aac9c2",
+    "image_digest": "sha256:b09c9fbfd3977b55ddbdb42bc06c3896bc5fbbc2e05dec772a2d3cd048abde41",
+    "private": true,
+    "runtime_identity_sha256": "10099d655361715a55f229bb0b759edeeb1773e57ee19a0be20e827ea6770358"
+  },
+  "semantic": {
+    "status": "PASS",
+    "agent_name": "semantic_assessor",
+    "model_id": "gemini-3.5-flash",
+    "prompt_version": "semantic-assessment.v1",
+    "schema_version": "semantic-assessment.v1",
+    "assessment_id": "b6ef9923941f93b7c256f25afe523aee0a45fd3eb43798d6b9a607e14fc9a22d",
+    "assessment_sha256": "20c7ff80285a499b957a9d5cd72f93485c59c19f6e790b239a831174030d5245",
+    "latency_ms": 5309
+  },
+  "drive": {
+    "status": "PASS",
+    "file_id_sha256": "21987543bbf9e8076ce71f69a381b7fd345453414de1da925e8160ed957f8822",
+    "same_file_id": true,
+    "v1_sha256": "b08a680a4f5a07cb4a718cac7c1527151a136368e3386d41a766b116a0cf14b3",
+    "v2_sha256": "bc2b43f65a7fdcc7cac6e8a2712cfdc9737b74d10f1dcdf46820e4f603f30f99",
+    "start_cursor_sha256": "40484e8ceca5fbfa537fa11ff1376b65bdb6b4b399a3918961e70cf59d5daee4",
+    "final_cursor_sha256": "7d11a27479c94853413e937892fdf6f96f0f852e6896c5b2d55a6367fde98ff2"
+  },
+  "firestore": {
+    "status": "PASS",
+    "database": "(default)",
+    "receipt_id": "e3be2a4c6ce3a6cc53d969db85e4cb850889a20b13c4777e192b48a8c7944cae",
+    "execution_id": "7255596befe68ffd5446e4ce5926f2c0fe98540a386e36ea9492a78a3ac9cbb4",
+    "duplicate_replay": true
+  },
+  "storage": {
+    "status": "PASS",
+    "bucket_name_sha256": "5bed8129d241a711bbd9614db583597a688d9a21655d2e6bebcf58d77c1a4faa",
+    "artifact_sha256": "bc2b43f65a7fdcc7cac6e8a2712cfdc9737b74d10f1dcdf46820e4f603f30f99",
+    "create_read_match": true
+  },
+  "checks": {
+    "private_cloud_run": {
+      "status": "PASS",
+      "detail": "Frankfurt Cloud Run revision 00004 rejected unauthenticated access and served only allowed OIDC principals."
+    },
+    "adk_gemini_structured_output": {
+      "status": "PASS",
+      "detail": "Deployed ADK returned the closed semantic schema from Gemini using the attached runtime service account."
+    },
+    "drive_same_file_refetch": {
+      "status": "PASS",
+      "detail": "The Drive change feed advanced and authoritative refetch produced the exact committed V1 and V2 fixture hashes for one file identity."
+    },
+    "firestore_idempotency": {
+      "status": "PASS",
+      "detail": "Frankfurt Firestore committed cursor, receipt, execution, source claim, and outbox records; exact replay converged as duplicate."
+    },
+    "immutable_gcs": {
+      "status": "PASS",
+      "detail": "Frankfurt GCS accepted content-addressed create-only artifacts and immediate readback matched SHA-256."
+    }
+  }
+}

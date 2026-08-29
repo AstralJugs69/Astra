@@ -7,19 +7,21 @@ from typing import Protocol
 
 from .models import (
     ArtifactRef,
+    AssessmentInput,
+    DriveChangeBatch,
     Incident,
     ProductionBaseline,
     ProductionIncidentReport,
     SemanticAssessment,
     SiteObservation,
     SourceLocator,
-    SourceRevision,
+    SourceSnapshot,
     TranslationProfile,
 )
 
 
 class SourceProvider(Protocol):
-    async def fetch_revision(self, locator: SourceLocator) -> SourceRevision: ...
+    async def fetch_revision(self, locator: SourceLocator) -> SourceSnapshot: ...
 
 
 class SourceSignalAdapter(Protocol):
@@ -27,7 +29,7 @@ class SourceSignalAdapter(Protocol):
 
 
 class SourceReconciler(Protocol):
-    async def drain(self, cursor: str) -> object: ...
+    async def drain(self, cursor: str) -> DriveChangeBatch: ...
 
 
 class ArtifactStore(Protocol):
@@ -51,7 +53,7 @@ class IncidentRepository(Protocol):
 
 
 class SemanticAssessor(Protocol):
-    async def assess(self, evidence: dict[str, object]) -> SemanticAssessment: ...
+    async def assess(self, evidence: AssessmentInput) -> SemanticAssessment: ...
 
 
 class BrailleRenderer(Protocol):

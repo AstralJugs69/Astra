@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://braille-errata-relay.local/schemas/cloud-gate0-evidence.v1.json",
+  "title": "Sanitized Cloud Gate 0 evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "project_id_sha256",
+    "region",
+    "service",
+    "semantic",
+    "drive",
+    "firestore",
+    "storage",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {"const": "cloud-gate0-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "project_id_sha256": {"$ref": "#/$defs/sha256"},
+    "region": {"type": "string", "minLength": 1, "maxLength": 64},
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "image_id", "image_digest", "private", "runtime_identity_sha256"],
+      "properties": {
+        "name": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
+        "image_id": {"type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$"},
+        "image_digest": {"type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$"},
+        "private": {"type": ["boolean", "null"]},
+        "runtime_identity_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "semantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "agent_name",
+        "model_id",
+        "prompt_version",
+        "schema_version",
+        "assessment_id",
+        "assessment_sha256",
+        "latency_ms"
+      ],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "agent_name": {"const": "semantic_assessor"},
+        "model_id": {"type": "string", "minLength": 1, "maxLength": 512},
+        "prompt_version": {"const": "semantic-assessment.v1"},
+        "schema_version": {"const": "semantic-assessment.v1"},
+        "assessment_id": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "assessment_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "latency_ms": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "drive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "file_id_sha256",
+        "same_file_id",
+        "v1_sha256",
+        "v2_sha256",
+        "start_cursor_sha256",
+        "final_cursor_sha256"
+      ],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "file_id_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "same_file_id": {"type": ["boolean", "null"]},
+        "v1_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "v2_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "start_cursor_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "final_cursor_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "firestore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "database", "receipt_id", "execution_id", "duplicate_replay"],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "database": {"const": "(default)"},
+        "receipt_id": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "execution_id": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "duplicate_replay": {"type": ["boolean", "null"]}
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "bucket_name_sha256", "artifact_sha256", "create_read_match"],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "bucket_name_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "artifact_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "create_read_match": {"type": ["boolean", "null"]}
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "private_cloud_run",
+        "adk_gemini_structured_output",
+        "drive_same_file_refetch",
+        "firestore_idempotency",
+        "immutable_gcs"
+      ],
+      "properties": {
+        "private_cloud_run": {"$ref": "#/$defs/check"},
+        "adk_gemini_structured_output": {"$ref": "#/$defs/check"},
+        "drive_same_file_refetch": {"$ref": "#/$defs/check"},
+        "firestore_idempotency": {"$ref": "#/$defs/check"},
+        "immutable_gcs": {"$ref": "#/$defs/check"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "status": {"enum": ["PASS", "BLOCKED"]},
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "detail": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    }
+  }
+}

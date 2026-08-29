@@ -20,6 +20,7 @@ outputs/
 demo/evidence/*.json
 !demo/evidence/preflight.json
 !demo/evidence/gate0-local-floor.json
+!demo/evidence/cloud-gate0.json
 uv-cache/
 **/uv-cache/
 *.pem

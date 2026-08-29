@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -169,6 +169,30 @@ class SourceRevision(DomainModel):
     fetched_at: datetime
 
 
+class SourceSnapshot(DomainModel):
+    """Authoritatively fetched bytes paired with immutable provider lineage.
+
+    The bytes are deliberately excluded from normal model serialization so a
+    repository adapter cannot accidentally place source content in Firestore.
+    Artifact storage receives them through the explicit ``source_bytes`` field.
+    """
+
+    revision: SourceRevision
+    source_bytes: bytes = Field(repr=False, exclude=True)
+
+
+class DriveChangeSignal(DomainModel):
+    file_id: NonEmpty
+    removed: bool = False
+
+
+class DriveChangeBatch(DomainModel):
+    start_cursor: NonEmpty
+    final_cursor: NonEmpty
+    signals: tuple[DriveChangeSignal, ...]
+    snapshots: tuple[SourceSnapshot, ...]
+
+
 class SourceBlock(DomainModel):
     block_id: NonEmpty
     kind: SourceBlockKind
@@ -297,8 +321,39 @@ class ProductionBaseline(DomainModel):
     compatible_profile: bool = True
 
 
+class EvidenceSide(StrEnum):
+    OLD = "old"
+    NEW = "new"
+    CONTEXT = "context"
+
+
+class SemanticEvidenceSpan(DomainModel):
+    span_id: NonEmpty
+    side: EvidenceSide
+    block_kind: SourceBlockKind
+    text: Annotated[str, Field(min_length=1, max_length=4000)]
+
+
+class SemanticImpactSummary(DomainModel):
+    pages_changed: bool
+    baseline_page_count: int = Field(ge=0)
+    candidate_page_count: int = Field(ge=0)
+
+
+class AssessmentInput(DomainModel):
+    schema_version: str = "semantic-assessment-input.v1"
+    evidence_spans: tuple[SemanticEvidenceSpan, ...] = Field(min_length=1, max_length=16)
+    impact_summary: SemanticImpactSummary
+
+    @model_validator(mode="after")
+    def enforce_bounded_context(self) -> AssessmentInput:
+        if sum(len(span.text) for span in self.evidence_spans) > 12000:
+            raise ValueError("semantic evidence exceeds the 12000 character boundary")
+        return self
+
+
 class SemanticAssessment(DomainModel):
-    schema_version: str = "semantic-assessment.v1"
+    schema_version: Literal["semantic-assessment.v1"] = "semantic-assessment.v1"
     assessment_id: HexSha256
     analysis_revision: int = Field(ge=1)
     model_id: NonEmpty
