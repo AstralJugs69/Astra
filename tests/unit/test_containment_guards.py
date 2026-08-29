@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +24,8 @@ from braille_errata_relay.domain.recommendation import (
     SiteEvidenceStatus,
     assess_site_evidence,
     containment_recommendation,
+    load_recommendation_policy,
+    semantic_review_required,
 )
 from braille_errata_relay.domain.state_machine import (
     AttributableEvidenceRequired,
@@ -284,3 +288,34 @@ def test_fresh_attributable_evidence_can_describe_a_human_step() -> None:
     )
     assert result.precise_containment is True
     assert HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION in result.steps
+
+
+def test_semantic_confidence_threshold_is_loaded_from_versioned_policy(tmp_path: Path) -> None:
+    policy_path = tmp_path / "recommendation.v1.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "recommendation-policy.v1",
+                "policy_id": "test-policy.v1",
+                "min_semantic_confidence": "MEDIUM",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy = load_recommendation_policy(policy_path)
+
+    assert policy.policy_id == "test-policy.v1"
+    assert policy.min_semantic_confidence == Confidence.MEDIUM
+    assert (
+        semantic_review_required(assessment(confidence=Confidence.MEDIUM), policy=policy) is False
+    )
+    assert semantic_review_required(assessment(confidence=Confidence.LOW), policy=policy) is True
+
+
+def test_malformed_recommendation_policy_fails_closed(tmp_path: Path) -> None:
+    policy_path = tmp_path / "recommendation.v1.json"
+    policy_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema version"):
+        load_recommendation_policy(policy_path)

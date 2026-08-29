@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://braille-errata-relay.local/schemas/gate0-local-floor-evidence.v1.json",
+  "title": "Sanitized local Gate 0 CUPS evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "queue",
+    "simulated_endpoint",
+    "fixture",
+    "full_capture",
+    "terminated_capture",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {"const": "gate0-local-floor-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "queue": {"const": "Braille-Embosser-Sim"},
+    "simulated_endpoint": {"const": true},
+    "fixture": {"const": "demo/expected/v1.brf"},
+    "full_capture": {"$ref": "#/$defs/completedCapture"},
+    "terminated_capture": {"$ref": "#/$defs/terminatedCapture"},
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operator_terminal_submission",
+        "full_capture_exact_byte_passthrough",
+        "operator_hold_release_cancel",
+        "terminated_capture_journal",
+        "observer_authorization_denials",
+        "observer_filesystem_isolation"
+      ],
+      "properties": {
+        "operator_terminal_submission": {"const": "PASS"},
+        "full_capture_exact_byte_passthrough": {"const": "PASS"},
+        "operator_hold_release_cancel": {"const": "PASS"},
+        "terminated_capture_journal": {"const": "PASS"},
+        "observer_authorization_denials": {"const": "PASS"},
+        "observer_filesystem_isolation": {"const": "PASS"}
+      }
+    }
+  },
+  "$defs": {
+    "captureBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "candidate_sha256",
+        "backend_received_sha256",
+        "captured_output_sha256",
+        "terminal_event_sha256",
+        "pages_total",
+        "pages_completed",
+        "manifest_schema_valid",
+        "event_chain_valid"
+      ],
+      "properties": {
+        "state": {"type": "string"},
+        "candidate_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "backend_received_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "captured_output_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "terminal_event_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "pages_total": {"type": "integer", "minimum": 1},
+        "pages_completed": {"type": "integer", "minimum": 0},
+        "manifest_schema_valid": {"const": true},
+        "event_chain_valid": {"const": true}
+      }
+    },
+    "completedCapture": {
+      "allOf": [
+        {"$ref": "#/$defs/captureBase"},
+        {
+          "properties": {
+            "state": {"const": "COMPLETED"},
+            "captured_output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
+        }
+      ]
+    },
+    "terminatedCapture": {
+      "allOf": [
+        {"$ref": "#/$defs/captureBase"},
+        {
+          "properties": {
+            "state": {"const": "TERMINATED"},
+            "captured_output_sha256": {"const": null}
+          }
+        }
+      ]
+    }
+  }
+}

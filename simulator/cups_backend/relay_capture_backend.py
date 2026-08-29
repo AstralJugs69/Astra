@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import signal
 import sys
@@ -19,7 +20,17 @@ from pathlib import Path
 from typing import Any
 
 DEVICE_URI = "relay-capture://demo-embosser"
+CAPTURE_ROOT = Path("/var/lib/braille-relay/captures")
+CAPTURE_CONFIG_PATH = Path("/etc/cups/relay-capture.conf")
 BRF_ASCII = set(" abcdefghijklmnopqrstuvwxyz0123456789'@\",*/-^.;<%:[>+_$? !#&()]=\\_")
+CAPTURE_DIRECTORY_MODE = 0o2750
+CAPTURE_FILE_MODE = 0o640
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+DEFAULT_CELLS_PER_LINE = 40
+DEFAULT_LINES_PER_PAGE = 25
+DEFAULT_PAGE_DELAY_SECONDS = 5.0
+MIN_PAGE_DELAY_SECONDS = 1.0
+MAX_PAGE_DELAY_SECONDS = 60.0
 TERMINATE = False
 
 
@@ -60,13 +71,82 @@ def _canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _set_private_file_mode(path: Path) -> None:
+    if os.name != "nt":
+        os.chmod(path, CAPTURE_FILE_MODE)
+
+
+def _ensure_private_directory(path: Path) -> None:
+    """Create a group-auditable directory despite CUPS' restrictive umask."""
+
+    if os.name == "nt":
+        path.mkdir(parents=True, exist_ok=True)
+        return
+    previous_umask = os.umask(0o027)
+    try:
+        path.mkdir(parents=True, exist_ok=True, mode=CAPTURE_DIRECTORY_MODE)
+    finally:
+        os.umask(previous_umask)
+
+
+def _set_private_descriptor_mode(descriptor: int) -> None:
+    if os.name != "nt":
+        os.fchmod(descriptor, CAPTURE_FILE_MODE)
+
+
+def load_page_delay(config_path: Path, *, require_root_owner: bool) -> float:
+    """Load the single root-controlled simulator timing setting."""
+
+    if not config_path.is_file():
+        raise ValueError("CUPS capture timing configuration is missing")
+    metadata = config_path.stat()
+    if require_root_owner and (metadata.st_uid != 0 or metadata.st_mode & 0o022):
+        raise ValueError("CUPS capture timing configuration must be root-owned and not writable")
+
+    expected_key = "RELAY_PAGE_DELAY_SECONDS"
+    values: dict[str, str] = {}
+    try:
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except UnicodeError as exc:
+        raise ValueError("CUPS capture timing configuration is not UTF-8") from exc
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if separator != "=" or key != expected_key or not value or key in values:
+            raise ValueError("CUPS capture timing configuration is invalid")
+        values[key] = value
+    if set(values) != {expected_key}:
+        raise ValueError("CUPS capture timing configuration is incomplete")
+    try:
+        delay = float(values[expected_key])
+    except ValueError as exc:
+        raise ValueError("CUPS capture delay must be numeric") from exc
+    if not math.isfinite(delay) or not MIN_PAGE_DELAY_SECONDS <= delay <= MAX_PAGE_DELAY_SECONDS:
+        raise ValueError("CUPS capture delay is outside the permitted range")
+    return delay
+
+
 def _atomic_write_bytes(destination: Path, data: bytes) -> None:
     part = destination.with_name(destination.name + ".part")
-    with part.open("wb") as stream:
-        stream.write(data)
-        stream.flush()
-        os.fsync(stream.fileno())
-    part.replace(destination)
+    descriptor = os.open(
+        part,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        CAPTURE_FILE_MODE,
+    )
+    try:
+        _set_private_descriptor_mode(descriptor)
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+    os.replace(part, destination)
+    _set_private_file_mode(destination)
 
 
 def _atomic_write_json(destination: Path, value: dict[str, object]) -> None:
@@ -110,7 +190,12 @@ def verify_event_chain(path: Path) -> tuple[str | None, str | None]:
 class CaptureJournal:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # setup_cups_gate0.sh owns the set-group-ID capture tree. The CUPS
+        # backend runs as lp, which is intentionally not a member of the
+        # human relay-audit group; chmod here would clear that inheritance.
+        _ensure_private_directory(self.path.parent)
+        if self.path.exists():
+            _set_private_file_mode(self.path)
         first_previous, terminal = verify_event_chain(path)
         self.first_previous_hash = first_previous
         self.previous_hash = terminal
@@ -129,9 +214,10 @@ class CaptureJournal:
         descriptor = os.open(
             self.path,
             os.O_WRONLY | os.O_CREAT | os.O_APPEND,
-            0o600,
+            CAPTURE_FILE_MODE,
         )
         try:
+            _set_private_descriptor_mode(descriptor)
             offset = 0
             while offset < len(encoded):
                 offset += os.write(descriptor, encoded[offset:])
@@ -196,10 +282,10 @@ def run_backend(
     title: str,
     input_path: str | None,
     capture_root: Path,
-    max_bytes: int = 10 * 1024 * 1024,
-    cells_per_line: int = 40,
-    lines_per_page: int = 25,
-    page_delay_seconds: float = 0.25,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    cells_per_line: int = DEFAULT_CELLS_PER_LINE,
+    lines_per_page: int = DEFAULT_LINES_PER_PAGE,
+    page_delay_seconds: float = DEFAULT_PAGE_DELAY_SECONDS,
 ) -> int:
     global TERMINATE
     TERMINATE = False
@@ -208,11 +294,15 @@ def run_backend(
     if not job_id_text.isdigit() or int(job_id_text) <= 0:
         raise ValueError("CUPS scheduler job ID must be a positive integer")
     job_id = int(job_id_text)
+    # Preserve the group and set-group-ID mode installed by the root-owned
+    # setup script so human relay-audit readers can inspect capture evidence
+    # without granting access to relay-observer.
+    _ensure_private_directory(capture_root)
     capture_root = capture_root.resolve()
     job_dir = (capture_root / str(job_id)).resolve()
     if capture_root not in job_dir.parents:
         raise ValueError("capture path escaped the configured root")
-    job_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(job_dir)
     if (job_dir / "manifest.json").exists():
         raise ValueError("capture already has a terminal manifest")
     journal = CaptureJournal(job_dir / "events.jsonl")
@@ -303,25 +393,36 @@ def run_backend(
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 6:
-        print("device-uri job-id user title copies options [file]", file=sys.stderr)
+    if len(argv) == 2 and argv[0] == "--validate-runtime-config":
+        try:
+            load_page_delay(Path(argv[1]), require_root_owner=False)
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"relay-capture: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if len(argv) < 5:
+        print("job-id user title copies options [file]", file=sys.stderr)
         return 1
     signal.signal(signal.SIGTERM, _on_sigterm)
     try:
         return run_backend(
-            device_uri=argv[0],
-            job_id_text=argv[1],
-            title=argv[3],
-            input_path=argv[6] if len(argv) > 6 else None,
-            capture_root=Path(
-                os.environ.get("RELAY_CAPTURE_ROOT", "/var/lib/braille-relay/captures")
+            # CUPS puts the queue name in the executable argv[0]. Linux
+            # removes that value when it invokes this Python shebang script,
+            # so argv starts with CUPS's numeric scheduler job ID. The
+            # scheduler-provided DEVICE_URI is the only device URI accepted.
+            device_uri=os.environ.get("DEVICE_URI", ""),
+            job_id_text=argv[0],
+            title=argv[2],
+            input_path=argv[5] if len(argv) > 5 else None,
+            capture_root=CAPTURE_ROOT,
+            max_bytes=DEFAULT_MAX_BYTES,
+            cells_per_line=DEFAULT_CELLS_PER_LINE,
+            lines_per_page=DEFAULT_LINES_PER_PAGE,
+            page_delay_seconds=load_page_delay(
+                CAPTURE_CONFIG_PATH, require_root_owner=os.name != "nt"
             ),
-            max_bytes=int(os.environ.get("RELAY_CAPTURE_MAX_BYTES", str(10 * 1024 * 1024))),
-            cells_per_line=int(os.environ.get("RELAY_CELLS_PER_LINE", "40")),
-            lines_per_page=int(os.environ.get("RELAY_LINES_PER_PAGE", "25")),
-            page_delay_seconds=float(os.environ.get("RELAY_PAGE_DELAY_SECONDS", "0.25")),
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         print(f"relay-capture: {exc}", file=sys.stderr)
         return 1
 

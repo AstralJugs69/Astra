@@ -11,7 +11,8 @@ from relay_bridge.observation_builder import build_observation
 
 
 def test_observation_and_outbox_are_committed_together(tmp_path: Path) -> None:
-    journal = ObservationJournal(tmp_path / "observations.sqlite3")
+    path = tmp_path / "observations.sqlite3"
+    journal = ObservationJournal(path)
     payload = build_observation(
         site_id="site",
         bridge_id="bridge",
@@ -30,6 +31,9 @@ def test_observation_and_outbox_are_committed_together(tmp_path: Path) -> None:
     )
 
     assert journal.append(1, payload["observation_id"], payload) is True
+    journal.close()
+
+    journal = ObservationJournal(path)
     pending = journal.pending_outbox()
     assert len(pending) == 1
     assert pending[0]["message_id"] == payload["observation_id"]

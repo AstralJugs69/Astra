@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 
 from .models import (
     BlockingReason,
@@ -48,7 +51,49 @@ class ContainmentRecommendation:
     blocking_reason: BlockingReason | None
 
 
-MIN_SEMANTIC_CONFIDENCE = Confidence.HIGH
+@dataclass(frozen=True)
+class RecommendationPolicy:
+    """The fail-closed semantic threshold from the versioned policy file."""
+
+    policy_id: str
+    min_semantic_confidence: Confidence
+
+
+def _default_recommendation_policy_path() -> Path:
+    return Path(__file__).resolve().parents[3] / "config" / "policies" / "recommendation.v1.json"
+
+
+def load_recommendation_policy(path: str | Path | None = None) -> RecommendationPolicy:
+    """Load the policy that controls deterministic semantic fail-closed behavior.
+
+    A missing or malformed policy is an error rather than a weaker implicit
+    default. Callers must surface that as a blocked/review state before any
+    containment recommendation can be considered precise.
+    """
+
+    configured_path = path or os.environ.get(_POLICY_PATH_ENV)
+    policy_path = (
+        Path(configured_path) if configured_path else _default_recommendation_policy_path()
+    )
+    try:
+        value = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("recommendation policy could not be loaded") from exc
+    if not isinstance(value, dict):
+        raise TypeError("recommendation policy must be a JSON object")
+    if value.get("schema_version") != "recommendation-policy.v1":
+        raise ValueError("recommendation policy schema version is unsupported")
+    policy_id = value.get("policy_id")
+    if not isinstance(policy_id, str) or not policy_id.strip():
+        raise ValueError("recommendation policy ID is missing")
+    try:
+        minimum = Confidence(value["min_semantic_confidence"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("recommendation policy confidence threshold is invalid") from exc
+    return RecommendationPolicy(policy_id=policy_id, min_semantic_confidence=minimum)
+
+
+_POLICY_PATH_ENV = "RELAY_RECOMMENDATION_POLICY"
 _CONFIDENCE_RANK = {
     Confidence.LOW: 1,
     Confidence.MEDIUM: 2,
@@ -60,18 +105,24 @@ def _dedupe(steps: list[HumanStep]) -> tuple[HumanStep, ...]:
     return tuple(dict.fromkeys(steps))
 
 
-def semantic_review_required(assessment: SemanticAssessment) -> bool:
+def semantic_review_required(
+    assessment: SemanticAssessment,
+    *,
+    policy: RecommendationPolicy | None = None,
+) -> bool:
     """Return whether model output is safe only as review context.
 
     The model may explain a change, but deterministic policy requires positive
-    materiality, high confidence, no unresolved uncertainty, and an explicit
+    materiality, configured policy confidence, no unresolved uncertainty, and an explicit
     indication that this recommendation does not replace professional review.
     """
+    active_policy = policy or load_recommendation_policy()
 
     return (
         assessment.materiality != Materiality.MATERIAL
         or assessment.requires_professional_review
-        or _CONFIDENCE_RANK[assessment.confidence] < _CONFIDENCE_RANK[MIN_SEMANTIC_CONFIDENCE]
+        or _CONFIDENCE_RANK[assessment.confidence]
+        < _CONFIDENCE_RANK[active_policy.min_semantic_confidence]
         or bool(assessment.uncertainties)
     )
 
@@ -149,9 +200,10 @@ def containment_recommendation(
     expected_queue_name: str | None = None,
     now: datetime | None = None,
     max_age_seconds: float = 15.0,
+    policy: RecommendationPolicy | None = None,
 ) -> ContainmentRecommendation:
     steps: list[HumanStep] = [HumanStep.COORDINATOR_REVIEW]
-    semantic_blocking = semantic_review_required(assessment)
+    semantic_blocking = semantic_review_required(assessment, policy=policy)
     if blocking_reason is not None or semantic_blocking:
         steps.append(HumanStep.QUALIFIED_PROOF_REQUIRED)
     if not impact.pages_changed:
@@ -202,6 +254,7 @@ def recommend_human_steps(
     expected_queue_name: str | None = None,
     now: datetime | None = None,
     max_age_seconds: float = 15.0,
+    policy: RecommendationPolicy | None = None,
 ) -> tuple[HumanStep, ...]:
     return containment_recommendation(
         assessment=assessment,
@@ -213,4 +266,5 @@ def recommend_human_steps(
         expected_queue_name=expected_queue_name,
         now=now,
         max_age_seconds=max_age_seconds,
+        policy=policy,
     ).steps

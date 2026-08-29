@@ -65,3 +65,63 @@ def test_capture_journal_rejects_tampered_event(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="hash mismatch"):
         backend.verify_event_chain(journal_path)
+
+
+def test_backend_runtime_timing_config_is_strict(tmp_path: Path) -> None:
+    configuration = tmp_path / "relay-capture.conf"
+
+    with pytest.raises(ValueError, match="missing"):
+        backend.load_page_delay(configuration, require_root_owner=False)
+
+    configuration.write_text("RELAY_PAGE_DELAY_SECONDS=5.0\n", encoding="utf-8")
+    assert backend.load_page_delay(configuration, require_root_owner=False) == 5.0
+    assert backend.main(["--validate-runtime-config", str(configuration)]) == 0
+
+    for invalid_content in (
+        "RELAY_PAGE_DELAY_SECONDS=0.25\n",
+        "RELAY_PAGE_DELAY_SECONDS=5.0\nUNEXPECTED=value\n",
+        "RELAY_PAGE_DELAY_SECONDS=5.0\nRELAY_PAGE_DELAY_SECONDS=6.0\n",
+    ):
+        configuration.write_text(invalid_content, encoding="utf-8")
+        with pytest.raises(ValueError):
+            backend.load_page_delay(configuration, require_root_owner=False)
+        assert backend.main(["--validate-runtime-config", str(configuration)]) == 1
+
+
+def test_backend_main_uses_cups_shebang_arguments_and_device_uri_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_backend(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(backend, "run_backend", fake_run_backend)
+    monkeypatch.setattr(backend, "load_page_delay", lambda *_args, **_kwargs: 5.0)
+    monkeypatch.setenv("DEVICE_URI", backend.DEVICE_URI)
+
+    assert (
+        backend.main(
+            [
+                "42",
+                "relay-operator",
+                "BER|GATE0|terminal",
+                "1",
+                "raw",
+                "/var/spool/cups/d00042-001",
+            ]
+        )
+        == 0
+    )
+    assert captured["device_uri"] == backend.DEVICE_URI
+    assert captured["job_id_text"] == "42"
+
+
+def test_backend_main_rejects_missing_cups_device_uri(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(backend, "load_page_delay", lambda *_args, **_kwargs: 5.0)
+    monkeypatch.delenv("DEVICE_URI", raising=False)
+
+    assert backend.main(["42", "operator", "title", "1", "raw"]) == 1

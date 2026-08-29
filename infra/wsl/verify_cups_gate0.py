@@ -173,12 +173,70 @@ def _read_observer_state(args: argparse.Namespace, password: str) -> None:
     print(f"PASS: relay-observer read queue={args.queue} jobs_visible={len(jobs)}")
 
 
+def _send_document_denial_probe(args: argparse.Namespace, password: str) -> None:
+    probe_document = b"BRAILLE-ERRATA-RELAY-SEND-DOCUMENT-DENIAL-PROBE\r\n"
+    cups.setUser(args.user)
+    cups.setPasswordCB(lambda _prompt: password)
+    connection = cups.Connection(host=args.host, port=args.port)
+    try:
+        statuses = [
+            connection.startDocument(
+                args.queue,
+                args.send_document_job_id,
+                "relay-observer-probe.brf",
+                "application/vnd.cups-raw",
+                1,
+            ),
+            connection.writeRequestData(probe_document, len(probe_document)),
+            connection.finishDocument(args.queue),
+        ]
+    except cups.IPPError as exc:
+        status = exc.args[0] if exc.args and isinstance(exc.args[0], int) else None
+        if status not in {
+            cups.IPP_FORBIDDEN,
+            cups.IPP_NOT_AUTHENTICATED,
+            cups.IPP_NOT_AUTHORIZED,
+        }:
+            raise RuntimeError(
+                f"observer authorization failed for Send-Document: IPP {status}"
+            ) from exc
+        print("PASS: relay-observer denied Send-Document")
+        return
+
+    denied_statuses = {
+        401,
+        403,
+        cups.IPP_FORBIDDEN,
+        cups.IPP_NOT_AUTHENTICATED,
+        cups.IPP_NOT_AUTHORIZED,
+    }
+    if any(status in denied_statuses for status in statuses):
+        print("PASS: relay-observer denied Send-Document")
+        return
+    raise RuntimeError(
+        "observer authorization failed for Send-Document: "
+        f"request accepted with binding statuses {statuses}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=631)
     parser.add_argument("--queue", default="Braille-Embosser-Sim")
     parser.add_argument("--job-id", type=int, required=True)
+    parser.add_argument(
+        "--send-document-job-id",
+        type=int,
+        required=True,
+        help="an empty CUPS job created independently by relay-operator for this probe",
+    )
+    parser.add_argument(
+        "--restart-job-id",
+        type=int,
+        required=True,
+        help="a completed or cancelled CUPS job created independently by relay-operator",
+    )
     parser.add_argument("--brf", type=Path, required=True)
     parser.add_argument("--user", default="relay-observer")
     parser.add_argument(
@@ -191,6 +249,10 @@ def main() -> int:
         parser.error("--port must be between 1 and 65535")
     if args.job_id < 1:
         parser.error("--job-id must be positive")
+    if args.send_document_job_id < 1:
+        parser.error("--send-document-job-id must be positive")
+    if args.restart_job_id < 1:
+        parser.error("--restart-job-id must be positive")
     if not args.brf.is_file():
         parser.error(f"BRF file does not exist: {args.brf}")
     document = args.brf.read_bytes()
@@ -200,6 +262,7 @@ def main() -> int:
         _read_observer_state(args, password)
         base = _common_attributes(printer_uri, args.user)
         job = [(IPP_TAG_INTEGER, "job-id", args.job_id)]
+        restart_job = [(IPP_TAG_INTEGER, "job-id", args.restart_job_id)]
         probes = (
             (
                 "Print-Job",
@@ -217,19 +280,6 @@ def main() -> int:
                 IPP_OP_CREATE_JOB,
                 base + [(IPP_TAG_NAME, "job-name", "relay-observer-probe")],
                 b"",
-                "/printers/" + quote(args.queue, safe=""),
-            ),
-            (
-                "Send-Document",
-                IPP_OP_SEND_DOCUMENT,
-                base
-                + job
-                + [
-                    (IPP_TAG_NAME, "document-name", "relay-observer-probe.brf"),
-                    (IPP_TAG_MIMETYPE, "document-format", "application/vnd.cups-raw"),
-                    (IPP_TAG_BOOLEAN, "last-document", True),
-                ],
-                document,
                 "/printers/" + quote(args.queue, safe=""),
             ),
             (
@@ -256,7 +306,7 @@ def main() -> int:
             (
                 "Restart-Job",
                 IPP_OP_RESTART_JOB,
-                base + job,
+                base + restart_job,
                 b"",
                 "/printers/" + quote(args.queue, safe=""),
             ),
@@ -284,6 +334,7 @@ def main() -> int:
                 document=request_document,
             )
             _expect_denied(label, response)
+        _send_document_denial_probe(args, password)
         if args.probe_admin_mutation:
             probe_name = "relay-observer-admin-probe"
             if probe_name in cups.Connection(host=args.host, port=args.port).getPrinters():
