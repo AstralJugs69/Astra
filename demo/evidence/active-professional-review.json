@@ -1,6 +1,6 @@
 {
   "schema_version": "active-professional-review-evidence.v1",
-  "recorded_at": "2026-08-30T00:00:00+00:00",
+  "recorded_at": "2026-08-29T22:50:17Z",
   "branch": "codex/slice-2-2-active-professional-review",
   "base_commit": "50ee7131885a371498e9b8a6dc2a5acd723afa9b",
   "governing_documents": {
@@ -30,11 +30,11 @@
     "lock": "PASS",
     "docker": "PASS",
     "liblouis": "PASS",
-    "cups": "BLOCKED"
+    "cups": "BLOCKED",
+    "cloud_run_private_revision": "PASS"
   },
   "remaining_blockers": [
     "A fresh human-operated active-production Story 3 run has not been performed for this slice.",
-    "A fresh CUPS observer authorization matrix requires an explicit human-authenticated local exercise with held and open test jobs.",
-    "Private Cloud Run deployment remains pending."
+    "A fresh CUPS observer authorization matrix requires an explicit human-authenticated local exercise with held and open test jobs."
   ]
 }

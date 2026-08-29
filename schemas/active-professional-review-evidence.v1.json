@@ -56,7 +56,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "frozen_tests", "ruff", "format", "mypy", "lock", "docker", "liblouis", "cups"
+        "frozen_tests", "ruff", "format", "mypy", "lock", "docker", "liblouis", "cups",
+        "cloud_run_private_revision"
       ],
       "properties": {
         "frozen_tests": {"enum": ["PASS", "BLOCKED"]},
@@ -66,7 +67,8 @@
         "lock": {"enum": ["PASS", "BLOCKED"]},
         "docker": {"enum": ["PASS", "BLOCKED"]},
         "liblouis": {"enum": ["PASS", "BLOCKED"]},
-        "cups": {"enum": ["PASS", "BLOCKED"]}
+        "cups": {"enum": ["PASS", "BLOCKED"]},
+        "cloud_run_private_revision": {"enum": ["PASS", "BLOCKED"]}
       }
     },
     "remaining_blockers": {
