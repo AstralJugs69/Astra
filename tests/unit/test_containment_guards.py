@@ -73,7 +73,7 @@ def observation(*, observed_at: datetime, state: JobState = JobState.PROCESSING)
     job = QueueObservation(
         scheduler_job_id=42,
         owner="operator",
-        title="candidate",
+        title="BER|WO-DEMO-001|aaaaaaaaaaaa|BASELINE",
         destination="queue",
         state=state,
         observed_at=observed_at,
@@ -89,6 +89,13 @@ def observation(*, observed_at: datetime, state: JobState = JobState.PROCESSING)
         printer_state="processing",
         printer_accepting_jobs=True,
     )
+
+
+def lineage() -> dict[str, object]:
+    return {
+        "expected_job_title": "BER|WO-DEMO-001|aaaaaaaaaaaa|BASELINE",
+        "expected_artifact_sha256": "a" * 64,
+    }
 
 
 def test_uncertain_containment_cannot_jump_to_proof_or_close() -> None:
@@ -141,6 +148,7 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     missing = assess_site_evidence(
         site_observation=None,
@@ -148,6 +156,7 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     blocking = assess_site_evidence(
         site_observation=observation(observed_at=now, state=JobState.UNKNOWN),
@@ -155,6 +164,7 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     ambiguous_observation = observation(observed_at=now).model_copy(
         update={
@@ -172,6 +182,7 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     assert {stale.status, missing.status, blocking.status, ambiguous.status} == {
         SiteEvidenceStatus.STALE,
@@ -202,6 +213,7 @@ def test_stale_missing_ambiguous_and_blocking_evidence_never_becomes_precise() -
             expected_queue_name="queue",
             now=now,
             max_age_seconds=15,
+            **lineage(),
         )
         assert result.precise_containment is False
         assert HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION not in result.steps
@@ -217,6 +229,7 @@ def test_missing_lineage_never_selects_the_only_observed_job() -> None:
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     missing_queue = assess_site_evidence(
         site_observation=only_job,
@@ -224,6 +237,7 @@ def test_missing_lineage_never_selects_the_only_observed_job() -> None:
         expected_queue_name=None,
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
 
     assert missing_job_id.status == SiteEvidenceStatus.MISSING
@@ -240,6 +254,7 @@ def test_missing_lineage_never_selects_the_only_observed_job() -> None:
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     assert result.precise_containment is False
     assert result.blocking_reason == BlockingReason.MISSING_LINEAGE
@@ -266,6 +281,7 @@ def test_semantic_review_conditions_fail_closed(overrides: dict[str, object]) ->
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
 
     assert result.precise_containment is False
@@ -285,9 +301,75 @@ def test_fresh_attributable_evidence_can_describe_a_human_step() -> None:
         expected_queue_name="queue",
         now=now,
         max_age_seconds=15,
+        **lineage(),
     )
     assert result.precise_containment is True
     assert HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION in result.steps
+
+
+@pytest.mark.parametrize(
+    ("site", "expected_title", "expected_sha", "reason"),
+    [
+        (
+            observation(observed_at=datetime(2026, 8, 28, 17, 0, tzinfo=UTC)).model_copy(
+                update={"queue_name": "Other-Queue"}
+            ),
+            "BER|WO-DEMO-001|aaaaaaaaaaaa|BASELINE",
+            "a" * 64,
+            BlockingReason.WRONG_QUEUE,
+        ),
+        (
+            observation(observed_at=datetime(2026, 8, 28, 17, 0, tzinfo=UTC)).model_copy(
+                update={
+                    "observations": (
+                        observation(observed_at=datetime(2026, 8, 28, 17, 0, tzinfo=UTC))
+                        .observations[0]
+                        .model_copy(update={"destination": "Other-Queue"}),
+                    )
+                }
+            ),
+            "BER|WO-DEMO-001|aaaaaaaaaaaa|BASELINE",
+            "a" * 64,
+            BlockingReason.WRONG_QUEUE,
+        ),
+        (
+            observation(observed_at=datetime(2026, 8, 28, 17, 0, tzinfo=UTC)),
+            "BER|WO-DEMO-001|bbbbbbbbbbbb|BASELINE",
+            "b" * 64,
+            BlockingReason.JOB_LINEAGE_MISMATCH,
+        ),
+        (
+            observation(observed_at=datetime(2026, 8, 28, 17, 0, tzinfo=UTC)),
+            None,
+            None,
+            BlockingReason.MISSING_LINEAGE,
+        ),
+    ],
+    ids=("envelope-queue", "job-destination", "title-and-artifact", "missing-title-hash"),
+)
+def test_wrong_or_incomplete_job_identity_never_becomes_precise(
+    site: SiteObservation,
+    expected_title: str | None,
+    expected_sha: str | None,
+    reason: BlockingReason,
+) -> None:
+    now = datetime(2026, 8, 28, 17, 0, tzinfo=UTC)
+    result = containment_recommendation(
+        assessment=assessment(),
+        impact=impact(),
+        job_state=JobState.PROCESSING,
+        site_observation=site,
+        expected_job_id=42,
+        expected_queue_name="queue",
+        expected_job_title=expected_title,
+        expected_artifact_sha256=expected_sha,
+        now=now,
+        max_age_seconds=15,
+    )
+
+    assert result.precise_containment is False
+    assert result.blocking_reason == reason
+    assert HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION not in result.steps
 
 
 def test_semantic_confidence_threshold_is_loaded_from_versioned_policy(tmp_path: Path) -> None:

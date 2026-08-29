@@ -103,12 +103,12 @@ class FakeLedger:
             execution_id="b" * 64,
             outbox_ids=("c" * 64,),
             final_cursor_sha256="d" * 64,
-            duplicate=self.commits == 2,
+            duplicate=False,
         )
 
 
 @pytest.mark.asyncio
-async def test_initialize_stores_bytes_before_durable_cursor_commit_and_replays_once() -> None:
+async def test_initialize_stores_bytes_before_one_durable_cursor_commit() -> None:
     events: list[str] = []
     ledger = FakeLedger(events)
     workflow = DriveGate0Workflow(
@@ -122,8 +122,9 @@ async def test_initialize_stores_bytes_before_durable_cursor_commit_and_replays_
     result = await workflow.initialize()
     sanitized = result.sanitized_record()
 
-    assert events == ["gcs-put", "gcs-read", "firestore-commit", "firestore-commit"]
-    assert result.duplicate_replay is True
+    assert events == ["gcs-put", "gcs-read", "firestore-commit"]
+    assert ledger.commits == 1
+    assert result.duplicate_replay is False
     assert sanitized["file_id_sha256"] != "file-id"
     assert "cursor-start" not in repr(sanitized)
     assert "runtime@example" not in repr(sanitized)

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "production-incident-report.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "incident_id",
+    "baseline_id",
+    "old_source_revision_id",
+    "new_source_revision_id",
+    "source_diff_artifact_sha256",
+    "semantic_assessment",
+    "braille_impact",
+    "production_context",
+    "recommended_human_steps",
+    "recommendation_policy_version",
+    "blocking_reason",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "production-incident-report.v1"},
+    "incident_id": {"$ref": "#/$defs/sha256"},
+    "baseline_id": {"$ref": "#/$defs/sha256"},
+    "old_source_revision_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "new_source_revision_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "source_diff_artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "semantic_assessment": {"type": "object"},
+    "braille_impact": {"type": "object"},
+    "production_context": {"type": "object"},
+    "recommended_human_steps": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "COORDINATOR_REVIEW",
+          "QUALIFIED_PROOF_REQUIRED",
+          "CONSIDER_OPERATOR_STOP_AND_ISOLATION",
+          "INSPECT_POTENTIALLY_STALE_OUTPUT",
+          "FULL_VOLUME_REPLACEMENT_REVIEW",
+          "CONTINUE_ONLY_AFTER_HUMAN_ACCEPTANCE"
+        ]
+      }
+    },
+    "recommendation_policy_version": {"const": "relay-policy.v1"},
+    "blocking_reason": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "SOURCE_INACCESSIBLE",
+        "SEMANTIC_ASSESSMENT_INVALID",
+        "SEMANTIC_REVIEW_REQUIRED",
+        "UNSUPPORTED_CONTENT",
+        "INCOMPATIBLE_BASELINE_PROFILE",
+        "BRAILLE_ENGINE_NOT_READY",
+        "SITE_OBSERVATION_STALE",
+        "MISSING_LINEAGE",
+        "AMBIGUOUS_SITE_EVIDENCE",
+        "SITE_OBSERVATION_BLOCKING",
+        "WRONG_QUEUE",
+        "JOB_LINEAGE_MISMATCH",
+        "TELEMETRY_REPLAY",
+        "OUTPUT_INTEGRITY_FAILED",
+        "STALE_STATE_VERSION"
+      ]
+    },
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -7,13 +7,24 @@ import hashlib
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any, TypeVar, cast
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
-from braille_errata_relay.domain.models import ArtifactRef, DriveChangeBatch
+from braille_errata_relay.domain.models import (
+    ArtifactKind,
+    ArtifactRef,
+    DriveChangeBatch,
+    IncidentCheckpoint,
+    IncidentWorkflowStage,
+    RegisteredBaseline,
+    SemanticAssessment,
+    SiteObservation,
+)
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 T = TypeVar("T")
@@ -25,6 +36,56 @@ class LedgerIntegrityError(RuntimeError):
 
 class StaleCursorError(LedgerIntegrityError):
     pass
+
+
+class SemanticLeaseError(LedgerIntegrityError):
+    pass
+
+
+class SemanticClaimStatus(StrEnum):
+    ACQUIRED = "ACQUIRED"
+    IN_PROGRESS = "IN_PROGRESS"
+    READY = "READY"
+
+
+@dataclass(frozen=True)
+class SemanticExecutionClaim:
+    execution_key: str
+    status: SemanticClaimStatus
+    lease_token: str | None = None
+    assessment: SemanticAssessment | None = None
+
+
+@dataclass(frozen=True)
+class StoredSourceRevision:
+    revision_id: str
+    source_sha256: str
+    file_id: str
+    mime_type: str
+    provider_version: str
+    fetched_at: datetime
+    artifact: ArtifactRef
+
+
+@dataclass(frozen=True)
+class ObservationCommitResult:
+    observation_id: str
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class IncidentCheckpointCommit:
+    checkpoint: IncidentCheckpoint
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class OutboxLease:
+    message_id: str
+    kind: str
+    payload: dict[str, object]
+    lease_token: str
+    attempts: int
 
 
 @dataclass(frozen=True)
@@ -143,6 +204,520 @@ class FirestoreGate0Ledger:
 
     async def get_cursor(self, principal_scope_hash: str) -> CursorState | None:
         return await asyncio.to_thread(self._get_cursor_sync, principal_scope_hash)
+
+    def _get_source_revision_sync(self, revision_id: str) -> StoredSourceRevision | None:
+        if not revision_id:
+            raise ValueError("source revision ID is required")
+        data = self._snapshot_data(self._document("source_revisions", revision_id).get())
+        if data is None:
+            return None
+        required_strings = {
+            name: data.get(name)
+            for name in (
+                "revision_id",
+                "source_sha256",
+                "file_id",
+                "mime_type",
+                "provider_version",
+                "artifact_uri",
+            )
+        }
+        if any(not isinstance(value, str) for value in required_strings.values()):
+            raise LedgerIntegrityError("stored source revision is malformed")
+        fetched_at = data.get("fetched_at")
+        byte_length = data.get("byte_length")
+        if not isinstance(fetched_at, datetime) or not isinstance(byte_length, int):
+            raise LedgerIntegrityError("stored source revision metadata is malformed")
+        source_sha256 = cast(str, required_strings["source_sha256"])
+        _require_sha256(source_sha256, label="stored source SHA-256")
+        return StoredSourceRevision(
+            revision_id=cast(str, required_strings["revision_id"]),
+            source_sha256=source_sha256,
+            file_id=cast(str, required_strings["file_id"]),
+            mime_type=cast(str, required_strings["mime_type"]),
+            provider_version=cast(str, required_strings["provider_version"]),
+            fetched_at=fetched_at,
+            artifact=ArtifactRef(
+                sha256=source_sha256,
+                kind=ArtifactKind.SOURCE_SNAPSHOT,
+                byte_length=byte_length,
+                uri=cast(str, required_strings["artifact_uri"]),
+            ),
+        )
+
+    async def get_source_revision(self, revision_id: str) -> StoredSourceRevision | None:
+        return await asyncio.to_thread(self._get_source_revision_sync, revision_id)
+
+    async def register_baseline(self, baseline: RegisteredBaseline) -> bool:
+        return await asyncio.to_thread(
+            self._create_once_sync,
+            "baselines",
+            baseline.baseline.baseline_id,
+            {"record": baseline.model_dump(mode="json")},
+        )
+
+    def _get_baseline_sync(self, baseline_id: str) -> RegisteredBaseline | None:
+        _require_sha256(baseline_id, label="baseline ID")
+        data = self._snapshot_data(self._document("baselines", baseline_id).get())
+        if data is None:
+            return None
+        payload = data.get("record")
+        if not isinstance(payload, dict):
+            raise LedgerIntegrityError("stored baseline is malformed")
+        return RegisteredBaseline.model_validate(payload)
+
+    async def get_baseline(self, baseline_id: str) -> RegisteredBaseline | None:
+        return await asyncio.to_thread(self._get_baseline_sync, baseline_id)
+
+    def _find_baseline_for_file_sync(self, file_id: str) -> RegisteredBaseline | None:
+        if not file_id:
+            raise ValueError("Drive file ID is required")
+        query = (
+            self.client.collection("baselines")
+            .where(filter=FieldFilter("record.baseline.source_file_id", "==", file_id))
+            .limit(2)
+        )
+        records = list(query.stream())
+        if len(records) > 1:
+            raise LedgerIntegrityError("multiple baselines match the source file")
+        if not records:
+            return None
+        data = self._snapshot_data(records[0])
+        if data is None or not isinstance(data.get("record"), dict):
+            raise LedgerIntegrityError("stored baseline is malformed")
+        return RegisteredBaseline.model_validate(data["record"])
+
+    async def find_baseline_for_file(self, file_id: str) -> RegisteredBaseline | None:
+        return await asyncio.to_thread(self._find_baseline_for_file_sync, file_id)
+
+    def _claim_incident_sync(
+        self,
+        checkpoint: IncidentCheckpoint,
+    ) -> IncidentCheckpointCommit:
+        if checkpoint.stage is not IncidentWorkflowStage.DETECTED or checkpoint.state_version != 0:
+            raise ValueError("new incident checkpoint must start at DETECTED version zero")
+        ref = self._document("incidents", checkpoint.incident_id)
+        record = checkpoint.model_dump(mode="json")
+
+        def operation(transaction: Any) -> IncidentCheckpointCommit:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is not None:
+                existing_record = existing.get("record")
+                if not isinstance(existing_record, dict):
+                    raise LedgerIntegrityError("stored incident is malformed")
+                parsed = IncidentCheckpoint.model_validate(existing_record)
+                if (
+                    parsed.baseline_id != checkpoint.baseline_id
+                    or parsed.new_source_revision_id != checkpoint.new_source_revision_id
+                    or parsed.production_job_lineage_id != checkpoint.production_job_lineage_id
+                ):
+                    raise LedgerIntegrityError("incident identity conflicts with durable data")
+                return IncidentCheckpointCommit(parsed, True)
+            transaction.create(
+                ref,
+                {
+                    "record": record,
+                    "identity_sha256": canonical_sha256(
+                        {
+                            "baseline_id": checkpoint.baseline_id,
+                            "new_source_sha256": checkpoint.new_source_sha256,
+                            "production_job_lineage_id": checkpoint.production_job_lineage_id,
+                        }
+                    ),
+                    "created_at": self._clock(),
+                },
+            )
+            return IncidentCheckpointCommit(checkpoint, False)
+
+        return cast(IncidentCheckpointCommit, self._transaction_runner(operation))
+
+    async def claim_incident(
+        self,
+        checkpoint: IncidentCheckpoint,
+    ) -> IncidentCheckpointCommit:
+        return await asyncio.to_thread(self._claim_incident_sync, checkpoint)
+
+    def _get_incident_checkpoint_sync(self, incident_id: str) -> IncidentCheckpoint | None:
+        _require_sha256(incident_id, label="incident ID")
+        data = self._snapshot_data(self._document("incidents", incident_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("stored incident is malformed")
+        return IncidentCheckpoint.model_validate(record)
+
+    async def get_incident_checkpoint(self, incident_id: str) -> IncidentCheckpoint | None:
+        return await asyncio.to_thread(self._get_incident_checkpoint_sync, incident_id)
+
+    def _advance_incident_sync(
+        self,
+        checkpoint: IncidentCheckpoint,
+        expected_state_version: int,
+    ) -> IncidentCheckpointCommit:
+        if checkpoint.state_version != expected_state_version + 1:
+            raise ValueError("target incident version must increment by exactly one")
+        ref = self._document("incidents", checkpoint.incident_id)
+        target = checkpoint.model_dump(mode="json")
+
+        def operation(transaction: Any) -> IncidentCheckpointCommit:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is None:
+                raise LedgerIntegrityError("incident checkpoint is missing")
+            existing_record = existing.get("record")
+            if not isinstance(existing_record, dict):
+                raise LedgerIntegrityError("stored incident is malformed")
+            current = IncidentCheckpoint.model_validate(existing_record)
+            if current.state_version == checkpoint.state_version:
+                if current != checkpoint:
+                    raise LedgerIntegrityError("incident checkpoint version conflicts")
+                return IncidentCheckpointCommit(current, True)
+            if current.state_version != expected_state_version:
+                raise LedgerIntegrityError("incident checkpoint state version is stale")
+            if (
+                current.incident_id != checkpoint.incident_id
+                or current.baseline_id != checkpoint.baseline_id
+                or current.new_source_revision_id != checkpoint.new_source_revision_id
+                or current.production_job_lineage_id != checkpoint.production_job_lineage_id
+            ):
+                raise LedgerIntegrityError("incident immutable lineage changed")
+            transaction.set(
+                ref,
+                {
+                    **existing,
+                    "record": target,
+                    "updated_at": self._clock(),
+                },
+            )
+            return IncidentCheckpointCommit(checkpoint, False)
+
+        return cast(IncidentCheckpointCommit, self._transaction_runner(operation))
+
+    async def advance_incident(
+        self,
+        checkpoint: IncidentCheckpoint,
+        *,
+        expected_state_version: int,
+    ) -> IncidentCheckpointCommit:
+        return await asyncio.to_thread(
+            self._advance_incident_sync,
+            checkpoint,
+            expected_state_version,
+        )
+
+    def _get_latest_site_observation_sync(
+        self,
+        *,
+        site_id: str,
+        bridge_id: str,
+        queue_name: str,
+    ) -> SiteObservation | None:
+        head_id = canonical_sha256(
+            {"site_id": site_id, "bridge_id": bridge_id, "queue_name": queue_name}
+        )
+        head = self._snapshot_data(self._document("site_observation_heads", head_id).get())
+        if head is None:
+            return None
+        observation_id = head.get("observation_id")
+        if not isinstance(observation_id, str):
+            raise LedgerIntegrityError("observation chain head has no observation ID")
+        record = self._snapshot_data(self._document("site_observations", observation_id).get())
+        if record is None or not isinstance(record.get("record"), dict):
+            raise LedgerIntegrityError("latest site observation record is missing")
+        return SiteObservation.model_validate(record["record"])
+
+    async def get_latest_site_observation(
+        self,
+        *,
+        site_id: str,
+        bridge_id: str,
+        queue_name: str,
+    ) -> SiteObservation | None:
+        return await asyncio.to_thread(
+            self._get_latest_site_observation_sync,
+            site_id=site_id,
+            bridge_id=bridge_id,
+            queue_name=queue_name,
+        )
+
+    def _lease_outbox_sync(
+        self,
+        *,
+        lease_token: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> tuple[OutboxLease, ...]:
+        if not lease_token or limit < 1 or limit > 100 or lease_seconds < 1:
+            raise ValueError("outbox lease parameters are invalid")
+        query = (
+            self.client.collection("outbox")
+            .where(filter=FieldFilter("status", "in", ["PENDING", "LEASED"]))
+            .order_by("created_at")
+            .limit(limit * 4)
+        )
+
+        def operation(transaction: Any) -> tuple[OutboxLease, ...]:
+            now = self._clock()
+            selected: list[OutboxLease] = []
+            for snapshot in transaction.get(query):
+                if len(selected) >= limit:
+                    break
+                data = self._snapshot_data(snapshot)
+                if data is None:
+                    continue
+                status = data.get("status")
+                if status not in {"PENDING", "LEASED"}:
+                    continue
+                lease_expires_at = data.get("lease_expires_at")
+                next_attempt_at = data.get("next_attempt_at")
+                if status == "LEASED" and (
+                    not isinstance(lease_expires_at, datetime) or lease_expires_at > now
+                ):
+                    continue
+                if isinstance(next_attempt_at, datetime) and next_attempt_at > now:
+                    continue
+                message_id = data.get("message_id")
+                kind = data.get("kind")
+                payload = data.get("payload")
+                attempts = data.get("attempts")
+                state_version = data.get("state_version")
+                if (
+                    not isinstance(message_id, str)
+                    or not isinstance(kind, str)
+                    or not isinstance(payload, dict)
+                    or not isinstance(attempts, int)
+                    or not isinstance(state_version, int)
+                ):
+                    raise LedgerIntegrityError("outbox record is malformed")
+                attempts += 1
+                transaction.set(
+                    snapshot.reference,
+                    {
+                        **data,
+                        "status": "LEASED",
+                        "lease_token": lease_token,
+                        "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                        "attempts": attempts,
+                        "state_version": state_version + 1,
+                        "updated_at": now,
+                    },
+                )
+                selected.append(OutboxLease(message_id, kind, payload, lease_token, attempts))
+            return tuple(selected)
+
+        return cast(tuple[OutboxLease, ...], self._transaction_runner(operation))
+
+    async def lease_outbox(
+        self,
+        *,
+        lease_token: str,
+        limit: int = 10,
+        lease_seconds: int = 120,
+    ) -> tuple[OutboxLease, ...]:
+        return await asyncio.to_thread(
+            self._lease_outbox_sync,
+            lease_token=lease_token,
+            limit=limit,
+            lease_seconds=lease_seconds,
+        )
+
+    def _complete_outbox_sync(
+        self,
+        *,
+        message_id: str,
+        lease_token: str,
+        result: Mapping[str, object],
+    ) -> bool:
+        _require_sha256(message_id, label="outbox message ID")
+        ref = self._document("outbox", message_id)
+        result_body = dict(result)
+        result_sha256 = canonical_sha256(result_body)
+
+        def operation(transaction: Any) -> bool:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is None:
+                raise LedgerIntegrityError("outbox message is missing")
+            if existing.get("status") == "SENT":
+                if existing.get("result_sha256") != result_sha256:
+                    raise LedgerIntegrityError("outbox completion result conflicts")
+                return True
+            if existing.get("status") != "LEASED" or existing.get("lease_token") != lease_token:
+                raise LedgerIntegrityError("outbox lease is stale")
+            version = existing.get("state_version")
+            if not isinstance(version, int):
+                raise LedgerIntegrityError("outbox version is malformed")
+            now = self._clock()
+            transaction.set(
+                ref,
+                {
+                    **existing,
+                    "status": "SENT",
+                    "result": result_body,
+                    "result_sha256": result_sha256,
+                    "state_version": version + 1,
+                    "sent_at": now,
+                    "updated_at": now,
+                },
+            )
+            return False
+
+        return cast(bool, self._transaction_runner(operation))
+
+    async def complete_outbox(
+        self,
+        *,
+        message_id: str,
+        lease_token: str,
+        result: Mapping[str, object],
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._complete_outbox_sync,
+            message_id=message_id,
+            lease_token=lease_token,
+            result=result,
+        )
+
+    def _retry_outbox_sync(
+        self,
+        *,
+        message_id: str,
+        lease_token: str,
+        error_code: str,
+        max_attempts: int,
+    ) -> None:
+        _require_sha256(message_id, label="outbox message ID")
+        if not error_code or max_attempts < 1:
+            raise ValueError("outbox retry policy is invalid")
+        ref = self._document("outbox", message_id)
+
+        def operation(transaction: Any) -> None:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is None:
+                raise LedgerIntegrityError("outbox message is missing")
+            if existing.get("status") != "LEASED" or existing.get("lease_token") != lease_token:
+                raise LedgerIntegrityError("outbox lease is stale")
+            attempts = existing.get("attempts")
+            version = existing.get("state_version")
+            if not isinstance(attempts, int) or not isinstance(version, int):
+                raise LedgerIntegrityError("outbox retry counters are malformed")
+            now = self._clock()
+            terminal = attempts >= max_attempts
+            transaction.set(
+                ref,
+                {
+                    **existing,
+                    "status": "DEAD_LETTER" if terminal else "PENDING",
+                    "last_error_code": error_code,
+                    "next_attempt_at": (
+                        None
+                        if terminal
+                        else now + timedelta(seconds=min(300, 2 ** min(attempts, 8)))
+                    ),
+                    "state_version": version + 1,
+                    "updated_at": now,
+                },
+            )
+
+        self._transaction_runner(operation)
+
+    async def retry_outbox(
+        self,
+        *,
+        message_id: str,
+        lease_token: str,
+        error_code: str,
+        max_attempts: int = 5,
+    ) -> None:
+        await asyncio.to_thread(
+            self._retry_outbox_sync,
+            message_id=message_id,
+            lease_token=lease_token,
+            error_code=error_code,
+            max_attempts=max_attempts,
+        )
+
+    def _ingest_site_observation_sync(
+        self,
+        observation: SiteObservation,
+        payload_sha256: str,
+    ) -> ObservationCommitResult:
+        _require_sha256(payload_sha256, label="observation payload SHA-256")
+        if payload_sha256 != observation.observation_id:
+            raise LedgerIntegrityError("observation ID does not match canonical payload")
+        head_id = canonical_sha256(
+            {
+                "site_id": observation.site_id,
+                "bridge_id": observation.bridge_id,
+                "queue_name": observation.queue_name,
+            }
+        )
+        observation_ref = self._document("site_observations", observation.observation_id)
+        head_ref = self._document("site_observation_heads", head_id)
+        record = observation.model_dump(mode="json")
+
+        def operation(transaction: Any) -> ObservationCommitResult:
+            existing = self._snapshot_data(observation_ref.get(transaction=transaction))
+            head = self._snapshot_data(head_ref.get(transaction=transaction))
+            if existing is not None:
+                if existing.get("payload_sha256") != payload_sha256:
+                    raise LedgerIntegrityError("observation replay conflicts with durable data")
+                return ObservationCommitResult(observation.observation_id, True)
+            if head is None:
+                if observation.sequence != 1 or observation.previous_observation_sha256 is not None:
+                    raise LedgerIntegrityError("observation does not start a new sequence")
+                state_version = 0
+            else:
+                prior_sequence = head.get("sequence")
+                prior_observation_id = head.get("observation_id")
+                prior_version = head.get("state_version")
+                if (
+                    not isinstance(prior_sequence, int)
+                    or not isinstance(prior_observation_id, str)
+                    or not isinstance(prior_version, int)
+                ):
+                    raise LedgerIntegrityError("observation chain head is malformed")
+                if observation.sequence != prior_sequence + 1:
+                    raise LedgerIntegrityError("observation sequence is stale or out of order")
+                if observation.previous_observation_sha256 != prior_observation_id:
+                    raise LedgerIntegrityError("observation hash chain is discontinuous")
+                state_version = prior_version + 1
+            now = self._clock()
+            transaction.create(
+                observation_ref,
+                {
+                    "record": record,
+                    "payload_sha256": payload_sha256,
+                    "received_at": now,
+                },
+            )
+            transaction.set(
+                head_ref,
+                {
+                    "site_id": observation.site_id,
+                    "bridge_id": observation.bridge_id,
+                    "queue_name": observation.queue_name,
+                    "sequence": observation.sequence,
+                    "observation_id": observation.observation_id,
+                    "observed_at": observation.observed_at,
+                    "state_version": state_version,
+                    "updated_at": now,
+                },
+            )
+            return ObservationCommitResult(observation.observation_id, False)
+
+        return cast(ObservationCommitResult, self._transaction_runner(operation))
+
+    async def ingest_site_observation(
+        self,
+        observation: SiteObservation,
+        *,
+        payload_sha256: str,
+    ) -> ObservationCommitResult:
+        return await asyncio.to_thread(
+            self._ingest_site_observation_sync,
+            observation,
+            payload_sha256,
+        )
 
     def _prepare_change_records(
         self,
@@ -331,6 +906,196 @@ class FirestoreGate0Ledger:
             artifact_refs,
         )
 
+    def _claim_semantic_execution_sync(
+        self,
+        *,
+        execution_key: str,
+        evidence_sha256: str,
+        model_id: str,
+        prompt_version: str,
+        analysis_revision: int,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> SemanticExecutionClaim:
+        _require_sha256(execution_key, label="semantic execution key")
+        _require_sha256(evidence_sha256, label="semantic evidence SHA-256")
+        if not model_id or not prompt_version or not lease_token:
+            raise ValueError("semantic execution identity and lease token are required")
+        if analysis_revision < 1 or lease_seconds < 1:
+            raise ValueError("semantic revision and lease duration must be positive")
+        ref = self._document("semantic_executions", execution_key)
+        identity: dict[str, object] = {
+            "schema_version": "semantic-execution.v1",
+            "execution_key": execution_key,
+            "evidence_sha256": evidence_sha256,
+            "model_id": model_id,
+            "prompt_version": prompt_version,
+            "analysis_revision": analysis_revision,
+        }
+        identity_sha256 = canonical_sha256(identity)
+
+        def operation(transaction: Any) -> SemanticExecutionClaim:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            now = self._clock()
+            lease_expires_at = now + timedelta(seconds=lease_seconds)
+            if existing is None:
+                transaction.create(
+                    ref,
+                    {
+                        **identity,
+                        "identity_sha256": identity_sha256,
+                        "status": "LEASED",
+                        "lease_token": lease_token,
+                        "lease_expires_at": lease_expires_at,
+                        "attempt_count": 1,
+                        "state_version": 0,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+                return SemanticExecutionClaim(
+                    execution_key=execution_key,
+                    status=SemanticClaimStatus.ACQUIRED,
+                    lease_token=lease_token,
+                )
+            if existing.get("identity_sha256") != identity_sha256:
+                raise LedgerIntegrityError("semantic execution identity conflicts")
+            status = existing.get("status")
+            if status == "READY":
+                assessment_body = existing.get("assessment")
+                if not isinstance(assessment_body, dict):
+                    raise LedgerIntegrityError("ready semantic execution has no assessment")
+                assessment = SemanticAssessment.model_validate(assessment_body)
+                return SemanticExecutionClaim(
+                    execution_key=execution_key,
+                    status=SemanticClaimStatus.READY,
+                    assessment=assessment,
+                )
+            existing_expiry = existing.get("lease_expires_at")
+            if status != "LEASED" or not isinstance(existing_expiry, datetime):
+                raise LedgerIntegrityError("semantic execution lease is malformed")
+            if existing_expiry > now:
+                return SemanticExecutionClaim(
+                    execution_key=execution_key,
+                    status=SemanticClaimStatus.IN_PROGRESS,
+                )
+            attempt_count = existing.get("attempt_count")
+            state_version = existing.get("state_version")
+            if not isinstance(attempt_count, int) or not isinstance(state_version, int):
+                raise LedgerIntegrityError("semantic execution counters are malformed")
+            transaction.set(
+                ref,
+                {
+                    **existing,
+                    "status": "LEASED",
+                    "lease_token": lease_token,
+                    "lease_expires_at": lease_expires_at,
+                    "attempt_count": attempt_count + 1,
+                    "state_version": state_version + 1,
+                    "updated_at": now,
+                },
+            )
+            return SemanticExecutionClaim(
+                execution_key=execution_key,
+                status=SemanticClaimStatus.ACQUIRED,
+                lease_token=lease_token,
+            )
+
+        return cast(SemanticExecutionClaim, self._transaction_runner(operation))
+
+    async def claim_semantic_execution(
+        self,
+        *,
+        execution_key: str,
+        evidence_sha256: str,
+        model_id: str,
+        prompt_version: str,
+        analysis_revision: int,
+        lease_token: str,
+        lease_seconds: int = 120,
+    ) -> SemanticExecutionClaim:
+        return await asyncio.to_thread(
+            self._claim_semantic_execution_sync,
+            execution_key=execution_key,
+            evidence_sha256=evidence_sha256,
+            model_id=model_id,
+            prompt_version=prompt_version,
+            analysis_revision=analysis_revision,
+            lease_token=lease_token,
+            lease_seconds=lease_seconds,
+        )
+
+    def _complete_semantic_execution_sync(
+        self,
+        *,
+        execution_key: str,
+        lease_token: str,
+        assessment: SemanticAssessment,
+    ) -> bool:
+        _require_sha256(execution_key, label="semantic execution key")
+        ref = self._document("semantic_executions", execution_key)
+        assessment_body = assessment.model_dump(mode="json")
+        assessment_sha256 = canonical_sha256(assessment_body)
+
+        def operation(transaction: Any) -> bool:
+            existing = self._snapshot_data(ref.get(transaction=transaction))
+            if existing is None:
+                raise SemanticLeaseError("semantic execution claim is missing")
+            if existing.get("status") == "READY":
+                if existing.get("assessment_sha256") != assessment_sha256:
+                    raise LedgerIntegrityError("semantic result conflicts with ready result")
+                return True
+            if existing.get("status") != "LEASED" or existing.get("lease_token") != lease_token:
+                raise SemanticLeaseError("semantic execution lease is stale")
+            state_version = existing.get("state_version")
+            if not isinstance(state_version, int):
+                raise LedgerIntegrityError("semantic execution version is malformed")
+            now = self._clock()
+            transaction.set(
+                ref,
+                {
+                    **existing,
+                    "status": "READY",
+                    "assessment": assessment_body,
+                    "assessment_sha256": assessment_sha256,
+                    "state_version": state_version + 1,
+                    "completed_at": now,
+                    "updated_at": now,
+                },
+            )
+            return False
+
+        return cast(bool, self._transaction_runner(operation))
+
+    async def complete_semantic_execution(
+        self,
+        *,
+        execution_key: str,
+        lease_token: str,
+        assessment: SemanticAssessment,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._complete_semantic_execution_sync,
+            execution_key=execution_key,
+            lease_token=lease_token,
+            assessment=assessment,
+        )
+
+    async def record_semantic_attempt(
+        self,
+        *,
+        execution_key: str,
+        lease_token: str,
+        sanitized_record: Mapping[str, object],
+    ) -> bool:
+        attempt_id = canonical_sha256({"execution_key": execution_key, "lease_token": lease_token})
+        return await asyncio.to_thread(
+            self._create_once_sync,
+            "semantic_attempts",
+            attempt_id,
+            {"execution_key": execution_key, **dict(sanitized_record)},
+        )
+
     def _create_once_sync(
         self,
         collection: str,
@@ -359,17 +1124,6 @@ class FirestoreGate0Ledger:
             return False
 
         return cast(bool, self._transaction_runner(operation))
-
-    async def record_assessment_execution(self, sanitized_record: Mapping[str, object]) -> bool:
-        assessment_id = sanitized_record.get("assessment_id")
-        if not isinstance(assessment_id, str):
-            raise TypeError("assessment execution record has no assessment ID")
-        return await asyncio.to_thread(
-            self._create_once_sync,
-            "execution_attempts",
-            assessment_id,
-            sanitized_record,
-        )
 
     async def record_gate0_evidence_ref(
         self,

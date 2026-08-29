@@ -5,7 +5,11 @@ from typing import cast
 from fastapi.testclient import TestClient
 
 from braille_errata_relay.adapters.adk_assessor import AdkSemanticAssessor, AssessmentTrace
-from braille_errata_relay.adapters.firestore_ledger import FirestoreGate0Ledger
+from braille_errata_relay.adapters.firestore_ledger import (
+    FirestoreGate0Ledger,
+    SemanticClaimStatus,
+    SemanticExecutionClaim,
+)
 from braille_errata_relay.api.main import create_app
 from braille_errata_relay.api.security import (
     IdentityVerifier,
@@ -25,7 +29,20 @@ class FakeVerifier:
 
 
 class FakeAssessor:
-    async def assess_with_trace(self, _evidence: object) -> AssessmentTrace:
+    model_id = "gemini-test"
+    prompt_version = "semantic-assessment.v1"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def assess_with_trace(
+        self,
+        _evidence: object,
+        *,
+        analysis_revision: int = 1,
+    ) -> AssessmentTrace:
+        assert analysis_revision == 1
+        self.calls += 1
         assessment = SemanticAssessment(
             assessment_id="a" * 64,
             analysis_revision=1,
@@ -51,9 +68,31 @@ class FakeAssessor:
 class FakeLedger:
     def __init__(self) -> None:
         self.records: list[dict[str, object]] = []
+        self.assessment: SemanticAssessment | None = None
+        self.active_lease: str | None = None
 
-    async def record_assessment_execution(self, record: dict[str, object]) -> bool:
-        self.records.append(record)
+    async def claim_semantic_execution(self, **values: object) -> SemanticExecutionClaim:
+        execution_key = str(values["execution_key"])
+        if self.assessment is not None:
+            return SemanticExecutionClaim(
+                execution_key=execution_key,
+                status=SemanticClaimStatus.READY,
+                assessment=self.assessment,
+            )
+        self.active_lease = str(values["lease_token"])
+        return SemanticExecutionClaim(
+            execution_key=execution_key,
+            status=SemanticClaimStatus.ACQUIRED,
+            lease_token=self.active_lease,
+        )
+
+    async def complete_semantic_execution(self, **values: object) -> bool:
+        assert values["lease_token"] == self.active_lease
+        self.assessment = cast(SemanticAssessment, values["assessment"])
+        return False
+
+    async def record_semantic_attempt(self, **values: object) -> bool:
+        self.records.append(cast(dict[str, object], values["sanitized_record"]))
         return False
 
 
@@ -100,11 +139,14 @@ def _payload() -> dict[str, object]:
     }
 
 
-def _client(ledger: FakeLedger | None = None) -> TestClient:
+def _client(
+    ledger: FakeLedger | None = None,
+    assessor: FakeAssessor | None = None,
+) -> TestClient:
     return TestClient(
         create_app(
             cloud_settings=_settings(),
-            assessor=cast(AdkSemanticAssessor, FakeAssessor()),
+            assessor=cast(AdkSemanticAssessor, assessor or FakeAssessor()),
             ledger=cast(FirestoreGate0Ledger, ledger),
             identity_verifier=cast(IdentityVerifier, FakeVerifier()),
         )
@@ -147,6 +189,23 @@ def test_source_principal_receives_schema_valid_assessment_and_persists_trace() 
     assert set(ledger.records[0]).isdisjoint({"source", "source_text", "token"})
 
 
+def test_duplicate_semantic_request_reuses_first_result_without_model_call() -> None:
+    ledger = FakeLedger()
+    assessor = FakeAssessor()
+    client = _client(ledger, assessor)
+    headers = {"Authorization": "Bearer source@example.iam.gserviceaccount.com"}
+
+    first = client.post("/internal/source-jobs", json=_payload(), headers=headers)
+    second = client.post("/internal/source-jobs", json=_payload(), headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert assessor.calls == 1
+    assert first.json()["assessment"] == second.json()["assessment"]
+    assert second.json()["duplicate_execution"] is True
+    assert second.json()["execution"]["outcome"] == "REUSED_FIRST_VALID"
+
+
 def test_source_principal_cannot_use_scheduler_route() -> None:
     response = _client().post(
         "/internal/drive-reconcile",
@@ -163,3 +222,64 @@ def test_invalid_identity_is_rejected_without_claim_details() -> None:
     )
     assert response.status_code == 401
     assert response.json() == {"detail": "OIDC verification failed"}
+
+
+def test_demonstrator_is_the_only_principal_admitted_to_baseline_api() -> None:
+    payload = {
+        "production_id": "WO-DEMO-001",
+        "production_id_origin": "EXTERNAL_REFERENCE",
+        "source": {
+            "provider": "google_drive",
+            "file_id": "file",
+            "revision_id": "drive:file:62:" + "a" * 64,
+        },
+        "artifact_origin": "DEMO_GENERATED_FIXTURE",
+        "approved_brf_sha256": None,
+        "approval_label": "DEMO_FIXTURE_APPROVED",
+        "translation_profile_id": "demo-ueb-40x25-v1",
+        "site_id": "demo-site",
+        "queue_name": "Braille-Embosser-Sim",
+        "idempotency_key": "baseline-demo-v1",
+    }
+    admitted = _client().post(
+        "/api/v1/baselines",
+        json=payload,
+        headers={"Authorization": "Bearer demonstrator@example.com"},
+    )
+    denied = _client().post(
+        "/api/v1/baselines",
+        json=payload,
+        headers={"Authorization": "Bearer source@example.iam.gserviceaccount.com"},
+    )
+
+    assert admitted.status_code == 503
+    assert admitted.json()["detail"] == "baseline workflow is not configured"
+    assert denied.status_code == 403
+
+
+def test_telemetry_and_scheduler_principals_are_route_scoped() -> None:
+    telemetry = _client().post(
+        "/internal/site-observations",
+        json={},
+        headers={"Authorization": "Bearer telemetry@example.iam.gserviceaccount.com"},
+    )
+    outbox = _client().post(
+        "/internal/outbox-drain",
+        json={"schema_version": "outbox-drain-request.v1", "limit": 1},
+        headers={"Authorization": "Bearer scheduler@example.iam.gserviceaccount.com"},
+    )
+    wrong_telemetry = _client().post(
+        "/internal/site-observations",
+        json={},
+        headers={"Authorization": "Bearer source@example.iam.gserviceaccount.com"},
+    )
+    wrong_scheduler = _client().post(
+        "/internal/outbox-drain",
+        json={"schema_version": "outbox-drain-request.v1", "limit": 1},
+        headers={"Authorization": "Bearer source@example.iam.gserviceaccount.com"},
+    )
+
+    assert telemetry.status_code == 503
+    assert outbox.status_code == 503
+    assert wrong_telemetry.status_code == 403
+    assert wrong_scheduler.status_code == 403

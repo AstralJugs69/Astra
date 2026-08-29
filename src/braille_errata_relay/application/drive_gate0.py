@@ -93,13 +93,6 @@ class DriveGate0Workflow:
             batch=batch,
             artifact_refs=refs,
         )
-        replay = await self.ledger.commit_change_batch(
-            principal_scope_hash=self.principal_scope_hash,
-            batch=batch,
-            artifact_refs=refs,
-        )
-        if not replay.duplicate or replay.receipt_id != committed.receipt_id:
-            raise RuntimeError("Firestore duplicate replay did not converge")
         return DriveGate0Result(
             operation=operation,
             file_id_sha256=canonical_sha256({"file_id": self.provider.expected_file_id}),
@@ -112,7 +105,7 @@ class DriveGate0Workflow:
             receipt_id=committed.receipt_id,
             execution_id=committed.execution_id,
             outbox_ids=committed.outbox_ids,
-            duplicate_replay=replay.duplicate,
+            duplicate_replay=committed.duplicate,
         )
 
     async def initialize(self) -> DriveGate0Result:

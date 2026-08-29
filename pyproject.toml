@@ -22,9 +22,13 @@ dependencies = [
   "jinja2>=3.1,<4",
   "python-multipart>=0.0.20,<1",
   "httpx>=0.28,<1",
+  "jsonschema>=4.23,<5",
   "tenacity>=9,<10",
   "cloudevents>=1.11,<2",
 ]
+
+[project.scripts]
+braille-relay = "braille_errata_relay.cli:main"
 
 [dependency-groups]
 dev = [
@@ -34,7 +38,6 @@ dev = [
   "respx>=0.22,<1",
   "ruff>=0.9,<1",
   "mypy>=1.14,<2",
-  "jsonschema>=4.23,<5",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -57,4 +60,3 @@ target-version = "py311"
 python_version = "3.11"
 strict = true
 files = ["src/braille_errata_relay"]
-

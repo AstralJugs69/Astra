@@ -1,0 +1,68 @@
+{
+  "schema_version": "report-first-evidence.v1",
+  "recorded_at": "2026-08-29T13:36:00+00:00",
+  "branch": "codex/slice-2-report-first",
+  "base_commit": "826bc107039cbaf686568d2fcc446a43207e989d",
+  "status": "BLOCKED",
+  "governing_documents": {
+    "instruction.md": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb",
+    "architecture.md": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+  },
+  "checks": {
+    "windows_unit_contract_suite": {
+      "status": "PASS",
+      "detail": "161 passed; three platform-specific tests skipped explicitly"
+    },
+    "wsl_real_liblouis_golden_twice": {
+      "status": "PASS",
+      "detail": "Liblouis 3.38.0 V1/V2 golden test passed twice with bound table hashes"
+    },
+    "container_frozen_build": {
+      "status": "PASS",
+      "detail": "Docker image built from uv.lock with real Liblouis 3.38.0"
+    },
+    "wsl_container_exact_bytes": {
+      "status": "PASS",
+      "detail": "V1/V2 BRF bytes, profile hash, table hashes, and Liblouis version matched"
+    },
+    "report_first_workflow": {
+      "status": "PASS",
+      "detail": "baseline, checkpoints, semantic idempotency, telemetry, report, packet, and outbox tests passed"
+    },
+    "gate0_historical_evidence": {
+      "status": "PASS",
+      "detail": "accepted local and cloud Gate 0 evidence files remain unchanged"
+    },
+    "cloud_live_routes": {
+      "status": "BLOCKED",
+      "detail": "ready private revision receives Google edge 404 before the request reaches Uvicorn"
+    }
+  },
+  "artifact_contracts": {
+    "report": "PASS",
+    "human_disposition_packet": "PASS",
+    "site_observation": "PASS"
+  },
+  "cloud": {
+    "region": "europe-west3",
+    "image_digest": "sha256:e522533e7021f32503be7943d5aef269f6593f7543c8ef4611a645ee442784d8",
+    "private_revision": "PASS",
+    "live_routes": "BLOCKED",
+    "scheduler": "PAUSED_BLOCKED"
+  },
+  "notifications": "NOT_CLAIMED",
+  "remaining_blockers": [
+    {
+      "check": "authenticated Cloud Run route verification",
+      "command": "GET /healthz with a dedicated OIDC invoker against the configured service URL",
+      "error": "HTTP 404 from the Google edge; no request entry appears in Uvicorn logs",
+      "smallest_action": "restore the Cloud Run default URL route or configure a valid custom audience, then rerun the live API checks"
+    },
+    {
+      "check": "scheduler execution",
+      "command": "execute relay-outbox-drain in europe-west3",
+      "error": "not executed because the target route is edge-blocked",
+      "smallest_action": "after route recovery, unpause the configured job and run it once"
+    }
+  ]
+}

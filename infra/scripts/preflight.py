@@ -35,6 +35,8 @@ LOCAL_CUPS_EVIDENCE = ROOT / "demo" / "evidence" / "gate0-local-floor.json"
 LOCAL_CUPS_SCHEMA = ROOT / "schemas" / "gate0-local-floor-evidence.v1.json"
 CLOUD_GATE0_EVIDENCE = ROOT / "demo" / "evidence" / "cloud-gate0.json"
 CLOUD_GATE0_SCHEMA = ROOT / "schemas" / "cloud-gate0-evidence.v1.json"
+REPORT_FIRST_EVIDENCE = ROOT / "demo" / "evidence" / "report-first.json"
+REPORT_FIRST_SCHEMA = ROOT / "schemas" / "report-first-evidence.v1.json"
 DEFAULT_GATE0_IMAGE = "braille-errata-relay:cloud-gate-0"
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -475,6 +477,30 @@ def _cups_floor_check(
     }, True
 
 
+def _report_first_check() -> tuple[dict[str, object], bool]:
+    try:
+        payload = json.loads(REPORT_FIRST_EVIDENCE.read_text(encoding="utf-8"))
+        schema = json.loads(REPORT_FIRST_SCHEMA.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        if next(iter(validator.iter_errors(payload)), None) is not None:
+            raise ValueError("Slice 2 evidence does not satisfy its schema")
+    except (OSError, ValueError, TypeError):
+        return {
+            "status": "BLOCKED",
+            "detail": "Slice 2 evidence is unavailable or invalid",
+        }, False
+    if not isinstance(payload, dict) or payload.get("status") != "PASS":
+        return {
+            "status": "BLOCKED",
+            "detail": "Slice 2 local checks passed but live route evidence remains blocked",
+        }, False
+    return {
+        "status": "PASS",
+        "detail": "report-first Slice 2 evidence and live checks passed",
+    }, True
+
+
 def _cloud_floor_checks(
     evidence_path: Path = CLOUD_GATE0_EVIDENCE,
     *,
@@ -609,6 +635,7 @@ def collect() -> dict[str, object]:
     container_result, container_ready = _container_brf_comparison()
     cups_result, cups_ready = _cups_floor_check()
     cloud_results, cloud_ready = _cloud_floor_checks()
+    report_first_result, report_first_ready = _report_first_check()
     return {
         "schema_version": "preflight.v1",
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -628,6 +655,7 @@ def collect() -> dict[str, object]:
             "cups_raw_passthrough_and_policy": cups_result,
             "drive_same_file_detection": cloud_results["drive_same_file_detection"],
             "gcs_immutable_artifacts": cloud_results["gcs_immutable_artifacts"],
+            "slice2_report_first": report_first_result,
         },
         "safe_diagnostics": {
             "gcloud_binary": "present" if gcloud else "missing",
@@ -637,6 +665,7 @@ def collect() -> dict[str, object]:
             "container_brf_comparison": container_ready,
             "cups_raw_passthrough_and_policy": cups_ready,
             "cloud_gate0": cloud_ready,
+            "slice2_report_first": report_first_ready,
             "wsl_status_command_succeeded": wsl_ok,
             "docker_server_reachable": docker_ok,
             "cups_tools_present": cups_tools,

@@ -42,6 +42,26 @@ def source_snapshot_ref(snapshot: SourceSnapshot, *, bucket_name: str) -> Artifa
     )
 
 
+def content_addressed_ref(
+    artifact: bytes,
+    *,
+    bucket_name: str,
+    object_name: str,
+    kind: ArtifactKind,
+) -> ArtifactRef:
+    """Build an immutable reference without performing a storage mutation."""
+
+    if not object_name or object_name.startswith("/") or ".." in object_name.split("/"):
+        raise ValueError("artifact object path is invalid")
+    digest = _sha256(artifact)
+    return ArtifactRef(
+        sha256=digest,
+        kind=kind,
+        byte_length=len(artifact),
+        uri=f"gs://{bucket_name}/{object_name}",
+    )
+
+
 class GcsArtifactStore:
     def __init__(
         self,

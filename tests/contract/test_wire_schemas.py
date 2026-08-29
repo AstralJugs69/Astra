@@ -129,3 +129,25 @@ def test_sanitized_cloud_gate0_evidence_matches_schema() -> None:
         "source_content",
     ):
         assert forbidden not in serialized
+
+
+def test_sanitized_report_first_evidence_matches_schema() -> None:
+    payload = json.loads(
+        (ROOT / "demo" / "evidence" / "report-first.json").read_text(encoding="utf-8")
+    )
+    errors = sorted(_validator("report-first-evidence.v1.json").iter_errors(payload), key=str)
+    assert errors == []
+    assert payload["status"] == "BLOCKED"
+    assert payload["cloud"]["live_routes"] == "BLOCKED"
+    assert payload["cloud"]["scheduler"] == "PAUSED_BLOCKED"
+    serialized = json.dumps(payload).lower()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "credentials",
+        "private_key",
+        "client_email",
+        "project_id",
+    ):
+        assert forbidden not in serialized

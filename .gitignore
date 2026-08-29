@@ -21,6 +21,7 @@ demo/evidence/*.json
 !demo/evidence/preflight.json
 !demo/evidence/gate0-local-floor.json
 !demo/evidence/cloud-gate0.json
+!demo/evidence/report-first.json
 uv-cache/
 **/uv-cache/
 *.pem

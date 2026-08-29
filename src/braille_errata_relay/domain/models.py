@@ -37,12 +37,24 @@ class ArtifactKind(StrEnum):
     SOURCE_SNAPSHOT = "SOURCE_SNAPSHOT"
     NORMALIZED_SOURCE = "NORMALIZED_SOURCE"
     SOURCE_DIFF = "SOURCE_DIFF"
+    SOURCE_MAP = "SOURCE_MAP"
+    ARTIFACT_MANIFEST = "ARTIFACT_MANIFEST"
+    TRANSLATION_PROFILE = "TRANSLATION_PROFILE"
+    BRAILLE_IMPACT = "BRAILLE_IMPACT"
+    SEMANTIC_ASSESSMENT = "SEMANTIC_ASSESSMENT"
     REPORT = "REPORT"
+    HUMAN_DISPOSITION_PACKET = "HUMAN_DISPOSITION_PACKET"
 
 
 class ArtifactOrigin(StrEnum):
     EXTERNALLY_APPROVED_IMPORT = "EXTERNALLY_APPROVED_IMPORT"
     DEMO_GENERATED_FIXTURE = "DEMO_GENERATED_FIXTURE"
+
+
+class BaselineStatus(StrEnum):
+    AWAITING_PRODUCTION_LINK = "AWAITING_PRODUCTION_LINK"
+    PROVISIONAL_PRODUCTION_LINK = "PROVISIONAL_PRODUCTION_LINK"
+    PRODUCTION_LINK_VERIFIED = "PRODUCTION_LINK_VERIFIED"
 
 
 class IncidentState(StrEnum):
@@ -68,6 +80,16 @@ class IncidentState(StrEnum):
     RESOLVED_NO_REMEDIATION_BY_HUMAN = "RESOLVED_NO_REMEDIATION_BY_HUMAN"
 
 
+class IncidentWorkflowStage(StrEnum):
+    DETECTED = "DETECTED"
+    DIFF_READY = "DIFF_READY"
+    CANDIDATE_READY = "CANDIDATE_READY"
+    IMPACT_READY = "IMPACT_READY"
+    SEMANTIC_READY = "SEMANTIC_READY"
+    REPORT_READY = "REPORT_READY"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+
+
 class BlockingReason(StrEnum):
     SOURCE_INACCESSIBLE = "SOURCE_INACCESSIBLE"
     SEMANTIC_ASSESSMENT_INVALID = "SEMANTIC_ASSESSMENT_INVALID"
@@ -79,6 +101,9 @@ class BlockingReason(StrEnum):
     MISSING_LINEAGE = "MISSING_LINEAGE"
     AMBIGUOUS_SITE_EVIDENCE = "AMBIGUOUS_SITE_EVIDENCE"
     SITE_OBSERVATION_BLOCKING = "SITE_OBSERVATION_BLOCKING"
+    WRONG_QUEUE = "WRONG_QUEUE"
+    JOB_LINEAGE_MISMATCH = "JOB_LINEAGE_MISMATCH"
+    TELEMETRY_REPLAY = "TELEMETRY_REPLAY"
     OUTPUT_INTEGRITY_FAILED = "OUTPUT_INTEGRITY_FAILED"
     STALE_STATE_VERSION = "STALE_STATE_VERSION"
 
@@ -310,6 +335,7 @@ class ProductionBaseline(DomainModel):
     production_id: NonEmpty
     source_revision_id: NonEmpty
     source_sha256: HexSha256
+    source_file_id: NonEmpty | None = None
     approved_brf_sha256: HexSha256
     baseline_manifest_sha256: HexSha256
     translation_profile_sha256: HexSha256
@@ -318,7 +344,26 @@ class ProductionBaseline(DomainModel):
     site_id: NonEmpty
     queue_name: NonEmpty
     scheduler_job_id: int | None = Field(default=None, gt=0)
+    scheduler_job_title: NonEmpty | None = None
     compatible_profile: bool = True
+    production_id_origin: Literal["EXTERNAL_REFERENCE"] = "EXTERNAL_REFERENCE"
+    status: BaselineStatus = BaselineStatus.AWAITING_PRODUCTION_LINK
+
+
+class BaselineArtifacts(DomainModel):
+    source: ArtifactRef
+    normalized_source: ArtifactRef
+    approved_brf: ArtifactRef
+    source_map: ArtifactRef
+    manifest: ArtifactRef
+    translation_profile: ArtifactRef
+
+
+class RegisteredBaseline(DomainModel):
+    schema_version: Literal["registered-baseline.v1"] = "registered-baseline.v1"
+    baseline: ProductionBaseline
+    artifacts: BaselineArtifacts
+    created_at: datetime
 
 
 class EvidenceSide(StrEnum):
@@ -402,6 +447,54 @@ class ProductionIncidentReport(DomainModel):
     recommendation_policy_version: NonEmpty = "relay-policy.v1"
     blocking_reason: BlockingReason | None = None
     created_at: datetime
+
+
+class HumanDispositionPacket(DomainModel):
+    schema_version: Literal["human-disposition-packet.v1"] = "human-disposition-packet.v1"
+    incident_id: HexSha256
+    baseline_id: HexSha256
+    external_production_id: NonEmpty
+    report_sha256: HexSha256
+    candidate_brf: ArtifactRef
+    candidate_manifest: ArtifactRef
+    candidate_label: Literal["CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"] = (
+        "CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"
+    )
+    baseline_brf_sha256: HexSha256
+    translation_profile_sha256: HexSha256
+    braille_impact: BrailleImpact
+    semantic_assessment: SemanticAssessment
+    site_observation_id: HexSha256 | None = None
+    observation_age_seconds: float | None = Field(default=None, ge=0)
+    recommended_human_steps: tuple[NonEmpty, ...]
+    blocking_reason: BlockingReason | None = None
+    authority_notice: tuple[NonEmpty, ...] = (
+        "Human professionals retain disposition and containment authority.",
+        "Human proof approval is required before any replacement submission.",
+        "Relay does not control CUPS, an embosser, or another production device.",
+    )
+
+
+class IncidentCheckpoint(DomainModel):
+    schema_version: Literal["incident-checkpoint.v1"] = "incident-checkpoint.v1"
+    incident_id: HexSha256
+    baseline_id: HexSha256
+    new_source_revision_id: NonEmpty
+    new_source_sha256: HexSha256
+    production_job_lineage_id: HexSha256
+    stage: IncidentWorkflowStage = IncidentWorkflowStage.DETECTED
+    state_version: int = Field(default=0, ge=0)
+    normalized_source: ArtifactRef | None = None
+    source_diff: ArtifactRef | None = None
+    candidate_brf: ArtifactRef | None = None
+    candidate_source_map: ArtifactRef | None = None
+    candidate_manifest: ArtifactRef | None = None
+    braille_impact: ArtifactRef | None = None
+    semantic_assessment: ArtifactRef | None = None
+    report: ArtifactRef | None = None
+    disposition_packet: ArtifactRef | None = None
+    blocking_reason: BlockingReason | None = None
+    updated_at: datetime
 
 
 class Incident(DomainModel):

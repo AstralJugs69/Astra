@@ -13,7 +13,7 @@ from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from braille_errata_relay.configuration import resolve_config_path
 from braille_errata_relay.contracts.canonical_json import canonical_json_bytes, canonical_sha256
@@ -37,11 +37,31 @@ class SemanticAssessmentOutput(DomainModel):
     materiality: Materiality
     change_kind: ChangeKind
     summary: Annotated[str, Field(min_length=1, max_length=1000)]
-    rationale: tuple[Annotated[str, Field(min_length=1, max_length=1000)], ...]
-    evidence_span_ids: tuple[Annotated[str, Field(min_length=1, max_length=512)], ...]
+    rationale: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=1000)], ...],
+        Field(min_length=1, max_length=8),
+    ]
+    evidence_span_ids: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=512)], ...],
+        Field(min_length=1, max_length=16),
+    ]
     uncertainties: tuple[Annotated[str, Field(min_length=1, max_length=500)], ...]
     confidence: Confidence
     requires_professional_review: bool
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("summary must not be blank")
+        return value
+
+    @field_validator("rationale", "evidence_span_ids")
+    @classmethod
+    def tuple_items_are_not_blank(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not item.strip() for item in value):
+            raise ValueError("semantic grounding values must not be blank")
+        return value
 
 
 class SemanticAssessmentBlocked(RuntimeError):
@@ -136,18 +156,25 @@ class AdkModelRunner:
             user_id=user_id,
             session_id=session_id,
         )
-        final_payload: object | None = None
-        message = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        async for event in self._runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=message,
-        ):
-            if event.is_final_response():
-                final_payload = _event_payload(event)
-        if final_payload is None:
-            raise SemanticAssessmentBlocked("ADK returned no final structured response")
-        return final_payload
+        try:
+            final_payload: object | None = None
+            message = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+            async for event in self._runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=message,
+            ):
+                if event.is_final_response():
+                    final_payload = _event_payload(event)
+            if final_payload is None:
+                raise SemanticAssessmentBlocked("ADK returned no final structured response")
+            return final_payload
+        finally:
+            await self._sessions.delete_session(
+                app_name=APP_NAME,
+                user_id=user_id,
+                session_id=session_id,
+            )
 
 
 class AdkSemanticAssessor:
@@ -204,6 +231,26 @@ class AdkSemanticAssessor:
         except ValidationError as exc:
             raise SemanticAssessmentBlocked("model output failed the closed schema") from exc
 
+    @staticmethod
+    def _validate_grounding(
+        output: SemanticAssessmentOutput,
+        evidence: AssessmentInput,
+    ) -> None:
+        cited = output.evidence_span_ids
+        if len(cited) != len(set(cited)):
+            raise SemanticAssessmentBlocked("semantic citations contain duplicates")
+        supplied = {span.span_id for span in evidence.evidence_spans}
+        unknown = set(cited).difference(supplied)
+        if unknown:
+            raise SemanticAssessmentBlocked("semantic citations are not supplied evidence IDs")
+        non_context = {
+            span.span_id for span in evidence.evidence_spans if span.side.value != "context"
+        }
+        if not set(cited).intersection(non_context):
+            raise SemanticAssessmentBlocked(
+                "semantic citations cannot rely only on context evidence"
+            )
+
     async def assess_with_trace(
         self,
         evidence: AssessmentInput,
@@ -222,7 +269,9 @@ class AdkSemanticAssessor:
                 raw = await self.runner.generate(
                     self._request_prompt(evidence, schema_retry=attempt == 1)
                 )
-                output = self._validate_output(raw)
+                candidate = self._validate_output(raw)
+                self._validate_grounding(candidate, evidence)
+                output = candidate
                 break
             except SemanticAssessmentBlocked as exc:
                 last_failure = exc
@@ -266,3 +315,24 @@ class AdkSemanticAssessor:
 
     async def assess(self, evidence: AssessmentInput) -> SemanticAssessment:
         return (await self.assess_with_trace(evidence)).assessment
+
+
+def semantic_execution_key(
+    evidence: AssessmentInput,
+    *,
+    model_id: str,
+    prompt_version: str = PROMPT_VERSION,
+    analysis_revision: int = 1,
+) -> str:
+    """Return the stable pre-invocation idempotency key for semantic work."""
+
+    if analysis_revision < 1:
+        raise ValueError("analysis revision must be positive")
+    return canonical_sha256(
+        {
+            "analysis_revision": analysis_revision,
+            "evidence_sha256": canonical_sha256(evidence.model_dump(mode="json")),
+            "model_id": model_id,
+            "prompt_version": prompt_version,
+        }
+    )

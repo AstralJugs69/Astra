@@ -31,6 +31,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 COPY src /app/src
 COPY config /app/config
+COPY schemas /app/schemas
 COPY infra/scripts/bind_liblouis_profile.py /app/infra/scripts/bind_liblouis_profile.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --python /app/.venv/bin/python --no-deps /app
@@ -55,6 +56,7 @@ COPY --from=build /opt/liblouis /opt/liblouis
 COPY --from=build /opt/liblouis-python /opt/liblouis-python
 COPY --from=application /app/.venv /app/.venv
 COPY config /app/config
+COPY schemas /app/schemas
 COPY --from=application /app/work/translation-profile.bound.json /app/config/translation_profiles/demo-ueb-40x25-v1.json
 
 WORKDIR /app

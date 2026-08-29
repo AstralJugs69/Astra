@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -27,6 +28,30 @@ class FakeRunner:
     async def generate(self, prompt: str) -> object:
         self.prompts.append(prompt)
         return next(self._responses)
+
+
+class TrackingSessions:
+    def __init__(self) -> None:
+        self.deleted: list[tuple[str, str, str]] = []
+
+    async def create_session(self, **_values: object) -> object:
+        return object()
+
+    async def delete_session(
+        self,
+        *,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+    ) -> None:
+        self.deleted.append((app_name, user_id, session_id))
+
+
+class ExplodingAdkRuntime:
+    async def run_async(self, **_values: object) -> Any:
+        if False:
+            yield object()
+        raise RuntimeError("transport failed")
 
 
 def _evidence() -> AssessmentInput:
@@ -67,12 +92,45 @@ def _valid_output() -> dict[str, object]:
     }
 
 
+def _context_evidence() -> AssessmentInput:
+    evidence = _evidence()
+    return AssessmentInput(
+        evidence_spans=(
+            *evidence.evidence_spans,
+            SemanticEvidenceSpan(
+                span_id="context:block-18",
+                side=EvidenceSide.CONTEXT,
+                block_kind=SourceBlockKind.PARAGRAPH,
+                text="This neighboring paragraph supplies context.",
+            ),
+        ),
+        impact_summary=evidence.impact_summary,
+    )
+
+
 def test_real_adk_api_constructs_agent_without_any_tools() -> None:
     runner = AdkModelRunner(model_id="gemini-test", instruction="Return the closed schema.")
 
     assert runner.agent.tools == []
     assert runner.agent.code_executor is None
     assert runner.agent.output_schema is not None
+
+
+@pytest.mark.asyncio
+async def test_adk_temporary_session_is_deleted_when_runner_fails() -> None:
+    runner = AdkModelRunner(model_id="gemini-test", instruction="Return the closed schema.")
+    sessions = TrackingSessions()
+    runner._sessions = cast(Any, sessions)
+    runner._runner = cast(Any, ExplodingAdkRuntime())
+
+    with pytest.raises(RuntimeError, match="transport failed"):
+        await runner.generate("bounded evidence")
+
+    assert len(sessions.deleted) == 1
+    app_name, user_id, session_id = sessions.deleted[0]
+    assert app_name == "braille-errata-relay"
+    assert user_id == "gate0-synthetic"
+    assert session_id
 
 
 @pytest.mark.asyncio
@@ -136,6 +194,57 @@ async def test_assessor_fails_closed_after_second_invalid_response(tmp_path: Pat
         await assessor.assess(_evidence())
 
     assert len(fake.prompts) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("evidence_span_ids", ["unknown:block"], "one constrained retry"),
+        (
+            "evidence_span_ids",
+            ["old:block-17", "old:block-17"],
+            "one constrained retry",
+        ),
+        ("evidence_span_ids", [""], "one constrained retry"),
+        ("rationale", [], "one constrained retry"),
+        ("rationale", ["   "], "one constrained retry"),
+    ],
+)
+async def test_assessor_rejects_invalid_grounding(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    match: str,
+) -> None:
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("Return the schema.", encoding="utf-8")
+    invalid = {**_valid_output(), field: value}
+    fake = FakeRunner([invalid, invalid])
+    assessor = AdkSemanticAssessor(
+        model_id="gemini-test",
+        runner=fake,
+        prompt_path=prompt,
+    )
+
+    with pytest.raises(SemanticAssessmentBlocked, match=match):
+        await assessor.assess(_evidence())
+
+
+@pytest.mark.asyncio
+async def test_assessor_rejects_context_only_citations(tmp_path: Path) -> None:
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("Return the schema.", encoding="utf-8")
+    invalid = {**_valid_output(), "evidence_span_ids": ["context:block-18"]}
+    fake = FakeRunner([invalid, invalid])
+    assessor = AdkSemanticAssessor(
+        model_id="gemini-test",
+        runner=fake,
+        prompt_path=prompt,
+    )
+
+    with pytest.raises(SemanticAssessmentBlocked, match="one constrained retry"):
+        await assessor.assess(_context_evidence())
 
 
 def test_semantic_input_rejects_more_than_bounded_context() -> None:

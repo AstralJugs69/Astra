@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report-first-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "branch",
+    "base_commit",
+    "status",
+    "governing_documents",
+    "checks",
+    "artifact_contracts",
+    "cloud",
+    "notifications",
+    "remaining_blockers"
+  ],
+  "properties": {
+    "schema_version": {"const": "report-first-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "branch": {"const": "codex/slice-2-report-first"},
+    "base_commit": {"$ref": "#/$defs/git_commit"},
+    "status": {"enum": ["PASS", "BLOCKED"]},
+    "governing_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction.md", "architecture.md"],
+      "properties": {
+        "instruction.md": {"$ref": "#/$defs/sha256"},
+        "architecture.md": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/check"},
+      "minProperties": 1
+    },
+    "artifact_contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["report", "human_disposition_packet", "site_observation"],
+      "properties": {
+        "report": {"const": "PASS"},
+        "human_disposition_packet": {"const": "PASS"},
+        "site_observation": {"const": "PASS"}
+      }
+    },
+    "cloud": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region", "image_digest", "private_revision", "live_routes", "scheduler"],
+      "properties": {
+        "region": {"const": "europe-west3"},
+        "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "private_revision": {"const": "PASS"},
+        "live_routes": {"enum": ["PASS", "BLOCKED"]},
+        "scheduler": {"enum": ["PASS", "PAUSED_BLOCKED"]}
+      }
+    },
+    "notifications": {"const": "NOT_CLAIMED"},
+    "remaining_blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check", "command", "error", "smallest_action"],
+        "properties": {
+          "check": {"type": "string", "minLength": 1},
+          "command": {"type": "string", "minLength": 1},
+          "error": {"type": "string", "minLength": 1},
+          "smallest_action": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "git_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": {"enum": ["PASS", "BLOCKED"]},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

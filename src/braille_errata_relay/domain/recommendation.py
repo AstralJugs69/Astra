@@ -137,12 +137,19 @@ def assess_site_evidence(
     site_observation: SiteObservation | None,
     expected_job_id: int | None,
     expected_queue_name: str | None,
+    expected_job_title: str | None = None,
+    expected_artifact_sha256: str | None = None,
     now: datetime,
     max_age_seconds: float,
 ) -> SiteEvidenceCheck:
     if max_age_seconds < 0:
         raise ValueError("site observation max age cannot be negative")
-    if expected_job_id is None or not expected_queue_name:
+    if (
+        expected_job_id is None
+        or not expected_queue_name
+        or not expected_job_title
+        or not expected_artifact_sha256
+    ):
         return SiteEvidenceCheck(
             SiteEvidenceStatus.MISSING,
             BlockingReason.MISSING_LINEAGE,
@@ -168,7 +175,7 @@ def assess_site_evidence(
     if site_observation.queue_name != expected_queue_name:
         return SiteEvidenceCheck(
             SiteEvidenceStatus.MISSING,
-            BlockingReason.MISSING_LINEAGE,
+            BlockingReason.WRONG_QUEUE,
             None,
         )
     matches = [
@@ -185,6 +192,18 @@ def assess_site_evidence(
             None,
         )
     selected = matches[0]
+    if selected.destination != expected_queue_name:
+        return SiteEvidenceCheck(
+            SiteEvidenceStatus.BLOCKING,
+            BlockingReason.WRONG_QUEUE,
+            selected.state,
+        )
+    if selected.title != expected_job_title or expected_artifact_sha256[:12] not in selected.title:
+        return SiteEvidenceCheck(
+            SiteEvidenceStatus.BLOCKING,
+            BlockingReason.JOB_LINEAGE_MISMATCH,
+            selected.state,
+        )
     if selected.state == JobState.UNKNOWN or site_observation.printer_state == "unknown":
         return SiteEvidenceCheck(
             SiteEvidenceStatus.BLOCKING,
@@ -203,6 +222,8 @@ def containment_recommendation(
     site_observation: SiteObservation | None = None,
     expected_job_id: int | None = None,
     expected_queue_name: str | None = None,
+    expected_job_title: str | None = None,
+    expected_artifact_sha256: str | None = None,
     now: datetime | None = None,
     max_age_seconds: float = 15.0,
     policy: RecommendationPolicy | None = None,
@@ -224,6 +245,8 @@ def containment_recommendation(
         site_observation=site_observation,
         expected_job_id=expected_job_id,
         expected_queue_name=expected_queue_name,
+        expected_job_title=expected_job_title,
+        expected_artifact_sha256=expected_artifact_sha256,
         now=now or datetime.now(UTC),
         max_age_seconds=max_age_seconds,
     )
@@ -237,14 +260,15 @@ def containment_recommendation(
         return ContainmentRecommendation(_dedupe(steps), False, effective_reason)
 
     observed_state = evidence.job_state or job_state
+    steps.append(HumanStep.FULL_VOLUME_REPLACEMENT_REVIEW)
     if impact.baseline_page_count != impact.candidate_page_count:
-        steps.append(HumanStep.FULL_VOLUME_REPLACEMENT_REVIEW)
+        pass
     elif observed_state in {JobState.PENDING, JobState.PENDING_HELD, JobState.PROCESSING}:
         steps.append(HumanStep.CONSIDER_OPERATOR_STOP_AND_ISOLATION)
     elif observed_state == JobState.COMPLETED:
         steps.append(HumanStep.INSPECT_POTENTIALLY_STALE_OUTPUT)
     else:
-        steps.append(HumanStep.FULL_VOLUME_REPLACEMENT_REVIEW)
+        pass
     return ContainmentRecommendation(_dedupe(steps), True, None)
 
 
@@ -257,6 +281,8 @@ def recommend_human_steps(
     site_observation: SiteObservation | None = None,
     expected_job_id: int | None = None,
     expected_queue_name: str | None = None,
+    expected_job_title: str | None = None,
+    expected_artifact_sha256: str | None = None,
     now: datetime | None = None,
     max_age_seconds: float = 15.0,
     policy: RecommendationPolicy | None = None,
@@ -269,6 +295,8 @@ def recommend_human_steps(
         site_observation=site_observation,
         expected_job_id=expected_job_id,
         expected_queue_name=expected_queue_name,
+        expected_job_title=expected_job_title,
+        expected_artifact_sha256=expected_artifact_sha256,
         now=now,
         max_age_seconds=max_age_seconds,
         policy=policy,
