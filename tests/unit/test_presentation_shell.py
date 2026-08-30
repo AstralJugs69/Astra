@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from google.auth.exceptions import DefaultCredentialsError, RefreshError
+from google.auth.exceptions import DefaultCredentialsError, RefreshError, TransportError
 from google.oauth2.credentials import Credentials as UserAdcCredentials
 
 from braille_errata_relay.presentation import app as presentation_app
@@ -88,6 +88,14 @@ class FakePrivateReviewApi:
         return {"status": "HALT_REQUESTED"}
 
 
+class UnavailablePrivateReviewApi:
+    async def get_json(self, _path: str) -> dict[str, object]:
+        raise PresentationAuthenticationError("private data unavailable")
+
+    async def post_json(self, _path: str, _payload: Mapping[str, object]) -> dict[str, object]:
+        raise AssertionError("fallback review controls must not submit")
+
+
 def _client() -> tuple[TestClient, FakePrivateReviewApi]:
     api = FakePrivateReviewApi()
     app = create_presentation_app(
@@ -135,6 +143,37 @@ def test_presentation_is_server_rendered_escaped_and_uses_strict_http_only_sessi
     cookie = response.headers["set-cookie"].lower()
     assert "httponly" in cookie
     assert "samesite=strict" in cookie
+    assert response.headers["cache-control"] == "no-store"
+    assert "default-src 'none'" in response.headers["content-security-policy"]
+    assert "form-action 'self'" in response.headers["content-security-policy"]
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_presentation_hides_human_record_forms_when_private_data_is_unavailable() -> None:
+    app = create_presentation_app(
+        PresentationSettings(
+            api_base_url=AUDIENCE,
+            audience=AUDIENCE,
+            session_secret="s" * 32,
+            impersonate_service_account=DEMONSTRATOR_IDENTITY,
+        ),
+        api_client=UnavailablePrivateReviewApi(),
+    )
+    client = TestClient(app, base_url="http://127.0.0.1:8765")
+
+    response = client.get(f"/incidents/{INCIDENT_ID}")
+
+    assert response.status_code == 200
+    assert "Private review data is unavailable." in response.text
+    assert "PRIVATE_REVIEW_DATA_UNAVAILABLE" in response.text
+    assert "Professional disposition controls are unavailable" in response.text
+    assert "Operator attestation controls are unavailable" in response.text
+    assert "/professional-dispositions" not in response.text
+    assert "/operator-attestations" not in response.text
+    assert "Record professional disposition" not in response.text
+    assert "Record operator attestation" not in response.text
 
 
 def test_presentation_rejects_missing_or_cross_origin_and_bad_csrf_forms() -> None:
@@ -339,6 +378,62 @@ def test_presentation_rejects_missing_impersonation_authorization(
 
     with pytest.raises(PresentationAuthenticationError, match="not authorized"):
         asyncio.run(provider.token_for(AUDIENCE))
+
+
+def test_presentation_retries_bounded_transient_token_transport_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 30, tzinfo=UTC)
+    refresh_attempts = 0
+    retry_delays: list[float] = []
+
+    class FakeImpersonatedCredentials:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+    class EventuallyAvailableIdTokenCredentials:
+        token: str | None = None
+        expiry: datetime | None = None
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def refresh(self, _request: object) -> None:
+            nonlocal refresh_attempts
+            refresh_attempts += 1
+            if refresh_attempts < 3:
+                raise TransportError("transient IAM transport failure")
+            self.token = "short-lived-token"
+            self.expiry = now + timedelta(minutes=5)
+
+    monkeypatch.setattr(
+        presentation_app.google.auth,
+        "default",
+        lambda *, scopes: (UserAdcCredentials(token="ordinary-user-adc"), "project-12345"),
+    )
+    monkeypatch.setattr(
+        presentation_app.impersonated_credentials,
+        "Credentials",
+        FakeImpersonatedCredentials,
+    )
+    monkeypatch.setattr(
+        presentation_app.impersonated_credentials,
+        "IDTokenCredentials",
+        EventuallyAvailableIdTokenCredentials,
+    )
+    provider = GoogleAudienceTokenProvider(
+        target_principal=DEMONSTRATOR_IDENTITY,
+        audience=AUDIENCE,
+        utc_clock=lambda: now,
+        sleep=retry_delays.append,
+        transport_retry_delays_seconds=(0.1, 0.2, 0.4),
+    )
+
+    token = asyncio.run(provider.token_for(AUDIENCE))
+
+    assert token == "short-lived-token"
+    assert refresh_attempts == 3
+    assert retry_delays == [0.1, 0.2]
 
 
 def test_presentation_settings_reject_missing_or_malformed_impersonation_targets() -> None:

@@ -30,6 +30,7 @@ from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials as UserAdcCredentials
 from jinja2 import DictLoader, Environment, select_autoescape
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
 
@@ -55,6 +56,7 @@ class PresentationAuthenticationError(RuntimeError):
 _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 _MAX_TOKEN_CACHE_SECONDS = 270.0
 _TOKEN_EXPIRY_SKEW_SECONDS = 30.0
+_TOKEN_TRANSPORT_RETRY_DELAYS_SECONDS = (1.0, 2.0, 4.0, 8.0)
 _SERVICE_ACCOUNT_PRINCIPAL = re.compile(
     r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@"
     r"[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"
@@ -103,6 +105,8 @@ class GoogleAudienceTokenProvider:
         audience: str,
         monotonic_clock: Callable[[], float] = time.monotonic,
         utc_clock: Callable[[], datetime] = _utc_now,
+        sleep: Callable[[float], None] = time.sleep,
+        transport_retry_delays_seconds: Sequence[float] = (_TOKEN_TRANSPORT_RETRY_DELAYS_SECONDS),
     ) -> None:
         if _SERVICE_ACCOUNT_PRINCIPAL.fullmatch(target_principal) is None:
             raise ValueError(
@@ -114,6 +118,10 @@ class GoogleAudienceTokenProvider:
         self._audience = audience
         self._monotonic_clock = monotonic_clock
         self._utc_clock = utc_clock
+        self._sleep = sleep
+        self._transport_retry_delays_seconds = tuple(transport_retry_delays_seconds)
+        if any(delay < 0 for delay in self._transport_retry_delays_seconds):
+            raise ValueError("presentation token retry delays must be non-negative")
         self._cache: dict[str, tuple[str, float]] = {}
         self._lock = asyncio.Lock()
 
@@ -139,23 +147,36 @@ class GoogleAudienceTokenProvider:
             raise PresentationAuthenticationError(
                 "presentation authentication accepts only ordinary local user ADC"
             )
-        try:
-            target = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
-                source_credentials=source,
-                target_principal=self._target_principal,
-                target_scopes=(_CLOUD_PLATFORM_SCOPE,),
-                lifetime=300,
-            )
-            token_credentials = impersonated_credentials.IDTokenCredentials(  # type: ignore[no-untyped-call]
-                target_credentials=target,
-                target_audience=self._audience,
-                include_email=True,
-            )
-            token_credentials.refresh(GoogleAuthRequest())
-        except google_auth_exceptions.GoogleAuthError as exc:
+        token_credentials = None
+        for attempt in range(len(self._transport_retry_delays_seconds) + 1):
+            try:
+                target = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
+                    source_credentials=source,
+                    target_principal=self._target_principal,
+                    target_scopes=(_CLOUD_PLATFORM_SCOPE,),
+                    lifetime=300,
+                )
+                token_credentials = impersonated_credentials.IDTokenCredentials(  # type: ignore[no-untyped-call]
+                    target_credentials=target,
+                    target_audience=self._audience,
+                    include_email=True,
+                )
+                token_credentials.refresh(GoogleAuthRequest())
+                break
+            except google_auth_exceptions.TransportError as exc:
+                if attempt >= len(self._transport_retry_delays_seconds):
+                    raise PresentationAuthenticationError(
+                        "presentation authentication transport retries were exhausted"
+                    ) from exc
+                self._sleep(self._transport_retry_delays_seconds[attempt])
+            except google_auth_exceptions.GoogleAuthError as exc:
+                raise PresentationAuthenticationError(
+                    "impersonated presentation authentication was not authorized"
+                ) from exc
+        if token_credentials is None:
             raise PresentationAuthenticationError(
-                "impersonated presentation authentication was not authorized"
-            ) from exc
+                "presentation authentication returned no token credentials"
+            )
         token = cast(str | None, token_credentials.token)
         expiry = token_credentials.expiry
         if not token or expiry is None:
@@ -311,6 +332,9 @@ _TEMPLATES = {
     </section>
     <section aria-labelledby="human-disposition">
       <h2 id="human-disposition">Professional disposition <span>[HUMAN ATTESTATION]</span></h2>
+      {% if error %}
+      <p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>
+      {% else %}
       <form method="post" action="/incidents/{{ incident_id }}/professional-dispositions">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="selected_role" value="production_coordinator">
@@ -320,10 +344,14 @@ _TEMPLATES = {
         <label>Note <textarea name="note" maxlength="2000"></textarea></label>
         <button type="submit">Record professional disposition</button>
       </form>
+      {% endif %}
       <p>For a halt request, switch to the independent CUPS operator terminal or UI to perform any scheduler action. This screen records no CUPS action.</p>
     </section>
     <section aria-labelledby="operator-attestation">
       <h2 id="operator-attestation">Operator attestation <span>[HUMAN ATTESTATION]</span></h2>
+      {% if error %}
+      <p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>
+      {% else %}
       <form method="post" action="/incidents/{{ incident_id }}/operator-attestations">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="selected_role" value="machine_operator">
@@ -334,6 +362,7 @@ _TEMPLATES = {
         <label>Note <textarea name="note" maxlength="2000"></textarea></label>
         <button type="submit">Record operator attestation</button>
       </form>
+      {% endif %}
     </section>
     <section aria-labelledby="timeline">
       <h2 id="timeline">Incident timeline</h2>
@@ -394,6 +423,21 @@ def create_presentation_app(
         https_only=False,
     )
 
+    @app.middleware("http")
+    async def private_review_security_headers(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
     def render(name: str, **context: object) -> HTMLResponse:
         return HTMLResponse(templates.get_template(name).render(**context))
 
@@ -450,7 +494,10 @@ def create_presentation_app(
             return render(
                 "incident.html",
                 incident_id=incident_id,
-                review_state={},
+                review_state={
+                    "state": "BLOCKED",
+                    "blocking_reason": "PRIVATE_REVIEW_DATA_UNAVAILABLE",
+                },
                 source_correction="No private review data is available.",
                 semantic_summary="No private review data is available.",
                 uncertainties=(),
@@ -607,8 +654,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = _settings_from_args(argv)
     import uvicorn
 
+    token_provider = GoogleAudienceTokenProvider(
+        target_principal=settings.impersonate_service_account,
+        audience=settings.audience,
+    )
+    asyncio.run(token_provider.token_for(settings.audience))
+    api_client = CloudRunPrivateReviewApi(
+        base_url=settings.api_base_url,
+        audience=settings.audience,
+        token_provider=token_provider,
+    )
     uvicorn.run(
-        create_presentation_app(settings),
+        create_presentation_app(settings, api_client=api_client),
         host="127.0.0.1",
         port=settings.port,
         log_level="info",
