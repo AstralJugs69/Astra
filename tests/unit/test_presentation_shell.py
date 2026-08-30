@@ -200,6 +200,47 @@ def test_presentation_rejects_missing_or_cross_origin_and_bad_csrf_forms() -> No
     assert bad_csrf.status_code == 403
 
 
+def test_presentation_accepts_normalized_exact_loopback_form_origin() -> None:
+    client, api = _client()
+    csrf = _csrf(client)
+
+    response = client.post(
+        f"/incidents/{INCIDENT_ID}/professional-dispositions",
+        data=_disposition_form(csrf),
+        headers={"Origin": "HTTP://127.0.0.1:8765/"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert len(api.posts) == 1
+
+
+@pytest.mark.parametrize(
+    "origin",
+    (
+        "null",
+        "http://localhost:8765",
+        "http://127.0.0.1:8766",
+        "http://127.0.0.1:8765.evil.example",
+        "http://127.0.0.1:8765/?unexpected=true",
+        "http://user@127.0.0.1:8765/",
+    ),
+)
+def test_presentation_rejects_loopback_origin_lookalikes(origin: str) -> None:
+    client, api = _client()
+    csrf = _csrf(client)
+
+    response = client.post(
+        f"/incidents/{INCIDENT_ID}/professional-dispositions",
+        data=_disposition_form(csrf),
+        headers={"Origin": origin},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 403
+    assert api.posts == []
+
+
 def test_presentation_forwards_only_human_record_fields_after_valid_local_checks() -> None:
     client, api = _client()
     csrf = _csrf(client)

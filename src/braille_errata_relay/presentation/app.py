@@ -449,10 +449,29 @@ def create_presentation_app(
         request.session["csrf_token"] = token
         return token
 
+    def is_local_form_origin(value: str | None) -> bool:
+        if value is None:
+            return False
+        parsed = urlsplit(value.strip())
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        return (
+            parsed.scheme.casefold() == "http"
+            and parsed.hostname == "127.0.0.1"
+            and port == settings.port
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path in {"", "/"}
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     def require_local_form(request: Request, csrf: str) -> HTMLResponse | None:
         if request.headers.get("host") != f"127.0.0.1:{settings.port}":
             return _form_error(403, "Local review requests must use the loopback host.")
-        if request.headers.get("origin") != settings.origin:
+        if not is_local_form_origin(request.headers.get("origin")):
             return _form_error(403, "The local review form origin was not accepted.")
         expected = request.session.get("csrf_token")
         if not isinstance(expected, str) or not hmac.compare_digest(expected, csrf):
