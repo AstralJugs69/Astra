@@ -41,8 +41,15 @@ ALLOWED_TRANSITIONS: dict[IncidentState, frozenset[IncidentState]] = {
         {IncidentState.PROOF_REJECTED, IncidentState.PROOF_APPROVED}
     ),
     IncidentState.PROOF_REJECTED: frozenset({IncidentState.AWAITING_PROOF}),
-    IncidentState.PROOF_APPROVED: frozenset({IncidentState.AWAITING_REPLACEMENT}),
-    IncidentState.AWAITING_REPLACEMENT: frozenset({IncidentState.REPLACEMENT_OBSERVED}),
+    # A newly rendered candidate invalidates an earlier proof approval without
+    # rewriting that immutable proof record. The deterministic lineage event
+    # returns the aggregate to the human proof gate.
+    IncidentState.PROOF_APPROVED: frozenset(
+        {IncidentState.AWAITING_REPLACEMENT, IncidentState.AWAITING_PROOF}
+    ),
+    IncidentState.AWAITING_REPLACEMENT: frozenset(
+        {IncidentState.REPLACEMENT_OBSERVED, IncidentState.AWAITING_PROOF}
+    ),
     IncidentState.REPLACEMENT_OBSERVED: frozenset({IncidentState.VERIFYING}),
     IncidentState.VERIFYING: frozenset(
         {IncidentState.RESOLVED_BY_HUMAN, IncidentState.VERIFICATION_FAILED}

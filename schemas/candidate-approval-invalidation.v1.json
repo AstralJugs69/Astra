@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "candidate-approval-invalidation.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "record_id", "incident_id", "prior_candidate_sha256",
+    "current_candidate_sha256", "prior_state", "target_state", "reason",
+    "truth_basis", "actor_principal", "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "candidate-approval-invalidation.v1"},
+    "record_id": {"$ref": "#/$defs/sha256"},
+    "incident_id": {"$ref": "#/$defs/sha256"},
+    "prior_candidate_sha256": {"$ref": "#/$defs/sha256"},
+    "current_candidate_sha256": {"$ref": "#/$defs/sha256"},
+    "prior_state": {
+      "enum": ["PROOF_APPROVED", "AWAITING_REPLACEMENT", "PROOF_REJECTED"]
+    },
+    "target_state": {"const": "AWAITING_PROOF"},
+    "reason": {"const": "CANDIDATE_CHANGED"},
+    "truth_basis": {"const": "DETERMINISTIC_CANDIDATE_LINEAGE"},
+    "actor_principal": {"const": "relay-deterministic-lineage"},
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

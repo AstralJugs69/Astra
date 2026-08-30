@@ -17,15 +17,21 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
 from braille_errata_relay.domain.errors import (
     BaselineStateConflictError,
+    IncidentReviewEvidenceError,
     IncidentReviewPrerequisiteError,
     IncidentReviewStateConflictError,
 )
 from braille_errata_relay.domain.models import (
     ArtifactKind,
+    ArtifactOrigin,
     ArtifactRef,
     BaselineLinkCorrection,
     BaselineProductionLink,
     BaselineStatus,
+    BlockingReason,
+    CandidateApprovalInvalidation,
+    ContainmentConfirmation,
+    ContainmentConfirmationProposal,
     DriveChangeBatch,
     EndpointReceipt,
     HumanTimelineEventKind,
@@ -35,12 +41,16 @@ from braille_errata_relay.domain.models import (
     IncidentState,
     IncidentTimelineEvent,
     IncidentWorkflowStage,
+    JobState,
     OperatorAttestation,
     ProfessionalDisposition,
+    ProofRecord,
     RegisteredBaseline,
     SemanticAssessment,
     SiteObservation,
+    TruthBasis,
 )
+from braille_errata_relay.domain.recommendation import SiteEvidenceStatus, assess_site_evidence
 from braille_errata_relay.domain.state_machine import (
     IllegalStateTransition,
     StaleStateVersion,
@@ -133,6 +143,27 @@ class OperatorAttestationCommit:
     state: IncidentReviewState
     attestation: OperatorAttestation
     duplicate: bool
+
+
+@dataclass(frozen=True)
+class ContainmentConfirmationCommit:
+    state: IncidentReviewState
+    confirmation: ContainmentConfirmation
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class ProofRecordCommit:
+    state: IncidentReviewState
+    proof: ProofRecord
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class CandidateSynchronizationCommit:
+    state: IncidentReviewState
+    invalidation: CandidateApprovalInvalidation | None
+    changed: bool
 
 
 @dataclass(frozen=True)
@@ -1673,6 +1704,701 @@ class FirestoreGate0Ledger:
             proposed_record=proposed_record,
         )
 
+    @staticmethod
+    def _incident_from_review_state(state: IncidentReviewState) -> Incident:
+        return Incident(
+            incident_id=state.incident_id,
+            baseline_id=state.baseline_id,
+            state=state.state,
+            state_version=state.state_version,
+            report_ready_at=state.report_ready_at,
+            current_candidate_sha256=state.current_candidate_sha256,
+            blocking_reason=state.blocking_reason,
+            last_attributable_evidence_id=state.last_attributable_evidence_id,
+        )
+
+    @staticmethod
+    def _containment_evidence_reason(status: SiteEvidenceStatus) -> BlockingReason:
+        if status is SiteEvidenceStatus.STALE:
+            return BlockingReason.CONTAINMENT_EVIDENCE_STALE
+        if status is SiteEvidenceStatus.AMBIGUOUS:
+            return BlockingReason.CONTAINMENT_EVIDENCE_AMBIGUOUS
+        if status is SiteEvidenceStatus.MISSING:
+            return BlockingReason.CONTAINMENT_EVIDENCE_MISSING
+        return BlockingReason.CONTAINMENT_EVIDENCE_MISMATCH
+
+    def _record_containment_confirmation_sync(
+        self,
+        *,
+        proposal: ContainmentConfirmationProposal,
+        max_observation_age_seconds: float,
+    ) -> ContainmentConfirmationCommit:
+        if max_observation_age_seconds < 0:
+            raise ValueError("containment observation maximum age cannot be negative")
+        _require_sha256(proposal.incident_id, label="incident ID")
+        _require_sha256(proposal.halt_disposition_record_id, label="halt disposition record ID")
+        _require_sha256(proposal.site_observation_id, label="site observation ID")
+        _require_sha256(
+            proposal.physical_output_isolation_attestation_id,
+            label="physical-output isolation attestation record ID",
+        )
+        key_hash = canonical_sha256(
+            {"scope": "containment-confirmation", "key": proposal.idempotency_key}
+        )
+        request_body = {
+            "incident_id": proposal.incident_id,
+            "halt_disposition_record_id": proposal.halt_disposition_record_id,
+            "site_observation_id": proposal.site_observation_id,
+            "physical_output_isolation_attestation_id": (
+                proposal.physical_output_isolation_attestation_id
+            ),
+            "selected_role": proposal.selected_role,
+            "expected_state_version": proposal.expected_state_version,
+            "note": proposal.note,
+            "actor_principal": proposal.actor_principal,
+            "idempotency_key_sha256": key_hash,
+        }
+        request_sha256 = canonical_sha256(request_body)
+        record_id = canonical_sha256(
+            {"kind": "containment-confirmation", "request_sha256": request_sha256}
+        )
+        request_id = canonical_sha256(
+            {"scope": "containment-confirmation-request", "idempotency_key_sha256": key_hash}
+        )
+        incident_ref = self._document("incidents", proposal.incident_id)
+        review_head_ref = self._document("incident_review_heads", proposal.incident_id)
+        halt_ref = self._document("professional_dispositions", proposal.halt_disposition_record_id)
+        attestation_ref = self._document(
+            "operator_attestations", proposal.physical_output_isolation_attestation_id
+        )
+        observation_ref = self._document("site_observations", proposal.site_observation_id)
+        record_ref = self._document("containment_confirmations", record_id)
+        event_id = canonical_sha256(
+            {
+                "kind": HumanTimelineEventKind.CONTAINMENT_CONFIRMATION.value,
+                "incident_id": proposal.incident_id,
+                "record_id": record_id,
+            }
+        )
+        event_ref = self._document("incident_timeline_events", event_id)
+        request_ref = self._document("containment_confirmation_requests", request_id)
+
+        def operation(transaction: Any) -> ContainmentConfirmationCommit:
+            incident_data = self._snapshot_data(incident_ref.get(transaction=transaction))
+            review_head_data = self._snapshot_data(review_head_ref.get(transaction=transaction))
+            halt_data = self._snapshot_data(halt_ref.get(transaction=transaction))
+            attestation_data = self._snapshot_data(attestation_ref.get(transaction=transaction))
+            observation_data = self._snapshot_data(observation_ref.get(transaction=transaction))
+            record_data = self._snapshot_data(record_ref.get(transaction=transaction))
+            event_data = self._snapshot_data(event_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if incident_data is None or not isinstance(incident_data.get("record"), dict):
+                raise IncidentReviewPrerequisiteError("incident report checkpoint is unavailable")
+            checkpoint = IncidentCheckpoint.model_validate(incident_data["record"])
+            now = self._clock()
+            state = self._read_review_state(review_head_data, checkpoint, now=now)
+            if request_data is not None:
+                if request_data.get("request_sha256") != request_sha256:
+                    raise IncidentReviewStateConflictError(
+                        "containment confirmation idempotency key conflicts"
+                    )
+                if record_data is None or not isinstance(record_data.get("record"), dict):
+                    raise LedgerIntegrityError("containment confirmation replay record is missing")
+                return ContainmentConfirmationCommit(
+                    state,
+                    ContainmentConfirmation.model_validate(record_data["record"]),
+                    True,
+                )
+            if record_data is not None or event_data is not None:
+                raise LedgerIntegrityError("containment confirmation identity already exists")
+            if state.state_version != proposal.expected_state_version:
+                raise IncidentReviewStateConflictError("incident review state is stale")
+            if state.state is not IncidentState.CONTAINMENT_IN_PROGRESS:
+                raise IncidentReviewPrerequisiteError(
+                    "containment confirmation requires CONTAINMENT_IN_PROGRESS"
+                )
+            baseline_data = self._snapshot_data(
+                self._document("baselines", checkpoint.baseline_id).get(transaction=transaction)
+            )
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.MISSING_LINEAGE.value,
+                    "production baseline lineage is unavailable",
+                )
+            baseline = RegisteredBaseline.model_validate(baseline_data["record"])
+            production = baseline.baseline
+            if (
+                production.scheduler_job_id is None
+                or production.scheduler_job_title is None
+                or not production.queue_name
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.MISSING_LINEAGE.value,
+                    "expected production queue identity is incomplete",
+                )
+            production_link_data = self._snapshot_data(
+                self._document("baseline_production_links", checkpoint.baseline_id).get(
+                    transaction=transaction
+                )
+            )
+            if production_link_data is None or not isinstance(
+                production_link_data.get("record"), dict
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.MISSING_LINEAGE.value,
+                    "current production-link lineage is unavailable",
+                )
+            production_link = BaselineProductionLink.model_validate(production_link_data["record"])
+            if (
+                production_link.scheduler_job_id != production.scheduler_job_id
+                or production_link.queue_name != production.queue_name
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.JOB_LINEAGE_MISMATCH.value,
+                    "production-link queue identity conflicts with the baseline",
+                )
+            if halt_data is None or not isinstance(halt_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISSING.value,
+                    "the selected halt disposition record is unavailable",
+                )
+            halt = ProfessionalDisposition.model_validate(halt_data["record"])
+            if (
+                halt.incident_id != proposal.incident_id
+                or halt.record_id != proposal.halt_disposition_record_id
+                or halt.decision.value != "HALT_REQUESTED"
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISMATCH.value,
+                    "the selected disposition is not an attributable HALT_REQUESTED record",
+                )
+            if attestation_data is None or not isinstance(attestation_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PHYSICAL_OUTPUT_ISOLATION_REQUIRED.value,
+                    "the selected physical-output isolation attestation is unavailable",
+                )
+            attestation = OperatorAttestation.model_validate(attestation_data["record"])
+            if (
+                attestation.incident_id != proposal.incident_id
+                or attestation.record_id != proposal.physical_output_isolation_attestation_id
+                or attestation.attestation_type.value != "PHYSICAL_OUTPUT_ISOLATED"
+                or attestation.recorded_at <= halt.recorded_at
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PHYSICAL_OUTPUT_ISOLATION_REQUIRED.value,
+                    "a distinct post-halt physical-output-isolated attestation is required",
+                )
+            if (
+                production.artifact_origin is ArtifactOrigin.DEMO_GENERATED_FIXTURE
+                and attestation.truth_basis is not TruthBasis.SIMULATED_DEMO
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISMATCH.value,
+                    "demo fixture containment requires a SIMULATED_DEMO isolation label",
+                )
+            if observation_data is None or not isinstance(observation_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISSING.value,
+                    "the selected read-only site observation is unavailable",
+                )
+            observation = SiteObservation.model_validate(observation_data["record"])
+            if (
+                observation.site_id != production.site_id
+                or observation.queue_name != production.queue_name
+                or observation.bridge_id != production_link.bridge_id
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISMATCH.value,
+                    "the selected observation does not match the linked site, queue, and bridge",
+                )
+            observation_head_id = canonical_sha256(
+                {
+                    "site_id": production.site_id,
+                    "bridge_id": production_link.bridge_id,
+                    "queue_name": production.queue_name,
+                }
+            )
+            observation_head_data = self._snapshot_data(
+                self._document("site_observation_heads", observation_head_id).get(
+                    transaction=transaction
+                )
+            )
+            # Only the currently admitted canonical cloud head can support a
+            # confirmation. An unadmitted or superseded bridge outbox payload
+            # therefore cannot be treated as a containment fact.
+            if (
+                observation_head_data is None
+                or observation_head_data.get("observation_id") != proposal.site_observation_id
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.OBSERVATION_OUTBOX_CONTRADICTION.value,
+                    "the selected observation is not the current admitted bridge observation",
+                )
+            evidence = assess_site_evidence(
+                site_observation=observation,
+                expected_job_id=production.scheduler_job_id,
+                expected_queue_name=production.queue_name,
+                expected_job_title=production.scheduler_job_title,
+                expected_artifact_sha256=production.approved_brf_sha256,
+                now=now,
+                max_age_seconds=max_observation_age_seconds,
+            )
+            if evidence.status is not SiteEvidenceStatus.FRESH:
+                reason = self._containment_evidence_reason(evidence.status)
+                raise IncidentReviewEvidenceError(
+                    reason.value,
+                    "the selected post-disposition site observation is not current exact evidence",
+                )
+            if observation.observed_at <= halt.recorded_at:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISMATCH.value,
+                    "the queue observation predates the HALT_REQUESTED disposition",
+                )
+            if evidence.job_state not in {
+                JobState.CANCELED,
+                JobState.ABORTED,
+                JobState.COMPLETED,
+            }:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CONTAINMENT_EVIDENCE_MISMATCH.value,
+                    "the scheduler observation is not terminal containment evidence",
+                )
+            record = ContainmentConfirmation(
+                record_id=record_id,
+                incident_id=proposal.incident_id,
+                halt_disposition_record_id=proposal.halt_disposition_record_id,
+                site_observation_id=proposal.site_observation_id,
+                queue_name=production.queue_name,
+                scheduler_job_id=production.scheduler_job_id,
+                observed_job_state=evidence.job_state,
+                observed_at=observation.observed_at,
+                physical_output_isolation_attestation_id=(
+                    proposal.physical_output_isolation_attestation_id
+                ),
+                selected_role=proposal.selected_role,
+                expected_state_version=proposal.expected_state_version,
+                idempotency_key=proposal.idempotency_key,
+                note=proposal.note,
+                actor_principal=proposal.actor_principal,
+                recorded_at=now,
+            )
+            try:
+                contained = transition(
+                    self._incident_from_review_state(state),
+                    IncidentState.CONTAINED_BY_HUMAN,
+                    expected_state_version=proposal.expected_state_version,
+                    evidence_id=record.record_id,
+                )
+                proof_ready = transition(
+                    contained,
+                    IncidentState.AWAITING_PROOF,
+                    expected_state_version=contained.state_version,
+                    evidence_id=record.record_id,
+                )
+            except (IllegalStateTransition, StaleStateVersion) as exc:
+                raise IncidentReviewStateConflictError(str(exc)) from exc
+            updated = state.model_copy(
+                update={
+                    "state": proof_ready.state,
+                    "state_version": proof_ready.state_version,
+                    "blocking_reason": (
+                        None
+                        if state.blocking_reason is BlockingReason.SITE_OBSERVATION_STALE
+                        else state.blocking_reason
+                    ),
+                    "last_attributable_evidence_id": record.record_id,
+                    "updated_at": now,
+                }
+            )
+            event = IncidentTimelineEvent(
+                event_id=event_id,
+                incident_id=proposal.incident_id,
+                kind=HumanTimelineEventKind.CONTAINMENT_CONFIRMATION,
+                record_id=record.record_id,
+                state_version=updated.state_version,
+                actor_principal=record.actor_principal,
+                recorded_at=record.recorded_at,
+            )
+            head_body = {"record": updated.model_dump(mode="json")}
+            record_body = {"record": record.model_dump(mode="json")}
+            event_body = {"record": event.model_dump(mode="json")}
+            transaction.set(
+                review_head_ref,
+                {
+                    **head_body,
+                    "payload_sha256": canonical_sha256(head_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                record_ref,
+                {
+                    **record_body,
+                    "payload_sha256": canonical_sha256(record_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                event_ref,
+                {
+                    **event_body,
+                    "payload_sha256": canonical_sha256(event_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "created_at": now,
+                },
+            )
+            return ContainmentConfirmationCommit(updated, record, False)
+
+        return cast(ContainmentConfirmationCommit, self._transaction_runner(operation))
+
+    async def record_containment_confirmation(
+        self,
+        *,
+        proposal: ContainmentConfirmationProposal,
+        max_observation_age_seconds: float = 15.0,
+    ) -> ContainmentConfirmationCommit:
+        return await asyncio.to_thread(
+            self._record_containment_confirmation_sync,
+            proposal=proposal,
+            max_observation_age_seconds=max_observation_age_seconds,
+        )
+
+    def _synchronize_incident_review_candidate_sync(
+        self,
+        *,
+        incident_id: str,
+    ) -> CandidateSynchronizationCommit:
+        _require_sha256(incident_id, label="incident ID")
+        incident_ref = self._document("incidents", incident_id)
+        review_head_ref = self._document("incident_review_heads", incident_id)
+
+        def operation(transaction: Any) -> CandidateSynchronizationCommit:
+            incident_data = self._snapshot_data(incident_ref.get(transaction=transaction))
+            review_head_data = self._snapshot_data(review_head_ref.get(transaction=transaction))
+            if incident_data is None or not isinstance(incident_data.get("record"), dict):
+                raise IncidentReviewPrerequisiteError("incident report checkpoint is unavailable")
+            checkpoint = IncidentCheckpoint.model_validate(incident_data["record"])
+            now = self._clock()
+            state = self._read_review_state(review_head_data, checkpoint, now=now)
+            if checkpoint.candidate_brf is None:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CANDIDATE_PROVENANCE_MISSING.value,
+                    "incident has no current candidate artifact",
+                )
+            if state.current_candidate_sha256 == checkpoint.candidate_brf.sha256:
+                return CandidateSynchronizationCommit(state, None, False)
+            if state.state not in {
+                IncidentState.PROOF_APPROVED,
+                IncidentState.AWAITING_REPLACEMENT,
+                IncidentState.PROOF_REJECTED,
+            }:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CANDIDATE_PROVENANCE_MISMATCH.value,
+                    "the candidate changed outside a proof-state invalidation boundary",
+                )
+            invalidation_id = canonical_sha256(
+                {
+                    "kind": "candidate-approval-invalidation",
+                    "incident_id": incident_id,
+                    "prior_candidate_sha256": state.current_candidate_sha256,
+                    "current_candidate_sha256": checkpoint.candidate_brf.sha256,
+                    "prior_state": state.state.value,
+                    "state_version": state.state_version,
+                }
+            )
+            invalidation_ref = self._document(
+                "candidate_approval_invalidations",
+                invalidation_id,
+            )
+            event_id = canonical_sha256(
+                {
+                    "kind": HumanTimelineEventKind.CANDIDATE_APPROVAL_INVALIDATED.value,
+                    "incident_id": incident_id,
+                    "record_id": invalidation_id,
+                }
+            )
+            event_ref = self._document("incident_timeline_events", event_id)
+            existing_invalidation = self._snapshot_data(
+                invalidation_ref.get(transaction=transaction)
+            )
+            existing_event = self._snapshot_data(event_ref.get(transaction=transaction))
+            if existing_invalidation is not None or existing_event is not None:
+                raise LedgerIntegrityError("candidate invalidation identity already exists")
+            invalidation = CandidateApprovalInvalidation(
+                record_id=invalidation_id,
+                incident_id=incident_id,
+                prior_candidate_sha256=state.current_candidate_sha256,
+                current_candidate_sha256=checkpoint.candidate_brf.sha256,
+                prior_state=state.state,
+                recorded_at=now,
+            )
+            try:
+                invalidated = transition(
+                    self._incident_from_review_state(state),
+                    IncidentState.AWAITING_PROOF,
+                    expected_state_version=state.state_version,
+                    evidence_id=invalidation.record_id,
+                )
+            except (IllegalStateTransition, StaleStateVersion) as exc:
+                raise IncidentReviewStateConflictError(str(exc)) from exc
+            updated = state.model_copy(
+                update={
+                    "state": invalidated.state,
+                    "state_version": invalidated.state_version,
+                    "current_candidate_sha256": checkpoint.candidate_brf.sha256,
+                    "blocking_reason": None,
+                    "last_attributable_evidence_id": invalidation.record_id,
+                    "updated_at": now,
+                }
+            )
+            event = IncidentTimelineEvent(
+                event_id=event_id,
+                incident_id=incident_id,
+                kind=HumanTimelineEventKind.CANDIDATE_APPROVAL_INVALIDATED,
+                record_id=invalidation.record_id,
+                state_version=updated.state_version,
+                actor_principal=invalidation.actor_principal,
+                recorded_at=invalidation.recorded_at,
+            )
+            head_body = {"record": updated.model_dump(mode="json")}
+            invalidation_body = {"record": invalidation.model_dump(mode="json")}
+            event_body = {"record": event.model_dump(mode="json")}
+            transaction.set(
+                review_head_ref,
+                {
+                    **head_body,
+                    "payload_sha256": canonical_sha256(head_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                invalidation_ref,
+                {
+                    **invalidation_body,
+                    "payload_sha256": canonical_sha256(invalidation_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                event_ref,
+                {
+                    **event_body,
+                    "payload_sha256": canonical_sha256(event_body),
+                    "created_at": now,
+                },
+            )
+            return CandidateSynchronizationCommit(updated, invalidation, True)
+
+        return cast(CandidateSynchronizationCommit, self._transaction_runner(operation))
+
+    async def synchronize_incident_review_candidate(
+        self,
+        *,
+        incident_id: str,
+    ) -> CandidateSynchronizationCommit:
+        return await asyncio.to_thread(
+            self._synchronize_incident_review_candidate_sync,
+            incident_id=incident_id,
+        )
+
+    def _record_proof_sync(
+        self,
+        *,
+        proposed_record: ProofRecord,
+    ) -> ProofRecordCommit:
+        _require_sha256(proposed_record.incident_id, label="incident ID")
+        _require_sha256(proposed_record.record_id, label="proof record ID")
+        key_hash = canonical_sha256(
+            {"scope": "proof-record", "key": proposed_record.idempotency_key}
+        )
+        request_body = proposed_record.model_dump(
+            mode="json",
+            exclude={"record_id", "recorded_at", "idempotency_key"},
+        )
+        request_body["idempotency_key_sha256"] = key_hash
+        request_sha256 = canonical_sha256(request_body)
+        request_id = canonical_sha256(
+            {"scope": "proof-record-request", "idempotency_key_sha256": key_hash}
+        )
+        incident_ref = self._document("incidents", proposed_record.incident_id)
+        review_head_ref = self._document("incident_review_heads", proposed_record.incident_id)
+        record_ref = self._document("proof_records", proposed_record.record_id)
+        event_id = canonical_sha256(
+            {
+                "kind": HumanTimelineEventKind.PROOF_RECORD.value,
+                "incident_id": proposed_record.incident_id,
+                "record_id": proposed_record.record_id,
+            }
+        )
+        event_ref = self._document("incident_timeline_events", event_id)
+        request_ref = self._document("proof_record_requests", request_id)
+
+        def operation(transaction: Any) -> ProofRecordCommit:
+            incident_data = self._snapshot_data(incident_ref.get(transaction=transaction))
+            review_head_data = self._snapshot_data(review_head_ref.get(transaction=transaction))
+            record_data = self._snapshot_data(record_ref.get(transaction=transaction))
+            event_data = self._snapshot_data(event_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if incident_data is None or not isinstance(incident_data.get("record"), dict):
+                raise IncidentReviewPrerequisiteError("incident report checkpoint is unavailable")
+            checkpoint = IncidentCheckpoint.model_validate(incident_data["record"])
+            now = self._clock()
+            state = self._read_review_state(review_head_data, checkpoint, now=now)
+            if request_data is not None:
+                if request_data.get("request_sha256") != request_sha256:
+                    raise IncidentReviewStateConflictError("proof record idempotency key conflicts")
+                if record_data is None or not isinstance(record_data.get("record"), dict):
+                    raise LedgerIntegrityError("proof record replay record is missing")
+                return ProofRecordCommit(
+                    state,
+                    ProofRecord.model_validate(record_data["record"]),
+                    True,
+                )
+            if record_data is not None or event_data is not None:
+                raise LedgerIntegrityError("proof record identity already exists")
+            if state.state_version != proposed_record.expected_state_version:
+                raise IncidentReviewStateConflictError("incident review state is stale")
+            if state.state is not IncidentState.AWAITING_PROOF:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PROOF_NOT_ELIGIBLE.value,
+                    "proof recording requires verified containment and AWAITING_PROOF",
+                )
+            if state.blocking_reason is not None:
+                raise IncidentReviewEvidenceError(
+                    state.blocking_reason.value,
+                    "a visible incident blocking reason prevents proof approval",
+                )
+            if (
+                checkpoint.candidate_brf is None
+                or checkpoint.candidate_manifest is None
+                or checkpoint.candidate_brf.sha256 != proposed_record.candidate_sha256
+                or checkpoint.candidate_manifest.sha256 != proposed_record.manifest_sha256
+                or checkpoint.new_source_revision_id != proposed_record.source_revision_id
+                or checkpoint.new_source_sha256 != proposed_record.source_sha256
+                or state.current_candidate_sha256 != proposed_record.candidate_sha256
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CANDIDATE_PROVENANCE_MISMATCH.value,
+                    "proof record does not bind the current candidate and source lineage",
+                )
+            baseline_data = self._snapshot_data(
+                self._document("baselines", checkpoint.baseline_id).get(transaction=transaction)
+            )
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CANDIDATE_PROVENANCE_MISSING.value,
+                    "baseline profile lineage is unavailable",
+                )
+            baseline = RegisteredBaseline.model_validate(baseline_data["record"])
+            if (
+                baseline.baseline.translation_profile_sha256
+                != proposed_record.translation_profile_sha256
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CANDIDATE_PROVENANCE_MISMATCH.value,
+                    "proof profile identity conflicts with the approved baseline lineage",
+                )
+            if (
+                proposed_record.decision.value == "APPROVED_FOR_HUMAN_SUBMISSION"
+                and proposed_record.visual_only_uncertainty
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PROOF_REVIEW_REQUIRED.value,
+                    "visual-only uncertainty cannot approve a candidate",
+                )
+            record = proposed_record.model_copy(update={"recorded_at": now})
+            try:
+                if record.decision.value == "APPROVED_FOR_HUMAN_SUBMISSION":
+                    approved = transition(
+                        self._incident_from_review_state(state),
+                        IncidentState.PROOF_APPROVED,
+                        expected_state_version=record.expected_state_version,
+                        evidence_id=record.record_id,
+                    )
+                    updated_incident = transition(
+                        approved,
+                        IncidentState.AWAITING_REPLACEMENT,
+                        expected_state_version=approved.state_version,
+                        evidence_id=record.record_id,
+                    )
+                    blocking_reason: BlockingReason | None = None
+                else:
+                    updated_incident = transition(
+                        self._incident_from_review_state(state),
+                        IncidentState.PROOF_REJECTED,
+                        expected_state_version=record.expected_state_version,
+                        evidence_id=record.record_id,
+                    )
+                    blocking_reason = BlockingReason.PROOF_REJECTED
+            except (IllegalStateTransition, StaleStateVersion) as exc:
+                raise IncidentReviewStateConflictError(str(exc)) from exc
+            updated = state.model_copy(
+                update={
+                    "state": updated_incident.state,
+                    "state_version": updated_incident.state_version,
+                    "blocking_reason": blocking_reason,
+                    "last_attributable_evidence_id": record.record_id,
+                    "updated_at": now,
+                }
+            )
+            event = IncidentTimelineEvent(
+                event_id=event_id,
+                incident_id=record.incident_id,
+                kind=HumanTimelineEventKind.PROOF_RECORD,
+                record_id=record.record_id,
+                state_version=updated.state_version,
+                actor_principal=record.actor_principal,
+                recorded_at=record.recorded_at,
+            )
+            head_body = {"record": updated.model_dump(mode="json")}
+            record_body = {"record": record.model_dump(mode="json")}
+            event_body = {"record": event.model_dump(mode="json")}
+            transaction.set(
+                review_head_ref,
+                {
+                    **head_body,
+                    "payload_sha256": canonical_sha256(head_body),
+                    "updated_at": now,
+                },
+            )
+            transaction.create(
+                record_ref,
+                {
+                    **record_body,
+                    "payload_sha256": canonical_sha256(record_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                event_ref,
+                {
+                    **event_body,
+                    "payload_sha256": canonical_sha256(event_body),
+                    "created_at": now,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "created_at": now,
+                },
+            )
+            return ProofRecordCommit(updated, record, False)
+
+        return cast(ProofRecordCommit, self._transaction_runner(operation))
+
+    async def record_proof(self, *, proposed_record: ProofRecord) -> ProofRecordCommit:
+        return await asyncio.to_thread(self._record_proof_sync, proposed_record=proposed_record)
+
     def _get_incident_review_state_sync(self, incident_id: str) -> IncidentReviewState | None:
         _require_sha256(incident_id, label="incident ID")
         data = self._snapshot_data(self._document("incident_review_heads", incident_id).get())
@@ -1719,6 +2445,59 @@ class FirestoreGate0Ledger:
             model_type=OperatorAttestation,
         )
         return cast(OperatorAttestation | None, value)
+
+    def _get_containment_confirmation_sync(
+        self,
+        record_id: str,
+    ) -> ContainmentConfirmation | None:
+        _require_sha256(record_id, label="containment confirmation record ID")
+        data = self._snapshot_data(self._document("containment_confirmations", record_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("containment confirmation record is malformed")
+        return ContainmentConfirmation.model_validate(record)
+
+    async def get_containment_confirmation(
+        self,
+        record_id: str,
+    ) -> ContainmentConfirmation | None:
+        return await asyncio.to_thread(self._get_containment_confirmation_sync, record_id)
+
+    def _get_proof_record_sync(self, record_id: str) -> ProofRecord | None:
+        _require_sha256(record_id, label="proof record ID")
+        data = self._snapshot_data(self._document("proof_records", record_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("proof record is malformed")
+        return ProofRecord.model_validate(record)
+
+    async def get_proof_record(self, record_id: str) -> ProofRecord | None:
+        return await asyncio.to_thread(self._get_proof_record_sync, record_id)
+
+    def _get_candidate_approval_invalidation_sync(
+        self,
+        record_id: str,
+    ) -> CandidateApprovalInvalidation | None:
+        _require_sha256(record_id, label="candidate invalidation record ID")
+        data = self._snapshot_data(
+            self._document("candidate_approval_invalidations", record_id).get()
+        )
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("candidate invalidation record is malformed")
+        return CandidateApprovalInvalidation.model_validate(record)
+
+    async def get_candidate_approval_invalidation(
+        self,
+        record_id: str,
+    ) -> CandidateApprovalInvalidation | None:
+        return await asyncio.to_thread(self._get_candidate_approval_invalidation_sync, record_id)
 
     def _list_incident_timeline_events_sync(
         self,

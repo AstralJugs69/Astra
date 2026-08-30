@@ -88,6 +88,58 @@ class FakePrivateReviewApi:
         return {"status": "HALT_REQUESTED"}
 
 
+class GateEligiblePrivateReviewApi(FakePrivateReviewApi):
+    """Private API fixture with one authoritative human gate at a time."""
+
+    def __init__(self, *, gate: str) -> None:
+        super().__init__()
+        self.gate = gate
+
+    async def get_json(self, path: str) -> dict[str, object]:
+        response = await super().get_json(path)
+        if path != f"/api/v1/incidents/{INCIDENT_ID}":
+            return response
+        if self.gate == "containment":
+            return {
+                **response,
+                "review_state": {"state": "CONTAINMENT_IN_PROGRESS", "state_version": 2},
+                "review_actions": {
+                    "containment_confirmation": {
+                        "eligible": True,
+                        "blocking_reason": None,
+                        "halt_disposition_record_id": "b" * 64,
+                        "site_observation_id": "c" * 64,
+                        "physical_output_isolation_attestation_id": "d" * 64,
+                    },
+                    "proof": {"eligible": False, "blocking_reason": "PROOF_NOT_ELIGIBLE"},
+                },
+            }
+        return {
+            **response,
+            "review_state": {"state": "AWAITING_PROOF", "state_version": 4},
+            "candidate_manifest": {"artifact_sha256": "c" * 64},
+            "profile_identity": {"profile_id": "demo-ueb-40x25-v1"},
+            "candidate_evidence_preview": {
+                "label": "TEXT EVIDENCE PREVIEW ONLY — NOT TACTILE PROOF",
+                "text": "Fixture-only preview.",
+            },
+            "review_actions": {
+                "containment_confirmation": {
+                    "eligible": False,
+                    "blocking_reason": "CONTAINMENT_CONFIRMATION_REQUIRED",
+                },
+                "proof": {
+                    "eligible": True,
+                    "blocking_reason": None,
+                    "provenance": {
+                        "candidate_sha256": "c" * 64,
+                        "manifest_sha256": "d" * 64,
+                    },
+                },
+            },
+        }
+
+
 class UnavailablePrivateReviewApi:
     async def get_json(self, _path: str) -> dict[str, object]:
         raise PresentationAuthenticationError("private data unavailable")
@@ -98,6 +150,20 @@ class UnavailablePrivateReviewApi:
 
 def _client() -> tuple[TestClient, FakePrivateReviewApi]:
     api = FakePrivateReviewApi()
+    app = create_presentation_app(
+        PresentationSettings(
+            api_base_url=AUDIENCE,
+            audience=AUDIENCE,
+            session_secret="s" * 32,
+            impersonate_service_account=DEMONSTRATOR_IDENTITY,
+        ),
+        api_client=api,
+    )
+    return TestClient(app, base_url="http://127.0.0.1:8765"), api
+
+
+def _gate_client(gate: str) -> tuple[TestClient, GateEligiblePrivateReviewApi]:
+    api = GateEligiblePrivateReviewApi(gate=gate)
     app = create_presentation_app(
         PresentationSettings(
             api_base_url=AUDIENCE,
@@ -323,6 +389,114 @@ def test_presentation_forwards_only_human_record_fields_after_valid_local_checks
                 "expected_state_version": 0,
                 "note": "Request manual containment review.",
                 "idempotency_key": "presentation-halt-1",
+            },
+        )
+    ]
+
+
+def test_presentation_renders_only_authoritatively_eligible_containment_form_and_forwards_exact_evidence() -> (
+    None
+):
+    client, api = _gate_client("containment")
+    csrf = _csrf(client)
+    detail = client.get(f"/incidents/{INCIDENT_ID}")
+
+    assert "/containment-confirmations" in detail.text
+    assert "/proof-records" not in detail.text
+    assert "CUPS state alone never proves device stop" in detail.text
+    response = client.post(
+        f"/incidents/{INCIDENT_ID}/containment-confirmations",
+        data={
+            "csrf_token": csrf,
+            "halt_disposition_record_id": "b" * 64,
+            "site_observation_id": "c" * 64,
+            "physical_output_isolation_attestation_id": "d" * 64,
+            "selected_role": "production_coordinator",
+            "expected_state_version": "2",
+            "note": "Coordinator confirms the authoritative evidence set.",
+            "idempotency_key": "presentation-containment-1",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert api.posts == [
+        (
+            f"/api/v1/incidents/{INCIDENT_ID}/containment-confirmations",
+            {
+                "halt_disposition_record_id": "b" * 64,
+                "site_observation_id": "c" * 64,
+                "physical_output_isolation_attestation_id": "d" * 64,
+                "selected_role": "production_coordinator",
+                "expected_state_version": 2,
+                "note": "Coordinator confirms the authoritative evidence set.",
+                "idempotency_key": "presentation-containment-1",
+            },
+        )
+    ]
+
+
+def test_presentation_proof_form_requires_loopback_csrf_and_only_forwards_exact_fixture_fields() -> (
+    None
+):
+    client, api = _gate_client("proof")
+    csrf = _csrf(client)
+    detail = client.get(f"/incidents/{INCIDENT_ID}")
+
+    assert "/proof-records" in detail.text
+    assert "/containment-confirmations" not in detail.text
+    assert "DEMO_FIXTURE_REVIEW" in detail.text
+    assert "CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER" in detail.text
+    rejected = client.post(
+        f"/incidents/{INCIDENT_ID}/proof-records",
+        data={
+            "csrf_token": "wrong",
+            "candidate_sha256": "c" * 64,
+            "manifest_sha256": "d" * 64,
+            "decision": "APPROVED_FOR_HUMAN_SUBMISSION",
+            "review_basis": "DEMO_FIXTURE_REVIEW",
+            "selected_role": "proofreader",
+            "expected_state_version": "4",
+            "idempotency_key": "presentation-proof-1",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+    accepted = client.post(
+        f"/incidents/{INCIDENT_ID}/proof-records",
+        data={
+            "csrf_token": csrf,
+            "candidate_sha256": "c" * 64,
+            "manifest_sha256": "d" * 64,
+            "decision": "APPROVED_FOR_HUMAN_SUBMISSION",
+            "review_basis": "DEMO_FIXTURE_REVIEW",
+            "selected_role": "proofreader",
+            "expected_state_version": "4",
+            "note": "Fixture proof record only.",
+            "visual_only_uncertainty": "false",
+            "idempotency_key": "presentation-proof-1",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert rejected.status_code == 403
+    assert accepted.status_code == 303
+    assert api.posts == [
+        (
+            f"/api/v1/incidents/{INCIDENT_ID}/proof-records",
+            {
+                "candidate_sha256": "c" * 64,
+                "manifest_sha256": "d" * 64,
+                "decision": "APPROVED_FOR_HUMAN_SUBMISSION",
+                "review_basis": "DEMO_FIXTURE_REVIEW",
+                "selected_role": "proofreader",
+                "expected_state_version": 4,
+                "note": "Fixture proof record only.",
+                "findings": [],
+                "visual_only_uncertainty": False,
+                "idempotency_key": "presentation-proof-1",
             },
         )
     ]

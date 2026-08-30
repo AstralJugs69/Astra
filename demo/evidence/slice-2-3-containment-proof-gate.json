@@ -1,0 +1,68 @@
+{
+  "schema_version": "slice-2-3-containment-proof-gate-evidence.v1",
+  "recorded_at": "2026-08-30T14:03:59Z",
+  "branch": "codex/slice-2-3-containment-proof-gate",
+  "base_commit": "1ec284fcd9ae4c5c82f0b2dfffe730b6f776c0e4",
+  "governing_documents": {
+    "instruction.md": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb",
+    "architecture.md": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+  },
+  "liblouis_identity": {
+    "version": "3.38.0",
+    "profile_id": "demo-ueb-40x25-v1",
+    "profile_sha256": "7011f99e9351d9d70da9eddf89a2d38c3c88318e325cb4422ec98f492a9d2772",
+    "translation_smoke_sha256": "84736d9d626b65389103686d828297518f95be98f29935426920a67fd2a9f419",
+    "tables": [
+      {
+        "name": "en-ueb-g2.ctb",
+        "sha256": "45b83481438667b57f57793d9369aeb44a5e5c50980767c69ba99ea83f442059"
+      },
+      {
+        "name": "en-us-brf.dis",
+        "sha256": "47ff9400f4b8a0206b0c1942e13c32b539d17ec099dcd1097873a1b9f5cb8b3c"
+      }
+    ],
+    "v1_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+    "v2_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d",
+    "wsl_container_translation_identity_equal": true
+  },
+  "implementation": {
+    "containment_confirmation": "PASS",
+    "exact_candidate_proof": "PASS",
+    "candidate_approval_invalidation": "PASS",
+    "human_only_loopback_presentation": "PASS",
+    "production_control_surface_absent": "PASS"
+  },
+  "live_story": {
+    "status": "NOT_TOUCHED",
+    "reported_state": "CONTAINMENT_IN_PROGRESS",
+    "reported_blocking_reason": "SITE_OBSERVATION_STALE",
+    "cancellation_achieved": "NOT_CLAIMED",
+    "device_stop_confirmed": "NOT_CLAIMED",
+    "candidate_approved": "NOT_CLAIMED"
+  },
+  "verification": {
+    "focused_containment_proof_tests": "PASS",
+    "full_windows_suite": "PASS",
+    "frozen_lock": "PASS",
+    "ruff_lint": "PASS",
+    "scoped_format": "PASS",
+    "strict_mypy": "PASS",
+    "docker_build": "PASS",
+    "installed_container_readiness": "PASS",
+    "container_real_liblouis_golden_twice": "PASS",
+    "wsl_liblouis_binding_api": "PASS",
+    "wsl_cupsd_config_validation": "PASS",
+    "wsl_full_golden": "BLOCKED",
+    "local_container_brf_identity": "BLOCKED"
+  },
+  "remaining_blockers": [
+    "The WSL system Python has the real pinned Liblouis binding but lacks Pydantic and pytest, so a full WSL application golden run was not exercised in this session.",
+    "A direct WSL-to-container BRF identity comparison remains blocked until the locked project runtime is installed in WSL.",
+    "The active private incident remains intentionally untouched and still requires human-only fresh observation, containment confirmation, and tactile proof review."
+  ],
+  "deferred_authority": [
+    "No replacement submission, CUPS mutation, device action, notification, or final resolution was implemented or exercised.",
+    "Candidate approval only advances to AWAITING_REPLACEMENT, labelled AWAITING_HUMAN_SUBMISSION in the presentation; it is never a production submission."
+  ]
+}

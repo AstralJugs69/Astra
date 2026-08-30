@@ -37,6 +37,7 @@ from starlette.responses import Response
 from braille_errata_relay.domain.models import (
     AttestationType,
     ProfessionalDecision,
+    ProofDecision,
     TruthBasis,
 )
 
@@ -323,6 +324,12 @@ _TEMPLATES = {
         <dt>Baseline BRF SHA-256</dt><dd>{{ baseline_brf_sha256 }}</dd>
         <dt>Candidate BRF SHA-256</dt><dd>{{ candidate_brf_sha256 }}</dd>
       </dl>
+      <h3>Candidate manifest and deterministic tool identity</h3>
+      <pre>{{ candidate_manifest }}</pre>
+      <pre>{{ profile_identity }}</pre>
+      <h3>{{ candidate_evidence_preview.label }}</h3>
+      <pre>{{ candidate_evidence_preview.text }}</pre>
+      <p>This preview is evidence for a private review conversation. It is not tactile proof and it never turns the candidate into an approved production master.</p>
     </section>
     <section aria-labelledby="current-observation">
       <h2 id="current-observation">Current CUPS observation <span>[REAL]</span></h2>
@@ -362,6 +369,47 @@ _TEMPLATES = {
         <label>Note <textarea name="note" maxlength="2000"></textarea></label>
         <button type="submit">Record operator attestation</button>
       </form>
+      {% endif %}
+    </section>
+    <section aria-labelledby="containment-confirmation">
+      <h2 id="containment-confirmation">Containment confirmation <span>[HUMAN + READ-ONLY EVIDENCE]</span></h2>
+      <pre>{{ containment_evidence }}</pre>
+      <p>CUPS state alone never proves device stop or physical-output isolation. The coordinator may record this conclusion only when the authoritative evidence set is eligible.</p>
+      {% if review_actions.containment_confirmation.eligible %}
+      <form method="post" action="/incidents/{{ incident_id }}/containment-confirmations">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="selected_role" value="production_coordinator">
+        <input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}">
+        <input type="hidden" name="idempotency_key" value="{{ containment_idempotency_key }}">
+        <input type="hidden" name="halt_disposition_record_id" value="{{ review_actions.containment_confirmation.halt_disposition_record_id }}">
+        <input type="hidden" name="site_observation_id" value="{{ review_actions.containment_confirmation.site_observation_id }}">
+        <input type="hidden" name="physical_output_isolation_attestation_id" value="{{ review_actions.containment_confirmation.physical_output_isolation_attestation_id }}">
+        <label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label>
+        <button type="submit">Record containment confirmation</button>
+      </form>
+      {% else %}
+      <p>Containment confirmation is unavailable: {{ review_actions.containment_confirmation.blocking_reason }}.</p>
+      {% endif %}
+    </section>
+    <section aria-labelledby="proof-review">
+      <h2 id="proof-review">Exact candidate proof gate <span>[DEMO_FIXTURE_REVIEW]</span></h2>
+      <p>Fixture review is not independent professional certification. Approval does not submit, link, release, or verify any replacement job.</p>
+      {% if review_actions.proof.eligible %}
+      <form method="post" action="/incidents/{{ incident_id }}/proof-records">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="candidate_sha256" value="{{ review_actions.proof.provenance.candidate_sha256 }}">
+        <input type="hidden" name="manifest_sha256" value="{{ review_actions.proof.provenance.manifest_sha256 }}">
+        <input type="hidden" name="review_basis" value="DEMO_FIXTURE_REVIEW">
+        <input type="hidden" name="selected_role" value="proofreader">
+        <input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}">
+        <input type="hidden" name="idempotency_key" value="{{ proof_idempotency_key }}">
+        <label>Decision <select name="decision">{% for decision in proof_decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label>
+        <label>Note <textarea name="note" maxlength="2000"></textarea></label>
+        <label><input type="checkbox" name="visual_only_uncertainty" value="true"> Visual-only uncertainty remains (this blocks approval).</label>
+        <button type="submit">Record exact-candidate proof decision</button>
+      </form>
+      {% else %}
+      <p>Proof review is unavailable: {{ review_actions.proof.blocking_reason }}.</p>
       {% endif %}
     </section>
     <section aria-labelledby="timeline">
@@ -555,20 +603,65 @@ def create_presentation_app(
                 braille_impact="{}",
                 baseline_brf_sha256="Unavailable",
                 candidate_brf_sha256="Unavailable",
+                candidate_manifest="{}",
+                profile_identity="{}",
+                candidate_evidence_preview={
+                    "label": "TEXT EVIDENCE PREVIEW ONLY — NOT TACTILE PROOF",
+                    "text": "Candidate BRF preview is unavailable.",
+                },
                 observation_age="Unavailable",
                 current_observation="{}",
+                containment_evidence="{}",
+                review_actions={
+                    "containment_confirmation": {
+                        "eligible": False,
+                        "blocking_reason": "PRIVATE_REVIEW_DATA_UNAVAILABLE",
+                    },
+                    "proof": {
+                        "eligible": False,
+                        "blocking_reason": "PRIVATE_REVIEW_DATA_UNAVAILABLE",
+                    },
+                },
                 timeline=(),
                 decisions=tuple(decision.value for decision in ProfessionalDecision),
                 attestation_types=tuple(kind.value for kind in AttestationType),
                 truth_bases=tuple(basis.value for basis in TruthBasis),
+                proof_decisions=tuple(decision.value for decision in ProofDecision),
                 csrf_token=csrf_token(request),
                 disposition_idempotency_key=secrets.token_urlsafe(24),
                 attestation_idempotency_key=secrets.token_urlsafe(24),
+                containment_idempotency_key=secrets.token_urlsafe(24),
+                proof_idempotency_key=secrets.token_urlsafe(24),
                 error="Private review data is unavailable.",
             )
         report = _mapping(detail.get("report"))
         packet = _mapping(detail.get("human_disposition_packet"))
         semantic = _mapping(report.get("semantic_assessment"))
+        # Older private API responses intentionally remain readable as a
+        # read-only review surface.  Missing eligibility is never treated as
+        # permission to render a human action form.
+        containment_action: dict[str, object] = {
+            "eligible": False,
+            "blocking_reason": "CONTAINMENT_CONFIRMATION_REQUIRED",
+        }
+        containment_action.update(
+            _mapping(_mapping(detail.get("review_actions")).get("containment_confirmation"))
+        )
+        proof_action: dict[str, object] = {
+            "eligible": False,
+            "blocking_reason": "PROOF_NOT_ELIGIBLE",
+            "provenance": None,
+        }
+        proof_action.update(_mapping(_mapping(detail.get("review_actions")).get("proof")))
+        review_actions = {
+            "containment_confirmation": containment_action,
+            "proof": proof_action,
+        }
+        candidate_evidence_preview: dict[str, object] = {
+            "label": "TEXT EVIDENCE PREVIEW ONLY — NOT TACTILE PROOF",
+            "text": "Candidate BRF preview is unavailable.",
+        }
+        candidate_evidence_preview.update(_mapping(detail.get("candidate_evidence_preview")))
         return render(
             "incident.html",
             incident_id=incident_id,
@@ -579,15 +672,23 @@ def create_presentation_app(
             braille_impact=_pretty(report.get("braille_impact")),
             baseline_brf_sha256=packet.get("baseline_brf_sha256", "Unavailable"),
             candidate_brf_sha256=_mapping(packet.get("candidate_brf")).get("sha256", "Unavailable"),
+            candidate_manifest=_pretty(detail.get("candidate_manifest")),
+            profile_identity=_pretty(detail.get("profile_identity")),
+            candidate_evidence_preview=candidate_evidence_preview,
             observation_age=packet.get("observation_age_seconds", "Unavailable"),
             current_observation=_pretty(detail.get("current_site_observation")),
+            containment_evidence=_pretty(containment_action),
+            review_actions=review_actions,
             timeline=_mapping(timeline_payload).get("events", ()),
             decisions=tuple(decision.value for decision in ProfessionalDecision),
             attestation_types=tuple(kind.value for kind in AttestationType),
             truth_bases=tuple(basis.value for basis in TruthBasis),
+            proof_decisions=tuple(decision.value for decision in ProofDecision),
             csrf_token=csrf_token(request),
             disposition_idempotency_key=secrets.token_urlsafe(24),
             attestation_idempotency_key=secrets.token_urlsafe(24),
+            containment_idempotency_key=secrets.token_urlsafe(24),
+            proof_idempotency_key=secrets.token_urlsafe(24),
             error=None,
         )
 
@@ -672,6 +773,112 @@ def create_presentation_app(
         ):
             return _form_error(
                 409, "The attestation was not recorded. Reload the incident before retrying."
+            )
+        return RedirectResponse(f"/incidents/{incident_id}", status_code=303)
+
+    @app.post("/incidents/{incident_id}/containment-confirmations")
+    async def submit_containment_confirmation(
+        incident_id: str,
+        request: Request,
+        csrf_token_value: str = Form(alias="csrf_token"),
+        halt_disposition_record_id: str = Form(),
+        site_observation_id: str = Form(),
+        physical_output_isolation_attestation_id: str = Form(),
+        selected_role: str = Form(),
+        expected_state_version: int = Form(),
+        note: str = Form(default=""),
+        idempotency_key: str = Form(),
+    ) -> Response:
+        rejected = require_local_form(request, csrf_token_value)
+        if rejected is not None:
+            return rejected
+        exact_hashes = (
+            halt_disposition_record_id,
+            site_observation_id,
+            physical_output_isolation_attestation_id,
+        )
+        if selected_role != "production_coordinator" or any(
+            re.fullmatch(r"[0-9a-f]{64}", value) is None for value in exact_hashes
+        ):
+            return _form_error(422, "The selected containment evidence is invalid.")
+        try:
+            await api.post_json(
+                f"/api/v1/incidents/{incident_id}/containment-confirmations",
+                {
+                    "halt_disposition_record_id": halt_disposition_record_id,
+                    "site_observation_id": site_observation_id,
+                    "physical_output_isolation_attestation_id": (
+                        physical_output_isolation_attestation_id
+                    ),
+                    "selected_role": selected_role,
+                    "expected_state_version": expected_state_version,
+                    "note": note,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
+            return _form_error(
+                409,
+                "Containment confirmation was not recorded. Reload the incident before retrying.",
+            )
+        return RedirectResponse(f"/incidents/{incident_id}", status_code=303)
+
+    @app.post("/incidents/{incident_id}/proof-records")
+    async def submit_proof_record(
+        incident_id: str,
+        request: Request,
+        csrf_token_value: str = Form(alias="csrf_token"),
+        candidate_sha256: str = Form(),
+        manifest_sha256: str = Form(),
+        decision: str = Form(),
+        review_basis: str = Form(),
+        selected_role: str = Form(),
+        expected_state_version: int = Form(),
+        note: str = Form(default=""),
+        visual_only_uncertainty: bool = Form(default=False),
+        idempotency_key: str = Form(),
+    ) -> Response:
+        rejected = require_local_form(request, csrf_token_value)
+        if rejected is not None:
+            return rejected
+        if (
+            selected_role != "proofreader"
+            or review_basis != "DEMO_FIXTURE_REVIEW"
+            or decision not in {item.value for item in ProofDecision}
+            or re.fullmatch(r"[0-9a-f]{64}", candidate_sha256) is None
+            or re.fullmatch(r"[0-9a-f]{64}", manifest_sha256) is None
+        ):
+            return _form_error(422, "The selected exact-candidate proof decision is invalid.")
+        try:
+            await api.post_json(
+                f"/api/v1/incidents/{incident_id}/proof-records",
+                {
+                    "candidate_sha256": candidate_sha256,
+                    "manifest_sha256": manifest_sha256,
+                    "decision": decision,
+                    "review_basis": review_basis,
+                    "selected_role": selected_role,
+                    "expected_state_version": expected_state_version,
+                    "note": note,
+                    "findings": [],
+                    "visual_only_uncertainty": visual_only_uncertainty,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
+            return _form_error(
+                409,
+                "Proof was not recorded. Reload the incident before retrying.",
             )
         return RedirectResponse(f"/incidents/{incident_id}", status_code=303)
 

@@ -9,11 +9,16 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from braille_errata_relay.domain.models import (
     AttestationType,
+    CandidateApprovalInvalidation,
+    ContainmentConfirmation,
     HumanTimelineEventKind,
+    IncidentState,
     IncidentTimelineEvent,
     OperatorAttestation,
     ProfessionalDecision,
     ProfessionalDisposition,
+    ProofDecision,
+    ProofRecord,
     SiteObservation,
     TruthBasis,
 )
@@ -23,6 +28,7 @@ BRIDGE_PATH = ROOT / "local_bridge" / "src" / "relay_bridge" / "observation_buil
 BACKEND_PATH = ROOT / "simulator" / "cups_backend" / "relay_capture_backend.py"
 LIVE_CLOSURE_EVIDENCE = ROOT / "demo" / "evidence" / "report-first-live-closure.json"
 ACTIVE_REVIEW_EVIDENCE = ROOT / "demo" / "evidence" / "active-professional-review.json"
+CONTAINMENT_PROOF_EVIDENCE = ROOT / "demo" / "evidence" / "slice-2-3-containment-proof-gate.json"
 
 
 def _load_module(name: str, path: Path):
@@ -537,6 +543,70 @@ def test_human_review_records_match_append_only_contract_schemas() -> None:
     )
 
 
+def test_containment_and_exact_candidate_proof_records_match_contract_schemas() -> None:
+    containment = ContainmentConfirmation(
+        record_id="5" * 64,
+        incident_id="2" * 64,
+        halt_disposition_record_id="1" * 64,
+        site_observation_id="3" * 64,
+        queue_name="Braille-Embosser-Sim",
+        scheduler_job_id=42,
+        observed_job_state="CANCELED",
+        observed_at="2026-08-30T12:02:00+00:00",
+        physical_output_isolation_attestation_id="4" * 64,
+        selected_role="production_coordinator",
+        expected_state_version=2,
+        idempotency_key="containment-1",
+        note="Coordinator confirms the exact evidence set.",
+        actor_principal="coordinator@example.test",
+        recorded_at="2026-08-30T12:03:00+00:00",
+    )
+    proof = ProofRecord(
+        record_id="6" * 64,
+        incident_id=containment.incident_id,
+        candidate_sha256="7" * 64,
+        manifest_sha256="8" * 64,
+        source_revision_id="drive:file:63:revision",
+        source_sha256="9" * 64,
+        translation_profile_id="demo-ueb-40x25-v1",
+        translation_profile_sha256="a" * 64,
+        liblouis_version="3.38.0",
+        translation_tables=(
+            {"name": "en-ueb-g2.ctb", "sha256": "b" * 64},
+            {"name": "en-us-brf.dis", "sha256": "c" * 64},
+        ),
+        formatter_version="relay-formatter.v1",
+        decision=ProofDecision.APPROVED_FOR_HUMAN_SUBMISSION,
+        review_basis="DEMO_FIXTURE_REVIEW",
+        selected_role="proofreader",
+        expected_state_version=4,
+        idempotency_key="proof-1",
+        note="Fixture review only, not a production-master approval.",
+        findings=("Exact candidate identity reviewed.",),
+        actor_principal="proofreader@example.test",
+        recorded_at="2026-08-30T12:04:00+00:00",
+    )
+    invalidation = CandidateApprovalInvalidation(
+        record_id="d" * 64,
+        incident_id=containment.incident_id,
+        prior_candidate_sha256=proof.candidate_sha256,
+        current_candidate_sha256="e" * 64,
+        prior_state=IncidentState.AWAITING_REPLACEMENT,
+        recorded_at="2026-08-30T12:05:00+00:00",
+    )
+
+    for schema, record in (
+        ("containment-confirmation.v1.json", containment),
+        ("proof-record.v1.json", proof),
+        ("candidate-approval-invalidation.v1.json", invalidation),
+    ):
+        assert sorted(_validator(schema).iter_errors(record.model_dump(mode="json")), key=str) == []
+
+    invalid_payload = proof.model_dump(mode="json")
+    invalid_payload["review_basis"] = "HUMAN_REVIEW"
+    assert list(_validator("proof-record.v1.json").iter_errors(invalid_payload))
+
+
 def test_active_professional_review_evidence_is_sanitized_and_does_not_claim_a_live_run() -> None:
     payload = json.loads(ACTIVE_REVIEW_EVIDENCE.read_text(encoding="utf-8"))
 
@@ -556,5 +626,32 @@ def test_active_professional_review_evidence_is_sanitized_and_does_not_claim_a_l
         "private_key",
         "client_email",
         "drive.google.com",
+    ):
+        assert forbidden not in rendered
+
+
+def test_containment_proof_evidence_is_sanitized_and_preserves_human_authority() -> None:
+    payload = json.loads(CONTAINMENT_PROOF_EVIDENCE.read_text(encoding="utf-8"))
+
+    assert (
+        sorted(
+            _validator("slice-2-3-containment-proof-gate-evidence.v1.json").iter_errors(payload),
+            key=str,
+        )
+        == []
+    )
+    assert payload["live_story"]["status"] == "NOT_TOUCHED"
+    assert payload["live_story"]["candidate_approved"] == "NOT_CLAIMED"
+    rendered = json.dumps(payload).casefold()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "credentials",
+        "private_key",
+        "client_email",
+        "drive.google.com",
+        "gs://",
+        "password",
     ):
         assert forbidden not in rendered

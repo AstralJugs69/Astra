@@ -15,6 +15,7 @@ from braille_errata_relay.adapters.firestore_ledger import FirestoreGate0Ledger
 from braille_errata_relay.adapters.gcs_artifacts import GcsArtifactStore
 from braille_errata_relay.api.security import GoogleOidcVerifier, IdentityVerifier
 from braille_errata_relay.application.baseline_registration import BaselineRegistrationWorkflow
+from braille_errata_relay.application.containment_proof import ContainmentProofWorkflow
 from braille_errata_relay.application.drive_gate0 import DRIVE_READONLY_SCOPE, DriveGate0Workflow
 from braille_errata_relay.application.endpoint_receipt import (
     EndpointReceiptWorkflow,
@@ -46,6 +47,7 @@ class RuntimeDependencies:
     endpoint_receipt_workflow: EndpointReceiptWorkflow | None
     historical_link_correction_workflow: HistoricalLinkCorrectionWorkflow | None
     professional_review_workflow: ProfessionalReviewWorkflow | None
+    containment_proof_workflow: ContainmentProofWorkflow | None
     telemetry_workflow: TelemetryIngestionWorkflow | None
     incident_workflow: IncidentWorkflow | None
     outbox_workflow: OutboxDrainWorkflow | None
@@ -64,6 +66,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             endpoint_receipt_workflow=None,
             historical_link_correction_workflow=None,
             professional_review_workflow=None,
+            containment_proof_workflow=None,
             telemetry_workflow=None,
             incident_workflow=None,
             outbox_workflow=None,
@@ -82,6 +85,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             endpoint_receipt_workflow=None,
             historical_link_correction_workflow=None,
             professional_review_workflow=None,
+            containment_proof_workflow=None,
             telemetry_workflow=None,
             incident_workflow=None,
             outbox_workflow=None,
@@ -101,6 +105,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
     endpoint_receipt_workflow = None
     historical_link_correction_workflow = None
     professional_review_workflow = None
+    containment_proof_workflow = None
     telemetry_workflow = None
     incident_workflow = None
     outbox_workflow = None
@@ -171,6 +176,12 @@ def build_runtime_dependencies() -> RuntimeDependencies:
                 ledger=ledger,
             )
             professional_review_workflow = ProfessionalReviewWorkflow(ledger=ledger)
+            containment_proof_workflow = ContainmentProofWorkflow(
+                ledger=ledger,
+                artifact_store=artifact_store,
+                profile=baseline_workflow.profile,
+                bridge_id=settings.bridge_id,
+            )
     if settings.site_id and settings.bridge_id and settings.cups_queue_name:
         telemetry_workflow = TelemetryIngestionWorkflow(
             ledger=ledger,
@@ -190,6 +201,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
         endpoint_receipt_workflow,
         historical_link_correction_workflow,
         professional_review_workflow,
+        containment_proof_workflow,
         telemetry_workflow,
         incident_workflow,
         outbox_workflow,

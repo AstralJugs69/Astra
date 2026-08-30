@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "containment-confirmation.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "record_id", "incident_id", "halt_disposition_record_id",
+    "site_observation_id", "queue_name", "scheduler_job_id", "observed_job_state",
+    "observed_at", "physical_output_isolation_attestation_id", "truth_basis",
+    "selected_role", "expected_state_version", "idempotency_key", "note",
+    "actor_principal", "recorded_at", "state_path"
+  ],
+  "properties": {
+    "schema_version": {"const": "containment-confirmation.v1"},
+    "record_id": {"$ref": "#/$defs/sha256"},
+    "incident_id": {"$ref": "#/$defs/sha256"},
+    "halt_disposition_record_id": {"$ref": "#/$defs/sha256"},
+    "site_observation_id": {"$ref": "#/$defs/sha256"},
+    "queue_name": {"type": "string", "minLength": 1, "maxLength": 512},
+    "scheduler_job_id": {"type": "integer", "minimum": 1},
+    "observed_job_state": {"enum": ["CANCELED", "ABORTED", "COMPLETED"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "physical_output_isolation_attestation_id": {"$ref": "#/$defs/sha256"},
+    "truth_basis": {"const": "READ_ONLY_OBSERVATION_AND_HUMAN_CONFIRMATION"},
+    "selected_role": {"const": "production_coordinator"},
+    "expected_state_version": {"type": "integer", "minimum": 0},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512},
+    "note": {"type": "string", "maxLength": 2000},
+    "actor_principal": {"type": "string", "minLength": 1, "maxLength": 512},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "state_path": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"const": "CONTAINED_BY_HUMAN"},
+        {"const": "AWAITING_PROOF"}
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

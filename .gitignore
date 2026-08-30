@@ -25,6 +25,7 @@ demo/evidence/*.json
 !demo/evidence/report-first-live-closure.json
 !demo/evidence/byte-confirmed-link.json
 !demo/evidence/active-professional-review.json
+!demo/evidence/slice-2-3-containment-proof-gate.json
 uv-cache/
 **/uv-cache/
 *.pem

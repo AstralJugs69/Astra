@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "slice-2-3-containment-proof-gate-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "recorded_at", "branch", "base_commit", "governing_documents",
+    "liblouis_identity", "implementation", "live_story", "verification", "remaining_blockers",
+    "deferred_authority"
+  ],
+  "properties": {
+    "schema_version": {"const": "slice-2-3-containment-proof-gate-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "branch": {"const": "codex/slice-2-3-containment-proof-gate"},
+    "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "governing_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction.md", "architecture.md"],
+      "properties": {
+        "instruction.md": {"$ref": "#/$defs/sha256"},
+        "architecture.md": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "liblouis_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version", "profile_id", "profile_sha256", "translation_smoke_sha256", "tables",
+        "v1_brf_sha256", "v2_brf_sha256", "wsl_container_translation_identity_equal"
+      ],
+      "properties": {
+        "version": {"const": "3.38.0"},
+        "profile_id": {"const": "demo-ueb-40x25-v1"},
+        "profile_sha256": {"$ref": "#/$defs/sha256"},
+        "translation_smoke_sha256": {"$ref": "#/$defs/sha256"},
+        "tables": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sha256"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 255},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        },
+        "v1_brf_sha256": {"$ref": "#/$defs/sha256"},
+        "v2_brf_sha256": {"$ref": "#/$defs/sha256"},
+        "wsl_container_translation_identity_equal": {"const": true}
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containment_confirmation", "exact_candidate_proof", "candidate_approval_invalidation",
+        "human_only_loopback_presentation", "production_control_surface_absent"
+      ],
+      "properties": {
+        "containment_confirmation": {"const": "PASS"},
+        "exact_candidate_proof": {"const": "PASS"},
+        "candidate_approval_invalidation": {"const": "PASS"},
+        "human_only_loopback_presentation": {"const": "PASS"},
+        "production_control_surface_absent": {"const": "PASS"}
+      }
+    },
+    "live_story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "reported_state", "reported_blocking_reason", "cancellation_achieved",
+        "device_stop_confirmed", "candidate_approved"
+      ],
+      "properties": {
+        "status": {"const": "NOT_TOUCHED"},
+        "reported_state": {"const": "CONTAINMENT_IN_PROGRESS"},
+        "reported_blocking_reason": {"const": "SITE_OBSERVATION_STALE"},
+        "cancellation_achieved": {"const": "NOT_CLAIMED"},
+        "device_stop_confirmed": {"const": "NOT_CLAIMED"},
+        "candidate_approved": {"const": "NOT_CLAIMED"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "focused_containment_proof_tests", "full_windows_suite", "frozen_lock", "ruff_lint",
+        "scoped_format", "strict_mypy", "docker_build", "installed_container_readiness",
+        "container_real_liblouis_golden_twice", "wsl_liblouis_binding_api",
+        "wsl_cupsd_config_validation", "wsl_full_golden", "local_container_brf_identity"
+      ],
+      "properties": {
+        "focused_containment_proof_tests": {"enum": ["PASS", "BLOCKED"]},
+        "full_windows_suite": {"enum": ["PASS", "BLOCKED"]},
+        "frozen_lock": {"enum": ["PASS", "BLOCKED"]},
+        "ruff_lint": {"enum": ["PASS", "BLOCKED"]},
+        "scoped_format": {"enum": ["PASS", "BLOCKED"]},
+        "strict_mypy": {"enum": ["PASS", "BLOCKED"]},
+        "docker_build": {"enum": ["PASS", "BLOCKED"]},
+        "installed_container_readiness": {"enum": ["PASS", "BLOCKED"]},
+        "container_real_liblouis_golden_twice": {"enum": ["PASS", "BLOCKED"]},
+        "wsl_liblouis_binding_api": {"enum": ["PASS", "BLOCKED"]},
+        "wsl_cupsd_config_validation": {"enum": ["PASS", "BLOCKED"]},
+        "wsl_full_golden": {"enum": ["PASS", "BLOCKED"]},
+        "local_container_brf_identity": {"enum": ["PASS", "BLOCKED"]}
+      }
+    },
+    "remaining_blockers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    },
+    "deferred_authority": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

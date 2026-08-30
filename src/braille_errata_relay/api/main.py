@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime
@@ -29,6 +30,11 @@ from braille_errata_relay.api.security import (
 from braille_errata_relay.application.baseline_registration import (
     BaselineRegistrationError,
     BaselineRegistrationWorkflow,
+)
+from braille_errata_relay.application.containment_proof import (
+    ContainmentProofConflict,
+    ContainmentProofRejected,
+    ContainmentProofWorkflow,
 )
 from braille_errata_relay.application.drive_gate0 import DriveGate0Workflow
 from braille_errata_relay.application.endpoint_receipt import (
@@ -66,6 +72,8 @@ from braille_errata_relay.domain.models import (
     AssessmentInput,
     AttestationType,
     BlockingReason,
+    CandidateApprovalInvalidation,
+    ContainmentConfirmation,
     EndpointEvidenceSubmission,
     HumanTimelineEventKind,
     IncidentCheckpoint,
@@ -77,6 +85,8 @@ from braille_errata_relay.domain.models import (
     ProductionLinkBlockingReason,
     ProfessionalDecision,
     ProfessionalDisposition,
+    ProofDecision,
+    ProofRecord,
     TruthBasis,
 )
 
@@ -186,6 +196,71 @@ class OperatorAttestationRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class ContainmentConfirmationRequest(BaseModel):
+    """Coordinator conclusion bound to immutable human and read-only evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    halt_disposition_record_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    site_observation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    physical_output_isolation_attestation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selected_role: Literal["production_coordinator"]
+    expected_state_version: int = Field(ge=0)
+    note: str = Field(default="", max_length=2_000)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class ProofRecordRequest(BaseModel):
+    """Proofreader decision for exactly the candidate/manifest they reviewed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision: ProofDecision
+    review_basis: Literal["DEMO_FIXTURE_REVIEW"]
+    selected_role: Literal["proofreader"]
+    expected_state_version: int = Field(ge=0)
+    note: str = Field(default="", max_length=2_000)
+    findings: tuple[str, ...] = Field(default=(), max_length=16)
+    visual_only_uncertainty: bool = False
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+def _safe_candidate_manifest_evidence(
+    manifest: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Return deterministic proof identity without an artifact location.
+
+    The browser needs enough immutable evidence to identify the candidate it is
+    reviewing.  It never needs the GCS source-map URI, so that URI is not
+    carried across the private API/presentation boundary.
+    """
+
+    if manifest is None:
+        return None
+    allowed_fields = (
+        "schema_version",
+        "artifact_kind",
+        "artifact_sha256",
+        "byte_length",
+        "source_revision_id",
+        "source_sha256",
+        "normalized_source_sha256",
+        "baseline_manifest_sha256",
+        "translation_profile_sha256",
+        "liblouis_version",
+        "formatter_version",
+        "page_count",
+        "page_sha256",
+        "created_at",
+        "generator_build",
+        "parent_artifact_sha256",
+        "page_range",
+    )
+    return {name: manifest[name] for name in allowed_fields if name in manifest}
+
+
 def _default_profile_path() -> Path:
     return resolve_config_path(
         direct_env="TRANSLATION_PROFILE_PATH",
@@ -208,6 +283,7 @@ def create_app(
     telemetry_workflow: TelemetryIngestionWorkflow | None = None,
     incident_workflow: IncidentWorkflow | None = None,
     professional_review_workflow: ProfessionalReviewWorkflow | None = None,
+    containment_proof_workflow: ContainmentProofWorkflow | None = None,
     outbox_workflow: OutboxDrainWorkflow | None = None,
     identity_verifier: IdentityVerifier | None = None,
 ) -> FastAPI:
@@ -644,6 +720,22 @@ def create_app(
             raise TypeError("incident artifact payload must be an object")
         return value
 
+    async def _candidate_preview(checkpoint: IncidentCheckpoint) -> dict[str, str]:
+        if incident_workflow is None or checkpoint.candidate_brf is None:
+            return {
+                "label": "TEXT EVIDENCE PREVIEW ONLY — NOT TACTILE PROOF",
+                "text": "Candidate BRF preview is unavailable.",
+            }
+        try:
+            value = await incident_workflow.artifact_store.read(checkpoint.candidate_brf)
+            preview = value[:1_200].decode("ascii", errors="replace")
+        except (KeyError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            preview = "Candidate BRF preview is unavailable."
+        return {
+            "label": "TEXT EVIDENCE PREVIEW ONLY — NOT TACTILE PROOF",
+            "text": preview,
+        }
+
     async def _incident_timeline(
         checkpoint: IncidentCheckpoint,
     ) -> list[dict[str, object]]:
@@ -666,11 +758,30 @@ def create_app(
             for event in await professional_review_workflow.ledger.list_incident_timeline_events(
                 checkpoint.incident_id
             ):
-                record: ProfessionalDisposition | OperatorAttestation | None
+                record: (
+                    CandidateApprovalInvalidation
+                    | ContainmentConfirmation
+                    | OperatorAttestation
+                    | ProfessionalDisposition
+                    | ProofRecord
+                    | None
+                )
+                truth_basis = "HUMAN_ATTESTATION"
                 if event.kind is HumanTimelineEventKind.PROFESSIONAL_DISPOSITION:
                     record = await ledger.get_professional_disposition(event.record_id)
-                else:
+                elif event.kind is HumanTimelineEventKind.OPERATOR_ATTESTATION:
                     record = await ledger.get_operator_attestation(event.record_id)
+                elif event.kind is HumanTimelineEventKind.CONTAINMENT_CONFIRMATION:
+                    record = await ledger.get_containment_confirmation(event.record_id)
+                    truth_basis = "READ_ONLY_OBSERVATION_AND_HUMAN_CONFIRMATION"
+                elif event.kind is HumanTimelineEventKind.PROOF_RECORD:
+                    record = await ledger.get_proof_record(event.record_id)
+                    truth_basis = "DEMO_FIXTURE_REVIEW"
+                elif event.kind is HumanTimelineEventKind.CANDIDATE_APPROVAL_INVALIDATED:
+                    record = await ledger.get_candidate_approval_invalidation(event.record_id)
+                    truth_basis = "DETERMINISTIC_CANDIDATE_LINEAGE"
+                else:
+                    raise ValueError("incident timeline contains an unsupported event kind")
                 if record is None:
                     raise ValueError("human timeline references a missing immutable record")
                 entries.append(
@@ -678,7 +789,7 @@ def create_app(
                         event.recorded_at,
                         {
                             "kind": event.kind.value,
-                            "truth_basis": "HUMAN_ATTESTATION",
+                            "truth_basis": truth_basis,
                             "recorded_at": event.recorded_at.isoformat(),
                             "state_version": event.state_version,
                             "record": record.model_dump(mode="json"),
@@ -766,6 +877,39 @@ def create_app(
                 bridge_id=incident_workflow.bridge_id,
                 queue_name=baseline.baseline.queue_name,
             )
+        candidate_manifest: dict[str, object] | None = None
+        if checkpoint.candidate_manifest is not None:
+            try:
+                candidate_manifest = _safe_candidate_manifest_evidence(
+                    await _read_json_artifact(checkpoint.candidate_manifest)
+                )
+            except (KeyError, OSError, RuntimeError, TypeError, UnicodeDecodeError, ValueError):
+                candidate_manifest = None
+        profile_identity: dict[str, object] | None = None
+        try:
+            profile = incident_workflow.profile if incident_workflow is not None else None
+        except AttributeError:
+            profile = None
+        if profile is not None and hasattr(profile, "model_dump"):
+            profile_identity = profile.model_dump(mode="json")
+        review_actions: dict[str, object] = {
+            "containment_confirmation": {
+                "eligible": False,
+                "blocking_reason": "CONTAINMENT_CONFIRMATION_REQUIRED",
+            },
+            "proof": {"eligible": False, "blocking_reason": "PROOF_NOT_ELIGIBLE"},
+        }
+        if containment_proof_workflow is not None:
+            containment, proof = await asyncio.gather(
+                containment_proof_workflow.containment_eligibility(
+                    incident_id=checkpoint.incident_id
+                ),
+                containment_proof_workflow.proof_eligibility(incident_id=checkpoint.incident_id),
+            )
+            review_actions = {
+                "containment_confirmation": containment.sanitized_record(),
+                "proof": proof.sanitized_record(),
+            }
         return {
             "checkpoint": checkpoint.model_dump(mode="json"),
             "review_state": (await _review_state_for_checkpoint(checkpoint)).model_dump(
@@ -775,6 +919,10 @@ def create_app(
             "source_correction": source_correction,
             "report": report,
             "human_disposition_packet": packet,
+            "candidate_manifest": candidate_manifest,
+            "profile_identity": profile_identity,
+            "candidate_evidence_preview": await _candidate_preview(checkpoint),
+            "review_actions": review_actions,
             "current_site_observation": (
                 observation.model_dump(mode="json") if observation is not None else None
             ),
@@ -921,6 +1069,116 @@ def create_app(
             },
         )
 
+    @app.post("/api/v1/incidents/{incident_id}/containment-confirmations")
+    async def record_containment_confirmation(
+        incident_id: str,
+        payload: ContainmentConfirmationRequest,
+        request: Request,
+    ) -> JSONResponse:
+        if containment_proof_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "containment proof is not configured"},
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            result = await containment_proof_workflow.record_containment_confirmation(
+                incident_id=incident_id,
+                halt_disposition_record_id=payload.halt_disposition_record_id,
+                site_observation_id=payload.site_observation_id,
+                physical_output_isolation_attestation_id=(
+                    payload.physical_output_isolation_attestation_id
+                ),
+                selected_role=payload.selected_role,
+                expected_state_version=payload.expected_state_version,
+                note=payload.note,
+                idempotency_key=payload.idempotency_key,
+                actor_principal=principal,
+            )
+        except ContainmentProofConflict:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": "STALE_STATE_VERSION"},
+            )
+        except (ContainmentProofRejected, ValueError) as exc:
+            reason = (
+                exc.reason.value
+                if isinstance(exc, ContainmentProofRejected)
+                else BlockingReason.CONTAINMENT_CONFIRMATION_REQUIRED.value
+            )
+            return JSONResponse(
+                status_code=422,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": reason},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": result.state.state.value,
+                "duplicate": result.duplicate,
+                "review_state": result.state.model_dump(mode="json"),
+                "containment_confirmation": result.confirmation.model_dump(mode="json"),
+            },
+        )
+
+    @app.post("/api/v1/incidents/{incident_id}/proof-records")
+    async def record_proof(
+        incident_id: str,
+        payload: ProofRecordRequest,
+        request: Request,
+    ) -> JSONResponse:
+        if containment_proof_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "containment proof is not configured"},
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            result = await containment_proof_workflow.record_proof(
+                incident_id=incident_id,
+                candidate_sha256=payload.candidate_sha256,
+                manifest_sha256=payload.manifest_sha256,
+                decision=payload.decision,
+                review_basis=payload.review_basis,
+                selected_role=payload.selected_role,
+                expected_state_version=payload.expected_state_version,
+                note=payload.note,
+                findings=payload.findings,
+                visual_only_uncertainty=payload.visual_only_uncertainty,
+                idempotency_key=payload.idempotency_key,
+                actor_principal=principal,
+            )
+        except ContainmentProofConflict:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": "STALE_STATE_VERSION"},
+            )
+        except (ContainmentProofRejected, ValueError) as exc:
+            reason = (
+                exc.reason.value
+                if isinstance(exc, ContainmentProofRejected)
+                else BlockingReason.PROOF_NOT_ELIGIBLE.value
+            )
+            return JSONResponse(
+                status_code=422,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": reason},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": result.state.state.value,
+                "duplicate": result.duplicate,
+                "review_state": result.state.model_dump(mode="json"),
+                "proof_record": result.proof.model_dump(mode="json"),
+                "next_human_stage": "AWAITING_HUMAN_SUBMISSION"
+                if result.proof.decision is ProofDecision.APPROVED_FOR_HUMAN_SUBMISSION
+                else "PROOF_REJECTED_UNRESOLVED",
+            },
+        )
+
     return app
 
 
@@ -937,6 +1195,7 @@ app = create_app(
     telemetry_workflow=_runtime.telemetry_workflow,
     incident_workflow=_runtime.incident_workflow,
     professional_review_workflow=_runtime.professional_review_workflow,
+    containment_proof_workflow=_runtime.containment_proof_workflow,
     outbox_workflow=_runtime.outbox_workflow,
     identity_verifier=_runtime.identity_verifier,
 )

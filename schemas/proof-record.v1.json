@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-record.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "record_id", "incident_id", "candidate_sha256", "manifest_sha256",
+    "source_revision_id", "source_sha256", "translation_profile_id",
+    "translation_profile_sha256", "liblouis_version", "translation_tables",
+    "formatter_version", "candidate_label", "decision", "review_basis", "selected_role",
+    "expected_state_version", "idempotency_key", "note", "findings",
+    "visual_only_uncertainty", "actor_principal", "recorded_at"
+  ],
+  "properties": {
+    "schema_version": {"const": "proof-record.v1"},
+    "record_id": {"$ref": "#/$defs/sha256"},
+    "incident_id": {"$ref": "#/$defs/sha256"},
+    "candidate_sha256": {"$ref": "#/$defs/sha256"},
+    "manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "source_revision_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "source_sha256": {"$ref": "#/$defs/sha256"},
+    "translation_profile_id": {"type": "string", "minLength": 1, "maxLength": 512},
+    "translation_profile_sha256": {"$ref": "#/$defs/sha256"},
+    "liblouis_version": {"type": "string", "minLength": 1, "maxLength": 512},
+    "translation_tables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/bound_table"}
+    },
+    "formatter_version": {"type": "string", "minLength": 1, "maxLength": 512},
+    "candidate_label": {"const": "CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"},
+    "decision": {"enum": ["APPROVED_FOR_HUMAN_SUBMISSION", "REJECTED"]},
+    "review_basis": {"const": "DEMO_FIXTURE_REVIEW"},
+    "selected_role": {"const": "proofreader"},
+    "expected_state_version": {"type": "integer", "minimum": 0},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 512},
+    "note": {"type": "string", "maxLength": 2000},
+    "findings": {
+      "type": "array",
+      "items": {"type": "string", "maxLength": 2000}
+    },
+    "visual_only_uncertainty": {"type": "boolean"},
+    "actor_principal": {"type": "string", "minLength": 1, "maxLength": 512},
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bound_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 512},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

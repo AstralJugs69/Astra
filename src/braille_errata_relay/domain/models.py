@@ -129,6 +129,19 @@ class BlockingReason(StrEnum):
     TELEMETRY_REPLAY = "TELEMETRY_REPLAY"
     OUTPUT_INTEGRITY_FAILED = "OUTPUT_INTEGRITY_FAILED"
     STALE_STATE_VERSION = "STALE_STATE_VERSION"
+    CONTAINMENT_EVIDENCE_MISSING = "CONTAINMENT_EVIDENCE_MISSING"
+    CONTAINMENT_EVIDENCE_STALE = "CONTAINMENT_EVIDENCE_STALE"
+    CONTAINMENT_EVIDENCE_AMBIGUOUS = "CONTAINMENT_EVIDENCE_AMBIGUOUS"
+    CONTAINMENT_EVIDENCE_MISMATCH = "CONTAINMENT_EVIDENCE_MISMATCH"
+    OBSERVATION_OUTBOX_CONTRADICTION = "OBSERVATION_OUTBOX_CONTRADICTION"
+    PHYSICAL_OUTPUT_ISOLATION_REQUIRED = "PHYSICAL_OUTPUT_ISOLATION_REQUIRED"
+    CONTAINMENT_CONFIRMATION_REQUIRED = "CONTAINMENT_CONFIRMATION_REQUIRED"
+    CANDIDATE_PROVENANCE_MISSING = "CANDIDATE_PROVENANCE_MISSING"
+    CANDIDATE_PROVENANCE_MISMATCH = "CANDIDATE_PROVENANCE_MISMATCH"
+    PROOF_NOT_ELIGIBLE = "PROOF_NOT_ELIGIBLE"
+    PROOF_REVIEW_REQUIRED = "PROOF_REVIEW_REQUIRED"
+    PROOF_REJECTED = "PROOF_REJECTED"
+    CANDIDATE_APPROVAL_INVALIDATED = "CANDIDATE_APPROVAL_INVALIDATED"
 
 
 class Materiality(StrEnum):
@@ -786,6 +799,61 @@ class OperatorAttestation(DomainModel):
     recorded_at: datetime
 
 
+class ContainmentConfirmationProposal(DomainModel):
+    """Untrusted form intent for a coordinator-owned containment confirmation.
+
+    The ledger resolves every referenced record and observation again inside
+    its transaction before it creates the corresponding immutable record.
+    """
+
+    incident_id: HexSha256
+    halt_disposition_record_id: HexSha256
+    site_observation_id: HexSha256
+    physical_output_isolation_attestation_id: HexSha256
+    selected_role: Literal["production_coordinator"] = "production_coordinator"
+    expected_state_version: int = Field(ge=0)
+    idempotency_key: NonEmpty
+    note: BoundedNote = ""
+    actor_principal: NonEmpty
+
+
+class ContainmentConfirmation(DomainModel):
+    """An evidence-backed human conclusion, never a scheduler/device command."""
+
+    schema_version: Literal["containment-confirmation.v1"] = "containment-confirmation.v1"
+    record_id: HexSha256
+    incident_id: HexSha256
+    halt_disposition_record_id: HexSha256
+    site_observation_id: HexSha256
+    queue_name: NonEmpty
+    scheduler_job_id: int = Field(gt=0)
+    observed_job_state: JobState
+    observed_at: datetime
+    physical_output_isolation_attestation_id: HexSha256
+    truth_basis: Literal["READ_ONLY_OBSERVATION_AND_HUMAN_CONFIRMATION"] = (
+        "READ_ONLY_OBSERVATION_AND_HUMAN_CONFIRMATION"
+    )
+    selected_role: Literal["production_coordinator"] = "production_coordinator"
+    expected_state_version: int = Field(ge=0)
+    idempotency_key: NonEmpty
+    note: BoundedNote = ""
+    actor_principal: NonEmpty
+    recorded_at: datetime
+    state_path: tuple[IncidentState, IncidentState] = (
+        IncidentState.CONTAINED_BY_HUMAN,
+        IncidentState.AWAITING_PROOF,
+    )
+
+    @model_validator(mode="after")
+    def validate_documented_state_path(self) -> ContainmentConfirmation:
+        if self.state_path != (
+            IncidentState.CONTAINED_BY_HUMAN,
+            IncidentState.AWAITING_PROOF,
+        ):
+            raise ValueError("containment confirmation must preserve the proof-boundary state path")
+        return self
+
+
 class IncidentReviewState(DomainModel):
     """Mutable human-workflow head backed by immutable disposition records."""
 
@@ -803,6 +871,9 @@ class IncidentReviewState(DomainModel):
 class HumanTimelineEventKind(StrEnum):
     PROFESSIONAL_DISPOSITION = "PROFESSIONAL_DISPOSITION"
     OPERATOR_ATTESTATION = "OPERATOR_ATTESTATION"
+    CONTAINMENT_CONFIRMATION = "CONTAINMENT_CONFIRMATION"
+    PROOF_RECORD = "PROOF_RECORD"
+    CANDIDATE_APPROVAL_INVALIDATED = "CANDIDATE_APPROVAL_INVALIDATED"
 
 
 class IncidentTimelineEvent(DomainModel):
@@ -816,18 +887,58 @@ class IncidentTimelineEvent(DomainModel):
     recorded_at: datetime
 
 
+class BoundTranslationTable(DomainModel):
+    """A profile table name bound to its exact installed-file hash."""
+
+    name: NonEmpty
+    sha256: HexSha256
+
+
 class ProofRecord(DomainModel):
+    """Immutable proof decision for one exact candidate artifact and provenance set."""
+
+    schema_version: Literal["proof-record.v1"] = "proof-record.v1"
     record_id: HexSha256
     incident_id: HexSha256
     candidate_sha256: HexSha256
     manifest_sha256: HexSha256
+    source_revision_id: NonEmpty
+    source_sha256: HexSha256
+    translation_profile_id: NonEmpty
+    translation_profile_sha256: HexSha256
+    liblouis_version: NonEmpty
+    translation_tables: tuple[BoundTranslationTable, ...] = Field(min_length=1)
+    formatter_version: NonEmpty
+    candidate_label: Literal["CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"] = (
+        "CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"
+    )
     decision: ProofDecision
-    review_basis: ReviewBasis
-    selected_role: str = "proofreader"
+    review_basis: Literal["DEMO_FIXTURE_REVIEW"] = "DEMO_FIXTURE_REVIEW"
+    selected_role: Literal["proofreader"] = "proofreader"
     expected_state_version: int = Field(ge=0)
     idempotency_key: NonEmpty
+    note: BoundedNote = ""
     findings: tuple[BoundedNote, ...] = ()
+    visual_only_uncertainty: bool = False
     actor_principal: NonEmpty
+    recorded_at: datetime
+
+
+class CandidateApprovalInvalidation(DomainModel):
+    """Deterministic lineage event retaining a prior proof while invalidating its use."""
+
+    schema_version: Literal["candidate-approval-invalidation.v1"] = (
+        "candidate-approval-invalidation.v1"
+    )
+    record_id: HexSha256
+    incident_id: HexSha256
+    prior_candidate_sha256: HexSha256
+    current_candidate_sha256: HexSha256
+    prior_state: IncidentState
+    target_state: IncidentState = IncidentState.AWAITING_PROOF
+    reason: Literal["CANDIDATE_CHANGED"] = "CANDIDATE_CHANGED"
+    truth_basis: Literal["DETERMINISTIC_CANDIDATE_LINEAGE"] = "DETERMINISTIC_CANDIDATE_LINEAGE"
+    actor_principal: Literal["relay-deterministic-lineage"] = "relay-deterministic-lineage"
     recorded_at: datetime
 
 
