@@ -1,22 +1,60 @@
-# Troubleshooting
+# Astra — troubleshooting
+
+Start by choosing the truthful path. The offline fixture is the fastest way to
+verify the visual experience and requires no Google account, Drive access,
+CUPS, or production hardware:
+
+~~~text
+uv run --frozen python -m braille_errata_relay.presentation.screenshot_fixture --port 8877
+~~~
+
+Open `http://127.0.0.1:8877/watch/quiet`. It is visibly marked `SANITIZED DEMO
+FIXTURE` and proves UI/contracts only. It is not a workaround for a blocked
+live integration claim.
 
 ## `doctor` reports ordinary ADC blocked
 
-Run browser-based authentication from a user-controlled terminal:
+For local presentation and private Cloud Run access, use ordinary
+Google-Cloud-only ADC from a user-controlled terminal:
 
-```text
+~~~text
 gcloud auth login
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive.readonly
-```
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform
+~~~
 
-Do not paste a password, access token, or key file into any command or issue.
+If the browser cannot be launched automatically, use `--no-launch-browser` and
+complete the displayed user flow. If a local quota-project warning is the only
+block, follow the Cloud SDK guidance or use `--disable-quota-project`; do not
+paste a password, access token, or key file into a command or issue.
 
-## The local watch page shows unavailable/reconnecting
+## `doctor --check-drive` is blocked
 
-The presentation shell is still local and safe. Verify `.env` has non-secret
-private Relay origin and demonstrator principal values, then confirm the
-temporary human-authorized impersonation path separately. The page must not
-fall back to a public API or a service-account key.
+The base `doctor` command does not call Drive. `--check-drive` is an optional
+metadata-only local diagnostic. Current Google Cloud CLI guidance requires a
+project-owned OAuth desktop client for a non-Google-Cloud scope such as
+`drive.readonly`; the generic Cloud SDK OAuth client may be blocked for that
+scope.
+
+Keep that client JSON outside the repository and use it only from the local
+machine:
+
+~~~text
+gcloud auth application-default login --client-id-file='C:\safe\astra-drive-oauth-client.json' --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive.readonly
+uv run --frozen braille-relay doctor --config .env --check-drive
+~~~
+
+For the deployed live path, the attached runtime service account—not local
+user ADC—reads the one Drive file shared with it. See
+[Google Cloud, Drive, and local authentication](google-cloud-setup.md).
+
+## The local watch page shows unavailable or reconnecting
+
+The presentation shell is still loopback-only and safe. Check the non-secret
+private Relay origin, audience, and demonstrator principal in `.env`, then run
+the base `doctor` command. The live watch needs a human-authorized,
+service-account-scoped temporary Token Creator grant for its short-lived ID
+token path; it must be absent before and after the operation. The page must
+not fall back to a public API or a service-account key.
 
 ## `init-local-config` refuses `.env`
 
@@ -24,28 +62,26 @@ It refuses overwrite by design. Review the current file and repeat with
 `--force` only when replacing the intended local configuration. It accepts only
 `.env` or `.env.local` as output names.
 
-## `doctor --check-drive` is blocked
-
-Check that the configured source is a supported `text/markdown` Google Drive
-file and that ordinary ADC has Drive readonly scope. The check is metadata-only;
-do not work around a block by widening Drive write permissions.
-
 ## Liblouis readiness is blocked
 
 Install the pinned Liblouis version and Python binding through the documented
-WSL/container setup. Do not substitute a fake translator or ignore a table hash
+WSL/container setup. Do not substitute a fake translator or ignore a table-hash
 mismatch. The Windows host may honestly skip the upstream binding while the
-container test remains the reproducible golden path.
+container remains the frozen installed-runtime verification path.
 
 ## WSL/CUPS is blocked
 
 Run the CUPS setup/runbook in a human-controlled WSL terminal and preserve the
-exact failing command and sanitized error. Do not use the Relay app or bridge to
+exact failing command and sanitized error. Do not use Astra or the bridge to
 operate the queue, and do not weaken the observer policy to make a denial test
 pass.
 
-## The scheduled closure script refuses to run near a boundary
+## A scheduler command refuses to run near an evidence boundary
 
-That refusal protects the recurring scheduler’s ownership. Wait for a safe
-window or use the documented operator procedure; do not unpause the scheduler
-or force a run from the dashboard.
+That refusal protects the recurring scheduler's ownership. Wait for a safe
+window or use the documented human operator procedure; do not unpause the
+scheduler or force a run from the dashboard.
+
+For first-time private deployment, use the explicit
+[fresh-project deployment guide](fresh-project-deployment.md), not this
+troubleshooting page.

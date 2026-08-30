@@ -1,59 +1,185 @@
-# Live demo runbook
+# Astra — live demo runbook
 
-This is a narration and human-authority guide. It does not replace the detailed
-[active professional review runbook](active-professional-review-demo.md), which
-remains the source of truth for human-only CUPS/telemetry steps.
+> **This braille master was approved yesterday. Production has already started.
+> Now the authoritative source changes.**
 
-## Before recording
+This runbook leads with the operational problem, then shows Astra doing the
+autonomous investigation and recovery preparation. The human boundary comes
+after the value is visible: Astra cannot silently acquire authority over
+professional proofing or physical production equipment.
 
-1. **Human-owned local/CUPS action:** pre-stage the approved baseline and use
-   the independent operator surface to submit the simulator job. Preserve fresh
-   read-only observation evidence; do not claim endpoint completion.
-2. **Local non-mutating action:** start the loopback watch floor with
-   `infra/demo/start_demo.ps1` or prepare the offline fixture.
-3. **Cloud state check:** confirm the service is private, temporary Token
-   Creator grants are absent before and after use, and the recurring scheduler
-   is paused outside the intended reconciliation path.
+This is a narration guide. The detailed human-owned CUPS and professional
+review procedure remains
+[active-professional-review-demo.md](active-professional-review-demo.md).
 
-## Live flow (about 3–4 minutes)
+## Choose the truthful demo mode
 
-1. Open `/watch` in its quiet connected state. Explain that it is a local,
-   read-only monitor watching the authoritative source.
-2. Show the pipeline: Drive revision → deterministic diff → Liblouis candidate
-   → page impact → Gemini semantic assessment → professional report.
-3. **Human Drive action:** edit the same prepared authoritative source from the
-   V1 correction to V2 using Drive’s normal UI.
-4. Trigger or wait for the existing authorized Drive reconciliation path. Do not
-   use the dashboard to run it.
-5. Show persisted stages arrive live. The alert appears only for a new qualifying
-   transition, never for historical records loaded on page open.
-6. Acknowledge the alert locally if desired and say plainly that this creates no
-   professional record, containment, cancellation, proof, or production action.
-7. Open incident detail. Show old/new authoritative source evidence,
-   deterministic source/BRF hashes, page impact, persisted Gemini assessment,
-   and real read-only CUPS observation as distinct cards.
-8. Act as the professional only through the eligible, fresh-evidence forms in
-   the separate detailed runbook. If the incident is fail-closed, show the block
-   honestly rather than advancing it.
-9. Point out the simulated physical endpoint boundary and the fact that CUPS
-   scheduling remains real while endpoint simulation is limited.
-10. End on the private Cloud Run architecture and the exact human-authority
-    boundary.
+| Mode | What it demonstrates | What it must not be claimed to demonstrate |
+| --- | --- | --- |
+| **Live private path** | Configured private Cloud Run, Drive reconciliation, durable state, actual adapters, and any fresh local-floor evidence you actually run. | A physical-device action or human decision that was not actually observed and recorded. |
+| **Offline fixture** | Visual dashboard, quiet/alert states, responsive layout, SSE-style UI behavior, and safety contracts. | Live Drive, Gemini, Cloud Run, CUPS, human-review, replacement-submission, or endpoint execution. |
+
+The final readiness record preserves an honest status for each release
+activity. Review [testing-and-evidence.md](testing-and-evidence.md) before
+making a live claim.
+
+## Before recording the live path
+
+1. **Prepare the baseline and source.** Use one supported authoritative
+   text/Markdown Drive file and a known V1 to V2 correction. See
+   [authoritative-drive-source.md](authoritative-drive-source.md).
+2. **Prepare production observation honestly.** If you plan to show a CUPS
+   card as fresh evidence, use the independent human-owned local-floor
+   procedure and preserve the resulting read-only observation. If you did not
+   run it, label any displayed CUPS information as historical, stale, or
+   fixture evidence rather than calling it current.
+3. **Start the local view.** The loopback watch floor is a read-only view of
+   durable incident state from Astra’s private service. It does not watch Drive
+   directly; Drive reconciliation runs behind the private boundary, and the
+   browser receives neither Drive credentials nor the source identifier.
+4. **Verify credentials and authority.** The service remains private. A
+   temporary demonstrator Token Creator binding is absent before use, narrowly
+   present only during the human-authorized local presentation operation, and
+   verified absent afterward. See
+   [google-cloud-setup.md](google-cloud-setup.md).
+5. **Keep the scheduler paused.** Do not use the dashboard to reconcile Drive,
+   drain the outbox, submit a job, or mutate CUPS.
+
+## Live flow: 3–4 minutes
+
+### 0:00–0:25 — establish the real problem
+
+Show the approved baseline/current production context and say:
+
+> “This braille master was approved yesterday. Production has already started.
+> A correction has just arrived in the authoritative source. The question is
+> not merely ‘can we regenerate a file?’ It is ‘what can no longer be trusted,
+> what output may be affected, and what must the responsible professional do?’”
+
+### 0:25–0:50 — change the authoritative source
+
+In the normal Google Drive UI, make the prepared V1-to-V2 edit. Astra never
+makes this edit.
+
+Then, from the human-authorized operational terminal rather than the dashboard,
+run the explicit Drive reconciliation:
+
+~~~powershell
+.\infra\gcp\reconcile_live_drive.ps1 -Operation RECONCILE -ExecuteDriveRead
+~~~
+
+This performs the configured read-only Drive path through private Cloud Run.
+It drains the change feed and refetches authoritative metadata/bytes; it is not
+a browser button or a synthetic event.
+
+### 0:50–1:40 — reveal autonomous investigation
+
+Open the loopback **/watch** page. Explain:
+
+> “This screen receives sanitized, durable incident state from the private
+> service. The initial snapshot intentionally creates no alert. A new durable
+> incident or stage transition appears live.”
+
+Show the progression:
+
+1. accepted source revision and immutable lineage;
+2. source difference;
+3. deterministic Liblouis candidate BRF;
+4. exact page impact and profile/hash identity;
+5. Gemini/ADK’s bounded, schema-validated semantic assessment;
+6. fresh/ambiguous/stale production-evidence status;
+7. recovery recommendation and professional disposition packet.
+
+Emphasize that Astra completes this investigation and recovery preparation
+without asking a human to reconstruct the evidence manually.
+
+### 1:40–2:25 — make the evidence legible
+
+Open incident detail. Contrast the evidence types rather than collapsing them:
+
+- **source evidence**: old/new authoritative source blocks and revision
+  lineage;
+- **deterministic production evidence**: candidate BRF hash, pinned profile,
+  Liblouis table identity, and impacted pages;
+- **semantic evidence**: bounded Gemini assessment with cited evidence spans;
+- **production observation**: a fresh real observation only if you just ran
+  it; otherwise truthfully label historical, stale, or fixture basis;
+- **human evidence**: professional disposition and operator attestation are
+  separate attributable records.
+
+The dashboard's local alert acknowledgement and sound control are local UI
+preferences. They do not record a professional decision or operate equipment.
+
+### 2:25–3:05 — show the authority gate
+
+Now explain the deliberate boundary:
+
+> “Astra knows this approved master is no longer trustworthy and has assembled
+> the recovery case. It does not impersonate a proofreader, cancel a queue, or
+> claim that paper has been isolated. The responsible professional and machine
+> operator use their existing controls, and Astra records only attributable
+> evidence.”
+
+If the incident is fail-closed, show the block. Do not advance it for the
+video. Scheduler cancellation, device stop, physical-output isolation, proof
+approval, and final verification are separate facts.
+
+### 3:05–3:25 — optional bounded Story 5 ending
+
+Only if the preconditions are real:
+
+1. a qualified professional proof-approves the exact candidate;
+2. an operator independently submits it through the existing CUPS/vendor
+   surface;
+3. a fresh, unambiguous, read-only observation is available.
+
+Then Astra may link the observation and reach **REPLACEMENT_OBSERVED**. This
+does not claim endpoint completion, final physical verification, notification,
+or closure. Astra does not submit the replacement.
+
+### 3:25–3:50 — show deployment and close
+
+Show private Cloud Run, the architecture, the deterministic/semantic split, and
+the read-only CUPS boundary. Close with:
+
+> “Astra autonomously performs the investigation and recovery preparation.
+> Humans retain professional and irreversible physical-production authority.”
 
 ## Recording storyboard
 
-| Time | Visual | Narration |
+| Time | Visual | Narration focus |
 | --- | --- | --- |
-| 0:00–0:30 | Quiet `/watch` | “Relay watches and explains; it never drives the production floor.” |
-| 0:30–1:10 | Pipeline and source change | “Drive wakes a deterministic lineage workflow; the byte refetch remains authoritative.” |
-| 1:10–1:45 | New alert | “This is a local alert for a new durable mismatch, not a device command.” |
-| 1:45–2:45 | Incident detail | “Source diff, Liblouis BRF/page impact, Gemini assessment, and CUPS evidence are separate facts.” |
-| 2:45–3:30 | Boundary/evidence | “A human retains disposition, proof, submission, and closure authority.” |
+| 0:00–0:25 | Approved baseline and current production context | Late corrections create a source-to-production trust problem. |
+| 0:25–0:50 | Human Drive edit, then authorized reconciliation | Drive is authoritative; bytes are refetched rather than inferred. |
+| 0:50–1:40 | Watch alert and stage changes | Astra autonomously builds the recovery case. |
+| 1:40–2:25 | Incident detail | Diff, BRF/page impact, Gemini assessment, and observation are different evidence types. |
+| 2:25–3:05 | Human authority gate | No device-control capability; fail-closed evidence is a feature. |
+| 3:05–3:25 | Optional replacement observation | Human submits independently; Astra may observe, not submit. |
+| 3:25–3:50 | Private Cloud Run / architecture | Production-minded, deeply implemented vertical slice with deliberate authority boundaries. |
 
-## Honest fallback
+## Offline fixture fallback
 
-If Drive, private Cloud Run, ADC, or the WSL local floor is unavailable during
-recording, use `presentation.screenshot_fixture` and state that it is an
-offline sanitized fixture. It demonstrates the UI and contracts only; it is
-not live execution and cannot prove CUPS, Drive, cloud, human-review, or
-endpoint behavior.
+If Drive, private Cloud Run, ADC, temporary impersonation, or the WSL local
+floor is unavailable, use the visibly labeled fixture:
+
+~~~powershell
+uv run --frozen python -m braille_errata_relay.presentation.screenshot_fixture --port 8877
+~~~
+
+Open **http://127.0.0.1:8877/watch/quiet** first, then
+**http://127.0.0.1:8877/watch** for the mismatch alert. State plainly:
+
+> “This is the sanitized offline demo fixture. It shows the UI and safety
+> contracts, not live source detection, model execution, cloud state, CUPS,
+> professional action, replacement submission, or physical endpoint proof.”
+
+The fixture is a legitimate visual backup, not a substitute for live evidence.
+
+## Related runbooks
+
+- [Authoritative Drive source](authoritative-drive-source.md)
+- [Google Cloud and temporary authentication](google-cloud-setup.md)
+- [Local CUPS simulator and bridge](local-floor-and-cups-simulator.md)
+- [Active professional review](active-professional-review-demo.md)
+- [Testing and evidence chronology](testing-and-evidence.md)
+- [Current final readiness evidence](../demo/evidence/final-demo-readiness.json)

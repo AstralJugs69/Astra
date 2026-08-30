@@ -1,256 +1,436 @@
-# Braille Errata Relay
+# Astra — Braille Errata Relay
 
-Braille Errata Relay is a report-first overlay for late corrections in an
-existing Braille production workflow. It detects an authoritative source
-revision, deterministically regenerates a candidate BRF with pinned Liblouis,
-computes page impact, obtains a bounded Gemini semantic assessment, correlates
-fresh read-only production evidence, and prepares evidence for human
-professionals. It is intentionally **not** a Braille publishing platform, work
-order system of record, or production-device control surface.
+> **Astra is a production-minded change-control and recovery layer for braille production.** When authoritative source material changes after a braille master has been approved or production has begun, Astra determines which artifacts and observed production work can no longer be trusted, builds an evidence-backed recovery case, and preserves an auditable path to a human-verified replacement.
 
-## Contents
+**Built for the All Things Agentic Hackathon / Taskmaster category with Google
+ADK + Gemini, private Cloud Run, Firestore/GCS, Liblouis, and a read-only CUPS
+production-observation adapter.**
 
-- [The production problem](#the-production-problem)
-- [Why it is agentic](#why-it-is-agentic)
-- [Stories 1–5](#stories-15)
-- [What is real and what is simulated](#what-is-real-and-what-is-simulated)
-- [Architecture](#architecture)
-- [Human authority and safety boundary](#human-authority-and-safety-boundary)
-- [Repository map](#repository-map)
-- [Five-minute quick start](#five-minute-quick-start)
-- [Production-style setup](#production-style-setup)
-- [Local-only demo](#local-only-demo)
-- [Configuration](#configuration)
-- [Authentication and authorization](#authentication-and-authorization)
-- [Testing and evidence](#testing-and-evidence)
-- [Live demo](#live-demo)
-- [Limitations](#limitations-and-unclaimed-behavior)
-- [Troubleshooting](#troubleshooting)
+## The production failure Astra addresses
 
-## The production problem
+A braille master was approved yesterday and production has already started. Today,
+the authoritative source changes.
 
-Late editorial corrections are expensive in Braille production. A correction
-can shift pages, invalidate an approved master, or arrive while a job is
-already queued or physically progressing. A browser dashboard alone cannot
-truthfully resolve those facts. Relay therefore maintains immutable lineage and
-produces a review packet rather than pretending it owns the production floor.
+That correction may alter contractions, cell count, line wrapping, braille
+pagination, or volume boundaries. A professional now has to establish which
+approved master is stale, whether an observed production job used it, what
+output may be affected, and what must happen next. Regenerating a file alone is
+not a sufficient answer.
 
-## Why it is agentic
+**Astra autonomously builds the recovery case.** It refetches the authoritative
+source bytes, establishes what changed, regenerates a deterministic candidate
+BRF, calculates exact page impact, performs bounded semantic assessment,
+correlates production evidence, and prepares the incident and recovery record
+for the responsible professional.
 
-The workflow combines bounded autonomous reasoning with deterministic,
-auditable work. Gemini/ADK performs a constrained semantic assessment over
-explicit evidence spans. Deterministic code owns source normalization,
-translation, pagination, BRF bytes, hashes, page impact, recommendations,
-state transitions, and verification. The agent proposes and explains; humans
-retain the authority to decide, contain, prove, resubmit, and close.
+The hook is simple: **Astra makes it visible when yesterday's approved braille
+master can no longer remain the trusted input to today's production decision.**
+It does not claim to operate a printer or replace a qualified braille
+proofreader.
 
-## Stories 1–5
+## In one view
 
-| Story | Delivered boundary |
-| --- | --- |
-| 1. Baseline and source | Immutable baseline, source revision, and profile lineage. |
-| 2. Deterministic impact | Real Liblouis translation, deterministic BRF, source maps, manifests, and page impact. |
-| 3. Semantic report | Gemini semantic assessment is bounded to persisted source-diff evidence. |
-| 4. Containment and proof | Separate human disposition, operator attestation, containment confirmation, and exact-candidate proof gates. |
-| 5. Replacement observation | A machine operator may associate a fresh read-only observation of an independently submitted replacement job. The workflow stops at `REPLACEMENT_OBSERVED`. |
-
-## What is real and what is simulated
-
-| Component | Status |
-| --- | --- |
-| Liblouis translation, BRF serialization, pagination, hashing | Real, pinned and reproducible. |
-| Google Drive change/reconcile adapter | Real read-only MVP adapter. |
-| Gemini semantic assessment | Real semantic-only boundary when configured. |
-| Firestore/GCS workflow and artifact lineage | Real cloud adapters. |
-| CUPS scheduler and read-only bridge | Real in the WSL Gate 0 harness. |
-| Physical embossing endpoint | Simulated only. |
-| Device controls, cancellation, submission, endpoint completion, closure | Never implemented by Relay. |
-
-## Architecture
-
-```mermaid
+~~~mermaid
 flowchart LR
-    drive["Authoritative Drive source\n(read-only adapter)"] --> reconcile["Change feed + authoritative byte refetch"]
+    source["Authoritative source revision"] --> astra["ASTRA<br/>autonomous investigation"]
+    astra --> case["Evidence-backed recovery case"]
+    case --> gate["Human authority gate"]
+    gate --> controls["Existing production controls"]
+    controls --> output["Physical production and verification"]
+~~~
+
+**Astra autonomously completes investigation and recovery preparation.**
+Humans retain authority over professional approval and irreversible
+physical-production actions.
+
+## What Astra does autonomously
+
+| Workflow | What Astra completes |
+| --- | --- |
+| **Detect** | On an authorized Drive reconciliation, drains the change feed and performs an authoritative metadata-and-byte refetch. The fetched bytes, not a notification, establish truth. |
+| **Understand** | Validates immutable source lineage, derives stable source-block differences, and identifies the accepted source revision that supersedes the baseline. |
+| **Regenerate** | Uses a pinned Liblouis profile and deterministic formatter to create a candidate BRF, source map, manifest, hashes, and exact page-impact report. |
+| **Assess impact** | Sends only persisted, bounded evidence to Gemini through ADK for semantic assessment; deterministic code owns BRF bytes, hashes, page counts, and state. |
+| **Prepare recovery** | Correlates fresh read-only production observations, detects stale or ambiguous evidence, selects a fail-closed workflow state and recommendation, and constructs the report/disposition packet. |
+| **Observe replacement** | After an operator independently submits an approved replacement through the existing production surface, associates a fresh unambiguous observation and can reach **REPLACEMENT_OBSERVED**. |
+
+This is a complete workflow, not a chat response. It survives duplicate events,
+crashes, stale evidence, and restarts through durable Firestore state,
+idempotency keys, leases, immutable GCS artifacts, append-only human records,
+and explicit state versions.
+
+## Why this is agentic
+
+Astra is agentic because it autonomously orchestrates a multi-stage operational
+investigation across source authority, deterministic braille production,
+semantic judgment, production observation, and recovery evidence.
+
+Gemini is deliberately narrow: it makes a structured semantic assessment over
+persisted evidence. Deterministic software owns production truth: source
+normalization, translation, BRF bytes, profile identity, page impact, hashes,
+lineage, recommendations, retry behavior, and state transitions.
+
+> Astra is autonomous everywhere software can safely hold authority, and
+> deliberately human-gated where professional or physical production authority
+> begins.
+
+The interesting part is not a model clicking a stop button. It is Astra
+determining when a previously approved master is no longer trustworthy,
+establishing the evidence behind that conclusion, preparing the recovery case,
+and knowing exactly where its authority ends.
+
+## The memorable demo story
+
+The intended live hero path is:
+
+1. Show an approved baseline and its observed production context.
+2. Change the prepared authoritative Drive source from V1 to V2 through the
+   normal Drive UI.
+3. An authorized reconciliation invokes Astra, which refetches the source
+   bytes, detects the revision, and builds the candidate BRF and page-impact
+   evidence.
+4. Show the bounded Gemini assessment alongside deterministic source, BRF, and
+   production-observation evidence.
+5. Show a recovery recommendation and the human professional gate.
+6. A human acts through the existing external production controls; Astra later
+   observes an independently submitted replacement job and records
+   **REPLACEMENT_OBSERVED**.
+
+The final readiness evidence honestly records that the final fresh Drive edit,
+human CUPS lifecycle, professional disposition, and replacement submission
+were **NOT_RUN** in that release pass. The path is implemented; it must be
+demonstrated only from actual observed execution. See
+[live-demo-runbook.md](docs/live-demo-runbook.md) and
+[final-demo-readiness.json](demo/evidence/final-demo-readiness.json).
+
+## Deliberate human authority boundary
+
+| Astra owns | Humans own through existing, independent controls |
+| --- | --- |
+| Source-change detection, authoritative refetch, lineage, deterministic candidate generation, impact analysis, bounded semantic assessment, evidence correlation, state, recommendation, and recovery preparation | Professional disposition, halt/cancel decision and execution, physical-output isolation, tactile proof approval, replacement submission, final physical verification, and closure |
+
+Astra has no CUPS or device-control route. It cannot submit, hold, release,
+cancel, restart, pause, or physically stop a production job. Scheduler state
+does not prove physical containment. A candidate BRF is not an approved
+production master.
+
+This is a feature, not an omission: a recovery layer should not silently acquire
+the authority to operate specialized physical equipment or substitute its
+judgment for professional braille proofing.
+
+## Demonstrated vertical slice: real, simulated, and fixture-only
+
+| Capability | Truthful status |
+| --- | --- |
+| Liblouis translation, BRF serialization, pagination, source maps, profile/table binding, hashing, and page impact | **Real and reproducible.** Pinned profiles and exact BRF golden checks are part of the verification evidence. |
+| Google Drive change/reconcile path | **Real read-only adapter.** It uses Drive change information plus authoritative byte refetch; the final release's fresh hero edit remains NOT_RUN. |
+| Gemini / Google ADK semantic assessment | **Real bounded adapter when configured.** It returns structured semantic assessment only; it never owns production facts or device tools. |
+| Firestore ledger and GCS artifact lineage | **Real cloud adapters.** They hold durable workflow state and immutable content-addressed evidence, not a publishing system of record. |
+| Private Cloud Run deployment and authenticated read-only smoke | **Real.** The final readiness evidence records a private deployment and authenticated GET-only smoke. |
+| CUPS scheduling and read-only production observation | **Real in the WSL Gate 0 harness.** The application and bridge remain read-only with respect to CUPS. |
+| Physical embossing endpoint | **Simulated only.** The endpoint simulator stands in for the final physical act; CUPS/job observation is not faked. |
+| Offline screenshots and local fixture | **Sanitized fixture only.** It proves the UI and contracts, never live Drive, Gemini, cloud, CUPS, professional action, or endpoint execution. |
+
+## Designed for a real production world, without pretending every facility is the same
+
+Braille facilities do not use a universal intake or production stack. Source
+material can arrive as NIMAS packages, publisher files, Word, PDF, EPUB, secure
+uploads, or scanned physical material. Production can involve Duxbury,
+BrailleBlaster, Braille 2000, Liblouis-backed tooling, direct embossers,
+network-device queues, or plate/PED workflows. It also includes transcription,
+proofreading, work-order release, physical output, finishing, and distribution.
+
+The project researched those operational realities rather than treating
+conversion as a toy problem. For example, [American Printing House for the
+Blind describes its translation, proofreading, work-order, and production
+stages](https://www.aph.org/blog/aph-behind-the-scenes-a-look-at-the-people-and-processes-that-bring-you-braille/);
+[National Braille Press documents an end-to-end
+production-floor workflow](https://www.nbp.org/ic/nbp/about/aboutus/tour.html);
+and the U.S. Department of Education documents the
+[NIMAS/NIMAC source path](https://sites.ed.gov/idea/idea-files/questions-and-answers-on-the-national-instructional-materials-accessibility-standard-nimas-aug-9-2021/).
+
+Google Drive and CUPS are intentionally the hackathon's reproducible adapters,
+not claims about industry-standard intake or production control. The durable
+architecture is based on **source authority** and **production observation**
+boundaries, not on those two products.
+
+> We did not attempt to simulate every braille facility. We implemented the
+> smallest complete production topology necessary to prove the recovery
+> architecture.
+
+The deeper reference workflow, facility role map, sources, and integration
+rationale are preserved in
+[instruction.md](instruction.md#14-real-production-floor-reference-model).
+
+## Replaceable adapter model
+
+~~~mermaid
+flowchart TB
+    subgraph inputs["Facility-specific source authority examples"]
+        nimas["NIMAS / publisher package<br/>(future adapter)"]
+        sharepoint["SharePoint or SFTP<br/>(future adapter)"]
+        drive["Google Drive<br/>(demonstrated adapter)"]
+    end
+    inputs --> authority["Source Authority interface"]
+    authority --> core["ASTRA CORE<br/>lineage • deterministic BRF • impact • recovery"]
+    core --> observation["Production Observation interface"]
+    observation --> cups["CUPS read-only observer<br/>(demonstrated adapter)"]
+    observation --> future["Vendor / Windows / plate workflow<br/>(future adapters, not implemented)"]
+    cups --> endpoint["Simulated physical endpoint only"]
+~~~
+
+Future examples are not integrations or product promises. A new facility should
+replace an adapter while preserving Astra's source-lineage, evidence,
+professional-authority, and fail-closed recovery semantics.
+
+## Technical architecture
+
+For a Devpost-uploadable version of the authority model, use the static
+[architecture diagram (PNG)](docs/assets/astra-architecture-diagram.png) or
+its [accessible SVG source](docs/assets/astra-architecture-diagram.svg). It
+shows the demonstrated adapters, future adapter boundary, and explicit
+no-device-control boundary without claiming unimplemented integrations.
+
+~~~mermaid
+flowchart LR
+    drive["Authoritative Drive source<br/>(read-only adapter)"] --> reconcile["Change feed + authoritative byte refetch"]
     reconcile --> deterministic["Deterministic diff → Liblouis → BRF → page impact"]
-    deterministic --> gemini["Gemini / ADK\nsemantic assessment only"]
+    deterministic --> gemini["Gemini / ADK<br/>semantic assessment only"]
     gemini --> ledger["Firestore state + append-only timeline"]
     deterministic --> artifacts["Immutable GCS artifacts"]
     bridge["WSL read-only CUPS bridge"] --> ledger
     ledger --> api["Private Cloud Run API"]
-    api --> local["Loopback presentation server\n/watch + SSE"]
+    api --> local["Loopback presentation server<br/>watch + sanitized SSE"]
     local --> professional["Human professional"]
     professional -. independent existing production surface .-> cups["CUPS / vendor workflow"]
     cups --> endpoint["Simulated physical endpoint only"]
-```
+~~~
 
-Google Cloud hosts the private API, Firestore ledger, GCS artifacts, scheduled
-outbox drain, and adapter identities. Drive and CUPS are MVP adapters—not
-assumptions about every facility. The Windows browser/operator surfaces and
-WSL2 CUPS bridge/simulator are deliberately separate in the single-PC demo.
+The architecture deliberately separates:
 
-## Human authority and safety boundary
+- **Probabilistic judgment**: Gemini/ADK receives bounded evidence and returns
+  structured semantic assessment.
+- **Deterministic truth**: Liblouis, formatting, BRF bytes, hashes, profile and
+  table identity, source maps, page impact, lineage, policy, and state machine.
+- **Durable evidence**: Firestore holds idempotent state and append-only human
+  records; GCS stores create-only content-addressed artifacts.
+- **Production observation**: the local bridge can read CUPS evidence but has
+  no queue or device mutation authority.
+- **Human authority**: professional and physical actions remain attributable
+  records or independent external operations.
 
-Relay, its cloud service, local presentation server, and read-only bridge must
-never submit, hold, release, cancel, restart, pause, or otherwise mutate CUPS,
-an embosser, or another production device. A candidate BRF is not an approved
-production master. Cancellation, device stop, physical-output isolation, proof
-approval, replacement submission, endpoint completion, and final verification
-are separate facts with human authority.
+## Delivered workflow boundaries
 
-The live watch floor at `/watch` is read-only. Its local acknowledgement and
-optional sound controls do not post a professional disposition, mutate cloud
-workflow, or operate equipment.
+The implementation stories remain useful engineering scope; the judge-facing
+workflow above is the easier way to understand their operational effect.
 
-## Repository map
+| Story | Delivered boundary |
+| --- | --- |
+| 1. Baseline and source | Immutable baseline, accepted source revision, profile lineage, and stable source-block identity. |
+| 2. Deterministic impact | Real Liblouis translation, deterministic BRF, manifests, source maps, and exact page impact. |
+| 3. Semantic report | Grounded Gemini assessment bounded to persisted source-diff evidence with leases and retry convergence. |
+| 4. Containment and proof | Separate professional disposition, operator attestation, containment confirmation, and exact-candidate proof gates. |
+| 5. Replacement observation | A machine operator can associate a fresh read-only observation of an independently submitted replacement job; the implemented boundary ends at **REPLACEMENT_OBSERVED**. |
+
+## Repository guide
 
 | Path | Purpose |
 | --- | --- |
-| `src/braille_errata_relay/braille/` | Deterministic normalization, Liblouis boundary, pagination, BRF, and impact code. |
-| `src/braille_errata_relay/application/` | Idempotent workflows and fail-closed gates. |
-| `src/braille_errata_relay/adapters/` | Drive, Firestore, GCS, and Gemini/ADK adapters. |
-| `src/braille_errata_relay/api/` | Private Cloud Run evidence and human-record API. |
-| `src/braille_errata_relay/presentation/` | Loopback review dashboard, watch SSE, and sanitized fixture. |
-| `local_bridge/` | Read-only CUPS observer and transactional observation journal. |
-| `simulator/cups_backend/` | Physical-endpoint simulator only. |
-| `infra/` | Explicit human-run setup, GCP, WSL, and demo tools. |
-| `demo/` | Fixtures, expected BRF, screenshots, and sanitized evidence. |
-| `docs/` | Portable setup, security, testing, and demo chapters. |
+| [src/braille_errata_relay/braille](src/braille_errata_relay/braille) | Deterministic normalization, Liblouis boundary, pagination, BRF, source map, and impact logic. |
+| [src/braille_errata_relay/application](src/braille_errata_relay/application) | Idempotent workflows, retry/recovery behavior, and fail-closed gates. |
+| [src/braille_errata_relay/adapters](src/braille_errata_relay/adapters) | Google Drive, Firestore, GCS, and Gemini/ADK adapters. |
+| [src/braille_errata_relay/api](src/braille_errata_relay/api) | Private Cloud Run API and route-level identity enforcement. |
+| [src/braille_errata_relay/presentation](src/braille_errata_relay/presentation) | Loopback dashboard, live watch SSE, and sanitized offline fixture. |
+| [local_bridge](local_bridge) | Read-only CUPS observer and transactional observation journal. |
+| [simulator/cups_backend](simulator/cups_backend) | Simulated physical endpoint only. |
+| [infra](infra) | Explicit human-run GCP, WSL, CUPS, and demonstration tools. |
+| [demo](demo) | Sanitized fixtures, expected BRF artifacts, screenshots, and evidence. |
+| [docs/assets](docs/assets) | Submission-ready static architecture diagram (PNG/SVG). |
+| [docs](docs) | Setup, deployment, security, test/evidence, and demo chapters. |
 
-## Five-minute quick start
+## Quick start: choose the truthful path
 
-This path is local and non-destructive. It does not authenticate, deploy, edit
-Drive, or touch CUPS.
+### Offline evaluator path — five minutes, zero credentials
 
-**PowerShell**
+This is safe for any evaluator. It does not contact Google Cloud, Drive, CUPS,
+or a device. It proves only the UI and contracts.
 
-```powershell
+~~~powershell
 $RepoRoot = (git rev-parse --show-toplevel).Trim()
 Set-Location -LiteralPath $RepoRoot
 uv sync --frozen
 uv run --frozen pytest -q -p no:cacheprovider tests/unit/test_watch_floor.py
 uv run --frozen python -m braille_errata_relay.presentation.screenshot_fixture --port 8877
-```
+~~~
 
-Open `http://127.0.0.1:8877/watch` in the same machine. This is visibly marked
-**SANITIZED DEMO FIXTURE** and never contacts Cloud Run, Drive, CUPS, or a
-device.
+Open:
 
-**WSL/Linux**
+- http://127.0.0.1:8877/watch/quiet for the quiet monitoring state.
+- http://127.0.0.1:8877/watch for the alert, live-style event, and optional
+  local sound control.
+- http://127.0.0.1:8877/ for the synthetic incident dashboard.
 
-```bash
-repo_root="$(git rev-parse --show-toplevel)"
-cd "$repo_root"
-uv sync --frozen
-uv run --frozen pytest -q -p no:cacheprovider tests/unit/test_watch_floor.py
-```
+Every page is visibly marked **SANITIZED DEMO FIXTURE**. The fixture has
+GET-only routes; it cannot create a human record, contact an external service,
+or operate production equipment.
 
-See [docs/quickstart.md](docs/quickstart.md) for the full startup sequence.
+### Live evaluator path — configured private environment
 
-## Production-style setup
+This path demonstrates actual adapters and requires:
 
-The setup path writes only a gitignored local `.env`; it neither provisions
-Google Cloud nor accepts a password or service-account key.
+1. a private deployed Cloud Run service;
+2. a configured Google Drive source shared read-only with the runtime identity;
+3. Firestore/GCS state and artifact resources;
+4. ordinary local user ADC for the loopback dashboard;
+5. a temporary, service-account-scoped demonstrator Token Creator grant only
+   while the local dashboard runs;
+6. the optional WSL/CUPS local-floor setup for real queue observation.
 
-```text
-braille-relay init-local-config --interactive
-braille-relay doctor --config .env
-```
+Start here:
 
-Use browser-based `gcloud auth login` and `gcloud auth application-default
-login` when the doctor asks for ordinary user ADC. Use the exact scoped commands
-in [docs/google-cloud-setup.md](docs/google-cloud-setup.md); never put a Gmail
-password, OAuth token, or service-account JSON key in `.env`.
+- [quickstart.md](docs/quickstart.md) for local configuration and fixture/live
+  choices;
+- [fresh-project-deployment.md](docs/fresh-project-deployment.md) for an
+  explicit human-reviewed GCP deployment path;
+- [google-cloud-setup.md](docs/google-cloud-setup.md) for credentials, Drive
+  access, private Cloud Run, and temporary impersonation rules;
+- [local-floor-and-cups-simulator.md](docs/local-floor-and-cups-simulator.md)
+  for the human-owned local floor.
 
-## Local-only demo
+The live watch launcher is intentionally read-only:
 
-The safe Windows launcher starts the loopback presentation shell, checks that
-it is reachable, and opens `/watch` once because the user launched it. It does
-not grant IAM, run a scheduler, register a baseline, post a disposition, edit
-Drive, or mutate CUPS.
-
-```powershell
+~~~powershell
 $RepoRoot = (git rev-parse --show-toplevel).Trim()
 Set-Location -LiteralPath $RepoRoot
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\infra\demo\start_demo.ps1
-```
+~~~
 
-For a live private service, first create `.env` and complete the human-owned
-authentication prerequisites. For screenshots or a disconnected presentation,
-use the sanitized fixture above.
+It cannot grant IAM, reconcile Drive, submit a job, change CUPS, or make a
+professional disposition. Its temporary authentication prerequisite is
+explained in the Google Cloud setup guide.
 
-## Configuration
+## Configuration and security
 
-The generated `.env` contains non-secret identifiers only: cloud project,
-region, Drive file ID, source MIME type, site/queue/bridge IDs, optional
-service-account principal names, and private Relay URL origins. It is ignored
-by Git and refuses overwrite unless `--force` is explicit. See
-[docs/configuration.md](docs/configuration.md).
+The non-destructive initializer writes an ignored local environment file that
+contains identifiers only, never a password, OAuth token, or service-account
+JSON key:
 
-## Authentication and authorization
+~~~text
+uv run --frozen braille-relay init-local-config --interactive
+uv run --frozen braille-relay doctor --config .env
+~~~
 
-- The browser never receives a Google credential, access token, service-account
-  material, Drive ID, or private Cloud Run URL.
-- The loopback server uses ordinary local user ADC to mint short-lived,
-  audience-bound tokens only when a separately authorized human has granted
-  narrow, temporary impersonation authority.
-- The service remains private. No public invoker is required.
-- The CUPS observer has read-only authorization. The separate operator identity
-  belongs to a human using an independent production surface.
+The security model keeps the browser loopback-only; credentials, private URLs,
+Drive IDs, and service-account material never reach browser JavaScript. It
+uses signed sessions, CSRF protection, same-origin/CSP protections, sanitized
+SSE, audience-bound ID tokens, separate principals, temporary scoped
+impersonation, and a read-only CUPS observer. See
+[security-and-authority.md](docs/security-and-authority.md) and
+[configuration.md](docs/configuration.md).
 
-See [docs/security-and-authority.md](docs/security-and-authority.md).
+## Verify the implementation
 
-## Testing and evidence
+Run independent checks so one pass cannot conceal another:
 
-Run checks independently so one pass cannot conceal another result:
-
-```text
+~~~text
 uv lock --check
 uv run --frozen pytest -q -p no:cacheprovider
 uv run --frozen ruff check src tests infra/scripts
 uv run --frozen ruff format --check src tests infra/scripts
 uv run --frozen mypy src/braille_errata_relay
+git diff --check
 docker build --tag braille-errata-relay:final-demo-readiness .
 docker run --rm --network none --read-only --cap-drop ALL --entrypoint python braille-errata-relay:final-demo-readiness -m braille_errata_relay.container_smoke
-```
+~~~
 
-The repository preserves three honest platform skips: unavailable upstream
-Liblouis on the Windows host and two POSIX-only capture permission checks.
-Never turn those into passing mocks. See
-[docs/testing-and-evidence.md](docs/testing-and-evidence.md) and the sanitized
-release evidence under `demo/evidence/`.
+The current release evidence records a passing frozen suite, lock check, Ruff,
+strict mypy, Docker build, container readiness, repeated Liblouis golden
+renders, WSL Liblouis smoke, an evidence-recorded WSL full-application golden,
+responsive fixture inspection, private Cloud Run deployment, authenticated
+read-only smoke, and temporary Token Creator cleanup. The directly runnable
+WSL golden is the deterministic Liblouis render check; Windows-host skips
+remain platform-specific and are not passing mocks. Read the exact chronology
+in [testing-and-evidence.md](docs/testing-and-evidence.md).
 
-## Live demo
+## Evidence: current release versus history
 
-Use [docs/live-demo-runbook.md](docs/live-demo-runbook.md) for the 3–4 minute
-storyboard and fallback plan. The detailed human-action sequence is maintained
-in [docs/active-professional-review-demo.md](docs/active-professional-review-demo.md)
-rather than duplicated here.
+Evidence is sanitized, schema-validated, and deliberately chronological:
 
-## Limitations and unclaimed behavior
+| Evidence | Role |
+| --- | --- |
+| [gate0-local-floor.json](demo/evidence/gate0-local-floor.json) | Historical local CUPS/Liblouis foundation evidence. |
+| [cloud-gate0.json](demo/evidence/cloud-gate0.json) | Historical private Cloud Run, Drive, Firestore, GCS, and Gemini/ADK seam evidence. |
+| [final-story5-dashboard.json](demo/evidence/final-story5-dashboard.json) | Historical Story 5 and dashboard evidence. |
+| [final-demo-readiness.json](demo/evidence/final-demo-readiness.json) | **Current release evidence.** It supersedes earlier WSL-runtime uncertainty and labels unexecuted live hero actions as NOT_RUN. |
 
-- No Chrome extension, desktop daemon, email/Gmail integration, or notification
-  delivery service exists.
-- No production-device control, replacement submission, endpoint-completion
-  claim, final verification, or incident closure exists.
-- A `REPLACEMENT_OBSERVED` state is scheduler observation evidence only.
-- Page-range replacement is deferred; the hero path is full-volume candidate
-  replacement.
-- An incompatible external baseline profile fails closed as
-  `INCOMPATIBLE_BASELINE_PROFILE` rather than being compared with a Relay
-  candidate.
-- Historical blocked incidents remain valid fail-closed evidence; they are not
-  authorization to act.
+Historical snapshots remain valuable because they show the gates crossed, but
+they do not override the current release's facts. Fixture screenshots are
+separate from live execution evidence and never stand in for it.
 
-## Troubleshooting
+## Record the demo honestly
 
-Start with [docs/troubleshooting.md](docs/troubleshooting.md). It covers
-missing ADC, an unavailable private service, unavailable Liblouis, local
-watch-floor reconnection, and WSL/CUPS Gate 0 blockers without instructing the
-user to expose credentials or weaken authority boundaries.
+Use [live-demo-runbook.md](docs/live-demo-runbook.md) for the 3–4 minute
+problem-first recording story. The detailed human action/CUPS procedure stays
+in [active-professional-review-demo.md](docs/active-professional-review-demo.md).
 
-## Governing documents and evidence
+If a live prerequisite is unavailable, use the offline fixture and say so on
+camera. It demonstrates the visual interaction and safety contracts, not live
+Drive detection, Gemini execution, CUPS observation, professional action,
+replacement submission, or endpoint proof.
 
-The implementation contract is [architecture.md](architecture.md); the product
-and hackathon context is [instruction.md](instruction.md). Their content and
-lineage are preserved. Release evidence is sanitized and schema-validated,
-including [the final Story 5 evidence](demo/evidence/final-story5-dashboard.json).
+## Scope and unclaimed behavior
+
+Astra is not a braille publishing platform, work-order system of record,
+inventory, fulfillment, shipping, CRM, or production-device control product.
+It does not claim universal source support, tactile-graphics processing,
+mathematics/table transcription, or compatibility with all facility software.
+
+The demonstrated topology is intentionally narrow:
+
+- one strict text/Markdown source profile;
+- one real Drive source-authority adapter;
+- deterministic Liblouis BRF production under a pinned profile;
+- one real CUPS observer topology in WSL;
+- a simulated final physical embossing endpoint;
+- human-controlled professional and physical production authority.
+
+The limitation is **adapter coverage**, not ignorance of the surrounding
+production process. [instruction.md](instruction.md) and
+[architecture.md](architecture.md) preserve the grounded target design and
+research context. This README and
+[final-demo-readiness.json](demo/evidence/final-demo-readiness.json) define
+the implemented release boundary: the current Story 5 workflow ends at
+**REPLACEMENT_OBSERVED** and makes no final-verification, physical-completion,
+notification, or closure claim.
+
+## Submission handoff
+
+The current completed release branch is **codex/final-demo-readiness**. The
+remote's locally recorded default branch is older, so before submitting the
+repository URL, a repository administrator must make the branch containing the
+latest code, documentation, and evidence the GitHub default branch (or merge
+this release into the selected default branch). Judges should not have to
+manually discover the release branch.
+
+Before submission, verify:
+
+1. the submitted GitHub URL opens the release branch by default;
+2. the README at that URL is this judge-facing version;
+3. the sanitized current evidence file is present;
+4. the Devpost description and video use the same name: **Astra — Braille
+   Errata Relay**;
+5. any live claim in the video is backed by actual observed evidence.
+6. upload [astra-architecture-diagram.png](docs/assets/astra-architecture-diagram.png)
+   to Devpost as the static architecture-diagram artifact.
+
+## Further reading
+
+- [Fresh-project Google Cloud deployment](docs/fresh-project-deployment.md)
+- [Google Cloud authentication and Drive setup](docs/google-cloud-setup.md)
+- [Testing and evidence chronology](docs/testing-and-evidence.md)
+- [Security and authority model](docs/security-and-authority.md)
+- [Live demonstration runbook](docs/live-demo-runbook.md)
+- [Local CUPS simulator and bridge](docs/local-floor-and-cups-simulator.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Product and production research](instruction.md)
+- [Grounded target architecture and implementation context](architecture.md)

@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Astra — Braille Errata Relay architecture and authority boundary</title>
+  <desc id="desc">A three-zone diagram. A read-only authoritative source feeds Astra's Google Cloud control plane. Astra prepares evidence-backed recovery cases. Human professionals use existing production controls. CUPS observation is read only, and only the physical embosser endpoint is simulated.</desc>
+  <defs>
+    <style>
+      .title { font: 700 44px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 22px Arial, sans-serif; fill: #475569; }
+      .zone { font: 700 16px Arial, sans-serif; letter-spacing: 1.5px; }
+      .heading { font: 700 23px Arial, sans-serif; fill: #0f172a; }
+      .body { font: 400 17px Arial, sans-serif; fill: #334155; }
+      .small { font: 400 15px Arial, sans-serif; fill: #475569; }
+      .label { font: 700 15px Arial, sans-serif; fill: #334155; }
+      .accent { font: 700 17px Arial, sans-serif; fill: #075985; }
+      .warning { font: 700 16px Arial, sans-serif; fill: #991b1b; }
+    </style>
+    <marker id="arrow-blue" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M 0 0 L 11 5.5 L 0 11 z" fill="#0284c7"/></marker>
+    <marker id="arrow-slate" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M 0 0 L 11 5.5 L 0 11 z" fill="#475569"/></marker>
+    <marker id="arrow-amber" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M 0 0 L 11 5.5 L 0 11 z" fill="#d97706"/></marker>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#f8fafc"/>
+  <rect x="42" y="34" width="1516" height="112" rx="24" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="84" y="84" class="title">Astra — Braille Errata Relay</text>
+  <text x="84" y="119" class="subtitle">A production-minded change-control and recovery layer for late authoritative-source corrections</text>
+  <rect x="1218" y="60" width="292" height="57" rx="28" fill="#e0f2fe" stroke="#7dd3fc" stroke-width="2"/>
+  <text x="1364" y="95" text-anchor="middle" class="accent">AUTONOMOUS INVESTIGATION</text>
+
+  <!-- Source authority zone -->
+  <rect x="42" y="176" width="390" height="610" rx="24" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text x="75" y="215" class="zone" fill="#1d4ed8">SOURCE AUTHORITY</text>
+  <text x="75" y="251" class="heading">Demonstrated adapter</text>
+  <rect x="75" y="275" width="324" height="145" rx="16" fill="#ffffff" stroke="#60a5fa" stroke-width="2"/>
+  <text x="102" y="318" class="heading">Google Drive</text>
+  <text x="102" y="351" class="body">One configured text/Markdown file</text>
+  <text x="102" y="378" class="body">Read only • change feed + refetch</text>
+  <text x="102" y="404" class="small">Fetched bytes establish source truth</text>
+
+  <text x="75" y="470" class="label">Facility variation lives behind this boundary</text>
+  <rect x="75" y="493" width="324" height="176" rx="16" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 7"/>
+  <text x="102" y="533" class="heading">Future adapter examples</text>
+  <text x="102" y="568" class="body">NIMAS / publisher packages</text>
+  <text x="102" y="596" class="body">SharePoint / SFTP / secure upload</text>
+  <text x="102" y="624" class="body">Scanned or other source workflows</text>
+  <text x="102" y="651" class="small">Examples only — not implemented</text>
+  <text x="75" y="724" class="small">Astra preserves source authority and lineage;</text>
+  <text x="75" y="747" class="small">it is not a publishing system of record.</text>
+
+  <!-- Cloud zone -->
+  <rect x="465" y="176" width="680" height="610" rx="24" fill="#ecfeff" stroke="#67e8f9" stroke-width="2"/>
+  <text x="500" y="215" class="zone" fill="#0e7490">ASTRA / PRIVATE GOOGLE CLOUD CONTROL PLANE</text>
+  <text x="500" y="251" class="heading">Autonomous evidence-backed investigation</text>
+
+  <rect x="500" y="275" width="610" height="122" rx="16" fill="#ffffff" stroke="#22d3ee" stroke-width="2"/>
+  <text x="529" y="314" class="heading">Private Cloud Run: deterministic recovery core</text>
+  <text x="529" y="345" class="body">Normalize source → lineage → Liblouis BRF → exact page impact</text>
+  <text x="529" y="373" class="small">Idempotency • fail-closed policy • state/version checks • retry recovery</text>
+
+  <rect x="500" y="430" width="292" height="162" rx="16" fill="#ffffff" stroke="#22d3ee" stroke-width="2"/>
+  <text x="526" y="469" class="heading">Gemini + Google ADK</text>
+  <text x="526" y="501" class="body">Bounded semantic assessment</text>
+  <text x="526" y="528" class="body">over persisted evidence</text>
+  <text x="526" y="558" class="small">No ownership of BRF bytes,</text>
+  <text x="526" y="579" class="small">queues, or physical authority</text>
+
+  <rect x="818" y="430" width="292" height="162" rx="16" fill="#ffffff" stroke="#22d3ee" stroke-width="2"/>
+  <text x="844" y="469" class="heading">Firestore + GCS</text>
+  <text x="844" y="501" class="body">Durable state and timeline</text>
+  <text x="844" y="528" class="body">Immutable artifacts + hashes</text>
+  <text x="844" y="558" class="small">Content-addressed lineage,</text>
+  <text x="844" y="579" class="small">not an order/inventory system</text>
+
+  <rect x="500" y="625" width="610" height="96" rx="16" fill="#cffafe" stroke="#06b6d4" stroke-width="2"/>
+  <text x="805" y="663" text-anchor="middle" class="heading">Evidence-backed recovery case</text>
+  <text x="805" y="693" text-anchor="middle" class="body">Candidate BRF • source/production lineage • exact impact • recommendation</text>
+
+  <!-- Human and local floor zone -->
+  <rect x="1178" y="176" width="380" height="610" rx="24" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+  <text x="1211" y="215" class="zone" fill="#c2410c">HUMAN-CONTROLLED LOCAL FLOOR</text>
+  <text x="1211" y="251" class="heading">Professional + physical authority</text>
+  <rect x="1211" y="275" width="314" height="142" rx="16" fill="#ffffff" stroke="#fb923c" stroke-width="2"/>
+  <text x="1238" y="314" class="heading">Qualified people</text>
+  <text x="1238" y="346" class="body">Disposition • physical isolation</text>
+  <text x="1238" y="374" class="body">Proof approval • replacement submit</text>
+  <text x="1238" y="400" class="small">Existing independent controls</text>
+
+  <rect x="1211" y="449" width="314" height="120" rx="16" fill="#ffffff" stroke="#fb923c" stroke-width="2"/>
+  <text x="1238" y="487" class="heading">CUPS observer</text>
+  <text x="1238" y="518" class="body">Read-only production observation</text>
+  <text x="1238" y="545" class="small">Fresh/ambiguous/stale evidence</text>
+
+  <rect x="1211" y="604" width="314" height="117" rx="16" fill="#ffffff" stroke="#fb923c" stroke-width="2"/>
+  <text x="1238" y="643" class="heading">Physical endpoint</text>
+  <text x="1238" y="674" class="body">Embosser endpoint: simulated only</text>
+  <text x="1238" y="700" class="small">CUPS scheduling/observation is real</text>
+
+  <!-- Inter-zone flow -->
+  <path d="M 399 348 C 430 348, 453 348, 490 348" fill="none" stroke="#0284c7" stroke-width="4" marker-end="url(#arrow-blue)"/>
+  <text x="449" y="326" text-anchor="middle" class="label">authoritative revision</text>
+  <path d="M 1110 672 C 1140 672, 1160 672, 1202 672" fill="none" stroke="#d97706" stroke-width="4" marker-end="url(#arrow-amber)"/>
+  <text x="1156" y="648" text-anchor="middle" class="label">recovery case</text>
+  <path d="M 1211 506 C 1178 506, 1155 506, 1118 506" fill="none" stroke="#475569" stroke-width="4" marker-end="url(#arrow-slate)"/>
+  <text x="1150" y="470" text-anchor="middle" class="label">read-only observation</text>
+
+  <!-- Authority boundary -->
+  <rect x="42" y="824" width="1516" height="132" rx="24" fill="#fef2f2" stroke="#fca5a5" stroke-width="2"/>
+  <text x="82" y="868" class="warning">DELIBERATE AUTHORITY BOUNDARY</text>
+  <text x="82" y="903" class="body">Astra autonomously detects, investigates, regenerates, assesses impact, correlates evidence, and prepares recovery.</text>
+  <text x="82" y="932" class="warning">Astra has no CUPS or device-control route: it cannot submit, hold, release, cancel, restart, pause, or stop physical production.</text>
+  <rect x="1264" y="857" width="246" height="67" rx="33" fill="#ffffff" stroke="#ef4444" stroke-width="2"/>
+  <text x="1387" y="887" text-anchor="middle" class="heading">HUMAN GATE</text>
+  <text x="1387" y="910" text-anchor="middle" class="small">irreversible authority</text>
+</svg>

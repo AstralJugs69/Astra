@@ -1,71 +1,90 @@
-# Quick start
+# Astra — quick start
 
-This chapter has two deliberately separate paths. The offline fixture is safe
-for any evaluator. The live watch floor requires ordinary Google user ADC and a
-pre-existing private Relay deployment; it does not provision anything.
+Choose one truthful path. The **offline evaluator path** is safe for any judge
+and needs no cloud, Drive, CUPS, credentials, or hardware. The **live evaluator
+path** uses a configured private Astra deployment and does not provision cloud
+resources or grant production authority.
 
 ## 1. Get the repository ready — local state only
 
 **PowerShell**
 
-```powershell
+~~~powershell
 $RepoRoot = (git rev-parse --show-toplevel).Trim()
 Set-Location -LiteralPath $RepoRoot
 uv sync --frozen
 uv lock --check
-```
+~~~
 
 **WSL/Linux**
 
-```bash
+~~~bash
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 uv sync --frozen
 uv lock --check
-```
+~~~
 
-## 2. View the offline fixture — no cloud or production action
+## 2. Offline evaluator path — fixture only, no production claim
 
-```text
+~~~text
 uv run --frozen python -m braille_errata_relay.presentation.screenshot_fixture --port 8877
-```
+~~~
 
-Open `http://127.0.0.1:8877/watch`. Every route is GET-only and visibly marked
-`SANITIZED DEMO FIXTURE`; it cannot reach Drive, Cloud Run, CUPS, a queue, or a
-physical endpoint.
+Open `http://127.0.0.1:8877/watch/quiet`, then `/watch` and `/`. Every route is
+GET-only and visibly marked `SANITIZED DEMO FIXTURE`; it cannot reach Drive,
+Cloud Run, CUPS, a queue, or a physical endpoint. It proves the UI and
+contracts only, never a live integration.
 
 ## 3. Create local configuration — writes ignored `.env`
 
-```text
+~~~text
 uv run --frozen braille-relay init-local-config --interactive
 uv run --frozen braille-relay doctor --config .env
-```
+~~~
 
-The initializer accepts a standard Drive URL or direct file ID, but asks for no
-password or token. It shows a sanitized configuration preview and refuses to
-overwrite `.env` without `--force`.
+The initializer accepts a standard Drive URL or direct file ID, asks for no
+password or token, shows a sanitized preview, and refuses to overwrite `.env`
+without `--force`. It writes local identifiers only; it is not a Cloud Run
+deployment template.
 
-## 4. Start the live watch floor — starts a local process only
+## 4. Live evaluator path — configured private environment
 
-```powershell
+Before using this path:
+
+1. follow [Google Cloud, Drive, and local authentication](google-cloud-setup.md);
+2. use [fresh-project deployment](fresh-project-deployment.md) if you do not
+   already have the private Cloud Run, Firestore, GCS, and runtime identity;
+3. optionally set up the human-owned [local CUPS floor](local-floor-and-cups-simulator.md).
+
+Ordinary `cloud-platform` ADC is enough for the local watch and private Cloud
+Run access. A local Drive diagnostic is optional and requires a project-owned
+OAuth client for `drive.readonly`; the deployed runtime identity performs
+read-only Drive reconciliation.
+
+Start the local presentation process:
+
+~~~powershell
 $RepoRoot = (git rev-parse --show-toplevel).Trim()
 Set-Location -LiteralPath $RepoRoot
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\infra\demo\start_demo.ps1
-```
+~~~
 
 The launcher binds only to `127.0.0.1`, opens `/watch` once, and keeps cloud
 credentials on the local server. A browser page receives no private URL or
-credential. If its `doctor` result is blocked, resolve the documented
-prerequisite before claiming live data is ready.
+credential. It cannot reconcile Drive, change CUPS, or make a human production
+decision. If `doctor` is blocked, resolve the documented prerequisite before
+claiming live data is ready.
 
 ## 5. Verify the code
 
-```text
+~~~text
 uv run --frozen pytest -q -p no:cacheprovider
 uv run --frozen ruff check src tests infra/scripts
 uv run --frozen ruff format --check src tests infra/scripts
 uv run --frozen mypy src/braille_errata_relay
-```
+~~~
 
-The full container and WSL verification path is in
-[testing-and-evidence.md](testing-and-evidence.md).
+The container, WSL, historical evidence, and current-release chronology are in
+[testing-and-evidence.md](testing-and-evidence.md). For a problem-first video,
+use [live-demo-runbook.md](live-demo-runbook.md).

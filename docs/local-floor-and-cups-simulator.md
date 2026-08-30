@@ -1,4 +1,4 @@
-# Local floor and CUPS simulator
+# Astra — local floor and CUPS simulator
 
 The single-PC demo keeps Windows browser/operator surfaces separate from WSL2
 where CUPS, the read-only bridge, and the physical-endpoint simulator run. Only

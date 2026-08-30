@@ -1,4 +1,15 @@
-# Active professional-review demo
+# Astra — active professional-review demo
+
+## Current release boundary
+
+This is a human-authority procedure and target operating context, not a claim
+that the current release automatically completes production recovery. The
+implemented Story 5 boundary ends at `REPLACEMENT_OBSERVED` after a human
+independently submits an approved replacement and Astra links a fresh,
+unambiguous read-only observation. It does not claim endpoint completion, final
+physical verification, notification, closure, or a `RESOLVED_BY_HUMAN` state.
+For the current release evidence and any `NOT_RUN` live actions, see
+[testing-and-evidence.md](testing-and-evidence.md).
 
 The harness is a print-only, human-authority runbook. It never submits, holds,
 releases, cancels, or otherwise controls CUPS; changes Drive; changes IAM; or

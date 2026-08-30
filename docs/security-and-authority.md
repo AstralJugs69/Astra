@@ -1,4 +1,4 @@
-# Security and authority
+# Astra — security and authority
 
 ## Non-negotiable boundary
 
