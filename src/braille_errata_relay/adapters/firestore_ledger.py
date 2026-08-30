@@ -76,6 +76,39 @@ class SemanticLeaseError(LedgerIntegrityError):
     pass
 
 
+class AutomationLeaseError(LedgerIntegrityError):
+    pass
+
+
+class AutomationCycleClaimStatus(StrEnum):
+    ACQUIRED = "ACQUIRED"
+    IN_PROGRESS = "IN_PROGRESS"
+
+
+@dataclass(frozen=True)
+class AutomationCycleClaim:
+    cycle_key: str
+    cycle_id: str
+    status: AutomationCycleClaimStatus
+    lease_token: str | None = None
+    lease_expires_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class AutomationCycleLedgerState:
+    """Sanitized durable state for the one automatic reconciliation lane."""
+
+    cycle_key: str
+    state: str
+    active_cycle_id: str | None
+    lease_expires_at: datetime | None
+    last_execution_cycle_id: str | None
+    last_outcome: str | None
+    last_result: dict[str, object] | None
+    last_error_code: str | None
+    last_completed_at: datetime | None
+
+
 class SemanticClaimStatus(StrEnum):
     ACQUIRED = "ACQUIRED"
     IN_PROGRESS = "IN_PROGRESS"
@@ -198,6 +231,7 @@ class ChangeCommitResult:
     outbox_ids: tuple[str, ...]
     final_cursor_sha256: str
     duplicate: bool
+    new_outbox_ids: tuple[str, ...] = ()
 
 
 TransactionRunner = Callable[[Callable[[Any], T]], T]
@@ -1286,7 +1320,11 @@ class FirestoreGate0Ledger:
                 parsed = IncidentCheckpoint.model_validate(existing_record)
                 if (
                     parsed.baseline_id != checkpoint.baseline_id
-                    or parsed.new_source_revision_id != checkpoint.new_source_revision_id
+                    # A Drive provider version is immutable observation
+                    # lineage, not incident identity.  Re-saving identical
+                    # authoritative bytes must reuse the incident keyed by
+                    # its baseline, content digest, and production lineage.
+                    or parsed.new_source_sha256 != checkpoint.new_source_sha256
                     or parsed.production_job_lineage_id != checkpoint.production_job_lineage_id
                 ):
                     raise LedgerIntegrityError("incident identity conflicts with durable data")
@@ -3381,6 +3419,294 @@ class FirestoreGate0Ledger:
             payload_sha256,
         )
 
+    def _claim_automation_cycle_sync(
+        self,
+        *,
+        cycle_key: str,
+        cycle_id: str,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> AutomationCycleClaim:
+        _require_sha256(cycle_key, label="automation cycle key")
+        _require_sha256(cycle_id, label="automation cycle ID")
+        if not lease_token or lease_seconds < 1:
+            raise ValueError("automation cycle lease parameters are invalid")
+        lease_ref = self._document("automation_cycle_leases", cycle_key)
+
+        def operation(transaction: Any) -> AutomationCycleClaim:
+            now = self._clock()
+            existing = self._snapshot_data(lease_ref.get(transaction=transaction))
+            state_version = 0
+            attempts = 0
+            created_at = now
+            abandoned_cycle_id: str | None = None
+            prior_summary: dict[str, object] = {}
+            if existing is not None:
+                stored_key = existing.get("cycle_key")
+                stored_status = existing.get("status")
+                stored_cycle_id = existing.get("cycle_id")
+                stored_expiry = existing.get("lease_expires_at")
+                stored_version = existing.get("state_version")
+                stored_attempts = existing.get("attempts")
+                if stored_key != cycle_key or not isinstance(stored_version, int):
+                    raise AutomationLeaseError("automation cycle lease identity is malformed")
+                if not isinstance(stored_attempts, int) or stored_attempts < 0:
+                    raise AutomationLeaseError("automation cycle attempt count is malformed")
+                state_version = stored_version
+                attempts = stored_attempts
+                existing_created_at = existing.get("created_at")
+                if isinstance(existing_created_at, datetime):
+                    created_at = existing_created_at
+                for field in (
+                    "last_execution_cycle_id",
+                    "last_outcome",
+                    "last_result_sha256",
+                    "last_error_code",
+                ):
+                    if field in existing:
+                        prior_summary[field] = existing[field]
+                if stored_status == "RUNNING":
+                    if not isinstance(stored_cycle_id, str) or not isinstance(
+                        stored_expiry, datetime
+                    ):
+                        raise AutomationLeaseError("active automation cycle lease is malformed")
+                    if stored_expiry > now:
+                        return AutomationCycleClaim(
+                            cycle_key=cycle_key,
+                            cycle_id=stored_cycle_id,
+                            status=AutomationCycleClaimStatus.IN_PROGRESS,
+                            lease_expires_at=stored_expiry,
+                        )
+                    abandoned_cycle_id = stored_cycle_id
+                elif stored_status != "IDLE":
+                    raise AutomationLeaseError("automation cycle lease status is malformed")
+
+            lease_expires_at = now + timedelta(seconds=lease_seconds)
+            payload: dict[str, object] = {
+                "cycle_key": cycle_key,
+                "cycle_id": cycle_id,
+                "status": "RUNNING",
+                "lease_token": lease_token,
+                "lease_expires_at": lease_expires_at,
+                "attempts": attempts + 1,
+                "state_version": state_version + 1,
+                "created_at": created_at,
+                "updated_at": now,
+            }
+            if abandoned_cycle_id is not None:
+                payload["last_abandoned_cycle_id"] = abandoned_cycle_id
+            payload.update(prior_summary)
+            transaction.set(lease_ref, payload)
+            return AutomationCycleClaim(
+                cycle_key=cycle_key,
+                cycle_id=cycle_id,
+                status=AutomationCycleClaimStatus.ACQUIRED,
+                lease_token=lease_token,
+                lease_expires_at=lease_expires_at,
+            )
+
+        return cast(AutomationCycleClaim, self._transaction_runner(operation))
+
+    async def claim_automation_cycle(
+        self,
+        *,
+        cycle_key: str,
+        cycle_id: str,
+        lease_token: str,
+        lease_seconds: int,
+    ) -> AutomationCycleClaim:
+        return await asyncio.to_thread(
+            self._claim_automation_cycle_sync,
+            cycle_key=cycle_key,
+            cycle_id=cycle_id,
+            lease_token=lease_token,
+            lease_seconds=lease_seconds,
+        )
+
+    def _finish_automation_cycle_sync(
+        self,
+        *,
+        cycle_key: str,
+        cycle_id: str,
+        lease_token: str,
+        outcome: str,
+        result: Mapping[str, object] | None = None,
+        error_code: str | None = None,
+    ) -> bool:
+        _require_sha256(cycle_key, label="automation cycle key")
+        _require_sha256(cycle_id, label="automation cycle ID")
+        if not lease_token or outcome not in {"COMPLETED", "FAILED"}:
+            raise ValueError("automation cycle completion parameters are invalid")
+        if outcome == "COMPLETED" and result is None:
+            raise ValueError("completed automation cycle requires a result")
+        if outcome == "FAILED" and not error_code:
+            raise ValueError("failed automation cycle requires an error code")
+        lease_ref = self._document("automation_cycle_leases", cycle_key)
+        execution_ref = self._document("automation_cycle_executions", cycle_id)
+
+        def operation(transaction: Any) -> bool:
+            now = self._clock()
+            lease = self._snapshot_data(lease_ref.get(transaction=transaction))
+            execution = self._snapshot_data(execution_ref.get(transaction=transaction))
+            if execution is not None:
+                return execution.get("outcome") == outcome
+            if lease is None:
+                raise AutomationLeaseError("automation cycle lease is missing")
+            if (
+                lease.get("cycle_key") != cycle_key
+                or lease.get("cycle_id") != cycle_id
+                or lease.get("status") != "RUNNING"
+                or lease.get("lease_token") != lease_token
+            ):
+                return False
+            state_version = lease.get("state_version")
+            attempts = lease.get("attempts")
+            if not isinstance(state_version, int) or not isinstance(attempts, int):
+                raise AutomationLeaseError("automation cycle lease version is malformed")
+
+            result_body = dict(result or {})
+            result_sha256 = canonical_sha256(result_body) if result is not None else None
+            execution_body: dict[str, object] = {
+                "cycle_key": cycle_key,
+                "cycle_id": cycle_id,
+                "outcome": outcome,
+                "completed_at": now,
+            }
+            if result_sha256 is not None:
+                execution_body["result"] = result_body
+                execution_body["result_sha256"] = result_sha256
+            if error_code is not None:
+                execution_body["error_code"] = error_code[:128]
+            execution_body["payload_sha256"] = canonical_sha256(execution_body)
+            transaction.create(execution_ref, execution_body)
+
+            idle_body: dict[str, object] = {
+                "cycle_key": cycle_key,
+                "cycle_id": cycle_id,
+                "status": "IDLE",
+                "lease_token": None,
+                "lease_expires_at": now,
+                "attempts": attempts,
+                "state_version": state_version + 1,
+                "created_at": lease.get("created_at", now),
+                "updated_at": now,
+                "last_execution_cycle_id": cycle_id,
+                "last_outcome": outcome,
+            }
+            if result_sha256 is not None:
+                idle_body["last_result_sha256"] = result_sha256
+            if error_code is not None:
+                idle_body["last_error_code"] = error_code[:128]
+            transaction.set(lease_ref, idle_body)
+            return True
+
+        return cast(bool, self._transaction_runner(operation))
+
+    def _get_automation_cycle_state_sync(
+        self,
+        *,
+        cycle_key: str,
+    ) -> AutomationCycleLedgerState | None:
+        _require_sha256(cycle_key, label="automation cycle key")
+        lease = self._snapshot_data(self._document("automation_cycle_leases", cycle_key).get())
+        if lease is None:
+            return None
+        if lease.get("cycle_key") != cycle_key:
+            raise AutomationLeaseError("automation cycle lease identity is malformed")
+        state = lease.get("status")
+        if state not in {"RUNNING", "IDLE"}:
+            raise AutomationLeaseError("automation cycle lease status is malformed")
+        active_cycle_id = lease.get("cycle_id")
+        lease_expires_at = lease.get("lease_expires_at")
+        if not isinstance(active_cycle_id, str) or not isinstance(lease_expires_at, datetime):
+            raise AutomationLeaseError("automation cycle lease state is malformed")
+        last_execution_cycle_id = lease.get("last_execution_cycle_id")
+        if last_execution_cycle_id is not None and not isinstance(last_execution_cycle_id, str):
+            raise AutomationLeaseError("automation cycle execution identity is malformed")
+        last_outcome = lease.get("last_outcome")
+        if last_outcome is not None and last_outcome not in {"COMPLETED", "FAILED"}:
+            raise AutomationLeaseError("automation cycle outcome is malformed")
+        last_error_code = lease.get("last_error_code")
+        if last_error_code is not None and not isinstance(last_error_code, str):
+            raise AutomationLeaseError("automation cycle error code is malformed")
+        last_result: dict[str, object] | None = None
+        last_completed_at: datetime | None = None
+        if last_execution_cycle_id is not None:
+            execution = self._snapshot_data(
+                self._document("automation_cycle_executions", last_execution_cycle_id).get()
+            )
+            if execution is None:
+                raise AutomationLeaseError("automation cycle execution is missing")
+            if (
+                execution.get("cycle_key") != cycle_key
+                or execution.get("cycle_id") != last_execution_cycle_id
+            ):
+                raise AutomationLeaseError("automation cycle execution identity is malformed")
+            completed_at = execution.get("completed_at")
+            if not isinstance(completed_at, datetime):
+                raise AutomationLeaseError("automation cycle execution time is malformed")
+            last_completed_at = completed_at
+            result = execution.get("result")
+            if result is not None:
+                if not isinstance(result, dict):
+                    raise AutomationLeaseError("automation cycle result is malformed")
+                last_result = dict(result)
+        return AutomationCycleLedgerState(
+            cycle_key=cycle_key,
+            state=state,
+            active_cycle_id=active_cycle_id,
+            lease_expires_at=lease_expires_at,
+            last_execution_cycle_id=last_execution_cycle_id,
+            last_outcome=last_outcome,
+            last_result=last_result,
+            last_error_code=last_error_code,
+            last_completed_at=last_completed_at,
+        )
+
+    async def get_automation_cycle_state(
+        self,
+        *,
+        cycle_key: str,
+    ) -> AutomationCycleLedgerState | None:
+        return await asyncio.to_thread(
+            self._get_automation_cycle_state_sync,
+            cycle_key=cycle_key,
+        )
+
+    async def complete_automation_cycle(
+        self,
+        *,
+        cycle_key: str,
+        cycle_id: str,
+        lease_token: str,
+        result: Mapping[str, object],
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._finish_automation_cycle_sync,
+            cycle_key=cycle_key,
+            cycle_id=cycle_id,
+            lease_token=lease_token,
+            outcome="COMPLETED",
+            result=result,
+        )
+
+    async def fail_automation_cycle(
+        self,
+        *,
+        cycle_key: str,
+        cycle_id: str,
+        lease_token: str,
+        error_code: str,
+    ) -> bool:
+        return await asyncio.to_thread(
+            self._finish_automation_cycle_sync,
+            cycle_key=cycle_key,
+            cycle_id=cycle_id,
+            lease_token=lease_token,
+            outcome="FAILED",
+            error_code=error_code,
+        )
+
     def _prepare_change_records(
         self,
         *,
@@ -3490,6 +3816,7 @@ class FirestoreGate0Ledger:
                     outbox_ids=tuple(str(record["message_id"]) for record in outbox_records),
                     final_cursor_sha256=_token_sha256(batch.final_cursor),
                     duplicate=True,
+                    new_outbox_ids=(),
                 )
             if cursor_existing is None:
                 raise StaleCursorError("Drive cursor was not initialized")
@@ -3516,11 +3843,13 @@ class FirestoreGate0Ledger:
                     transaction.create(ref, {**record, "claimed_at": now})
                 elif not _same_source_revision_identity(existing, record):
                     raise LedgerIntegrityError("source revision claim conflicts with existing data")
+            new_outbox_ids: list[str] = []
             for ref, record, existing in zip(
                 outbox_refs, outbox_records, outbox_existing, strict=True
             ):
                 if existing is None:
                     transaction.create(ref, {**record, "created_at": now})
+                    new_outbox_ids.append(str(record["message_id"]))
                 elif existing.get("payload_sha256") != record["payload_sha256"]:
                     raise LedgerIntegrityError("outbox identity conflicts with existing data")
             if execution_existing is None:
@@ -3550,6 +3879,7 @@ class FirestoreGate0Ledger:
                 outbox_ids=tuple(str(record["message_id"]) for record in outbox_records),
                 final_cursor_sha256=_token_sha256(batch.final_cursor),
                 duplicate=False,
+                new_outbox_ids=tuple(new_outbox_ids),
             )
 
         return cast(ChangeCommitResult, self._transaction_runner(operation))
@@ -3674,7 +4004,7 @@ class FirestoreGate0Ledger:
         prompt_version: str,
         analysis_revision: int,
         lease_token: str,
-        lease_seconds: int = 120,
+        lease_seconds: int = 240,
     ) -> SemanticExecutionClaim:
         return await asyncio.to_thread(
             self._claim_semantic_execution_sync,

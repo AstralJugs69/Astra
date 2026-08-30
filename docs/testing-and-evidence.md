@@ -35,7 +35,7 @@ The shown container command is an installed-runtime readiness smoke: it checks
 the packaged profile and Liblouis readiness under constrained container
 settings. It does **not** itself run the V1/V2 BRF byte golden comparison.
 
-The current release evidence records a separate repeated container Liblouis
+The latest recorded release evidence records a separate repeated container Liblouis
 golden comparison. Do not replace that distinction with a stronger claim than
 the command actually performs.
 
@@ -60,7 +60,7 @@ An unavailable WSL binding, table, profile, frozen project runtime, CUPS
 permission, or hardware prerequisite is **BLOCKED**, not a pass. Never replace
 such a gap with a mocked translator or weakened observer policy.
 
-## Current release and historical evidence
+## Recorded release and historical evidence
 
 The evidence directory intentionally preserves historical gates. Read it as a
 chronology, not as a set of interchangeable claims.
@@ -69,8 +69,8 @@ chronology, not as a set of interchangeable claims.
 | --- | --- |
 | [gate0-local-floor.json](../demo/evidence/gate0-local-floor.json) | Historical local-floor proof: real CUPS scheduling, raw-byte capture, operator lifecycle, and observer denials. Only the final physical endpoint is simulated. |
 | [cloud-gate0.json](../demo/evidence/cloud-gate0.json) | Historical cloud-seam proof: private Cloud Run, Drive change/refetch, Firestore/GCS, and structured Gemini/ADK assessment. |
-| [final-story5-dashboard.json](../demo/evidence/final-story5-dashboard.json) | Historical Story 5/dashboard snapshot. It records the then-blocked isolated WSL-runtime state and is not the current release status. |
-| [final-demo-readiness.json](../demo/evidence/final-demo-readiness.json) | **Current sanitized release evidence.** It was recorded in Git commit **8569335** at **2026-08-30T19:35:15Z** and records current verification/deployment results. |
+| [final-story5-dashboard.json](../demo/evidence/final-story5-dashboard.json) | Historical Story 5/dashboard snapshot. It records the then-blocked isolated WSL-runtime state and is not the latest recorded release status. |
+| [final-demo-readiness.json](../demo/evidence/final-demo-readiness.json) | **Latest recorded sanitized release evidence.** It was recorded in Git commit **8569335** at **2026-08-30T19:35:15Z** and records that release's verification/deployment results. |
 | [manifest.json](../demo/screenshots/manifest.json) | Sanitized offline fixture screenshot evidence only. It proves rendering/privacy contracts, never live Drive, Gemini, cloud, CUPS, human action, or endpoint execution. |
 
 The latest final-readiness record contains
@@ -81,7 +81,7 @@ rewritten. The directly runnable WSL proof described above remains the
 deterministic Liblouis V1/V2 render golden, while the container remains the
 frozen installed-runtime verification path.
 
-The current final-readiness artifact records these live hero-path actions as
+The latest final-readiness artifact records these live hero-path actions as
 **NOT_RUN** for that release pass:
 
 - Drive edit;
@@ -93,9 +93,13 @@ They are not passing demonstrations. A future live run may update evidence only
 from actual observed execution; never use a fixture or an old historical
 record to fill those cells.
 
-## What the latest release evidence records
+The automatic Drive watch is recorded separately only after an enabled private
+scheduler cycle and source edit actually execute. Code and test coverage do not
+retroactively change an earlier release record.
 
-The current release evidence records passing results for:
+## What the latest recorded release evidence records
+
+The latest recorded release evidence records passing results for:
 
 - lock consistency, frozen pytest, Ruff lint/format, strict mypy, diff and
   secret checks;
@@ -124,7 +128,7 @@ and no public invoker or persistent temporary Token Creator grant was present.
   isolation, proof approval, replacement submission, endpoint completion,
   final verification, and closure remain separate human facts.
 
-For the current release scope and real-versus-simulated boundary, see the root
+For the recorded release scope and real-versus-simulated boundary, see the root
 [README](../README.md). For local CUPS authority, see
 [local-floor-and-cups-simulator.md](local-floor-and-cups-simulator.md). For the
 video flow, see [live-demo-runbook.md](live-demo-runbook.md).

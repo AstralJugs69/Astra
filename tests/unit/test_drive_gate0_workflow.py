@@ -17,6 +17,7 @@ from braille_errata_relay.application.drive_gate0 import DriveGate0Workflow
 from braille_errata_relay.domain.models import (
     ArtifactRef,
     DriveChangeBatch,
+    DriveChangeSignal,
     SourceLocator,
     SourceMetadata,
     SourceProvider,
@@ -60,6 +61,16 @@ class FakeReconciler:
         return "cursor-start"
 
 
+class RemovalReconciler(FakeReconciler):
+    async def drain(self, cursor: str) -> DriveChangeBatch:
+        return DriveChangeBatch(
+            start_cursor=cursor,
+            final_cursor="cursor-after-removal",
+            signals=(DriveChangeSignal(file_id="file-id", removed=True),),
+            snapshots=(),
+        )
+
+
 class FakeStore:
     bucket_name = "relay-bucket"
 
@@ -80,6 +91,7 @@ class FakeLedger:
         self.events = events
         self.cursor: CursorState | None = None
         self.commits = 0
+        self.batches: list[DriveChangeBatch] = []
 
     async def get_cursor(self, _scope: str) -> CursorState | None:
         return self.cursor
@@ -95,13 +107,14 @@ class FakeLedger:
         batch: DriveChangeBatch,
         artifact_refs: dict[str, ArtifactRef],
     ) -> ChangeCommitResult:
-        del principal_scope_hash, batch, artifact_refs
+        del principal_scope_hash, artifact_refs
         self.events.append("firestore-commit")
         self.commits += 1
+        self.batches.append(batch)
         return ChangeCommitResult(
             receipt_id="a" * 64,
             execution_id="b" * 64,
-            outbox_ids=("c" * 64,),
+            outbox_ids=("c" * 64,) if batch.snapshots else (),
             final_cursor_sha256="d" * 64,
             duplicate=False,
         )
@@ -145,3 +158,26 @@ async def test_reconcile_requires_a_persisted_cursor_before_drive_call() -> None
         await workflow.reconcile()
 
     assert events == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_checkpoints_removed_source_without_candidate_artifact_or_outbox() -> None:
+    events: list[str] = []
+    ledger = FakeLedger(events)
+    cursor = "cursor-before-removal"
+    ledger.cursor = CursorState(cursor, hashlib.sha256(cursor.encode()).hexdigest(), 1)
+    workflow = DriveGate0Workflow(
+        provider=cast(DriveBlobProvider, FakeProvider()),
+        reconciler=cast(DriveChangeReconciler, RemovalReconciler()),
+        artifact_store=cast(GcsArtifactStore, FakeStore(events)),
+        ledger=cast(FirestoreGate0Ledger, ledger),
+        runtime_service_account_email="runtime@example.iam.gserviceaccount.com",
+    )
+
+    result = await workflow.reconcile()
+
+    assert result.source_unavailable is True
+    assert result.source_revision_ids == ()
+    assert result.outbox_ids == ()
+    assert events == ["firestore-commit"]
+    assert ledger.batches[0].final_cursor == "cursor-after-removal"

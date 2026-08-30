@@ -18,7 +18,8 @@ The outcome is a private Cloud Run service with:
 - a single read-only Google Drive source adapter;
 - separate caller identities for source, telemetry, scheduler, demonstrator,
   and endpoint-evidence routes;
-- a paused outbox scheduler job.
+- a private automatic Drive/outbox scheduler job, configured paused until a
+  human explicitly enables it.
 
 This guide supports the current release, not a generic production platform.
 The current source adapter accepts one shared **text/markdown** Drive file; the
@@ -69,9 +70,7 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 ~~~
 
 The current release does not require Pub/Sub, Workspace Events, Secret Manager,
-or a Gemini API key fallback. Some stale template values refer to possible
-future ideas; do not provision them merely because they appear in an example
-environment file.
+or a Gemini API key fallback. Do not provision those services for this release.
 
 ## 4. Create the durable data resources
 
@@ -151,7 +150,7 @@ OIDC audience plus the expected email address for each route.
 | --- | --- |
 | source | Internal source-job route |
 | telemetry | Internal site-observation route |
-| scheduler | Internal Drive reconciliation and outbox-drain routes |
+| scheduler | Internal automatic Drive/outbox cycle and diagnostic routes |
 | demonstrator | Human-review API routes under /api |
 | endpoint evidence | Endpoint-receipt and historical-link-correction routes |
 
@@ -202,6 +201,7 @@ DRIVE_FILE_ID=<one-shared-text-markdown-file-id>
 DRIVE_SOURCE_MIME_TYPE=text/markdown
 SOURCE_MAX_BYTES=1048576
 SEMANTIC_CONTEXT_CHARS=12000
+SEMANTIC_MODEL_TIMEOUT_SECONDS=90
 
 INTERNAL_SOURCE_PUSH_PRINCIPAL_EMAIL=<source-service-account-email>
 INTERNAL_TELEMETRY_PUSH_PRINCIPAL_EMAIL=<telemetry-service-account-email>
@@ -286,26 +286,56 @@ Run the checked-in idempotent helpers from PowerShell:
 They create and poll the indexes until ready. They do not support a named
 Firestore database in this release.
 
-## 11. Optional scheduler: create it paused
+## 11. Automatic Drive watch: configure paused, then enable explicitly
 
-The outbox scheduler is useful for a supervised deployment, but there is no
-repository-approved production cadence. Choose a schedule only after reviewing
-your source/retry/load requirements. The safest first state is **PAUSED**.
+The automatic watch is the normal live path after the one-time source
+initialization in step 14. It calls the private `/internal/automation-cycle`
+route every minute, drains `changes.list` from the durable cursor, refetches
+source truth when the configured file changed, and processes one resulting
+durable outbox record. It does not make Drive write calls or gain CUPS/device
+authority.
 
-Create the job with an explicitly evaluator-selected placeholder schedule,
-then immediately normalize and pause it through the checked-in script:
+The checked-in script creates or normalizes the job with the canonical
+[automation-cycle request](../config/scheduler/automation-cycle-request.v1.json)
+and leaves it **PAUSED** unless `-EnableAutomaticWatch` is supplied. It reads
+the deployed `INTERNAL_OIDC_AUDIENCE` rather than assuming the service status
+URL is the token audience.
+
+For an optional non-mutating preflight, append `-WhatIf` to the first command.
+It shows the intended scheduler configuration without creating, updating,
+pausing, or resuming a job.
+
+Run only the first command at this stage. Complete the initialization in step
+14 before returning here to run the explicit enablement command.
 
 ~~~powershell
-$SchedulerJobName = 'astra-outbox-drain'
-$ReviewedCron = '<human-reviewed-cron-expression>'
+$AutomationSchedulerJobName = 'astra-automation-cycle'
 
-gcloud scheduler jobs create http $SchedulerJobName --location=$RunRegion --schedule=$ReviewedCron --time-zone='Etc/UTC' --uri=($ServiceUrl.TrimEnd('/') + '/internal/outbox-drain') --http-method=POST --oidc-service-account-email=$SchedulerServiceAccount --oidc-token-audience=$ServiceUrl --headers='Content-Type=application/json' --message-body-from-file='.\config\scheduler\outbox-drain-request.v1.json'
-.\infra\gcp\configure_outbox_scheduler.ps1 -ServiceUrl $ServiceUrl -SchedulerServiceAccount $SchedulerServiceAccount -JobName $SchedulerJobName -Location $RunRegion
+# Create or normalize the private job; its safe default is PAUSED.
+.\infra\gcp\configure_automation_scheduler.ps1 `
+  -ServiceUrl $ServiceUrl `
+  -ServiceName $ServiceName `
+  -SchedulerServiceAccount $SchedulerServiceAccount `
+  -JobName $AutomationSchedulerJobName `
+  -Location $RunRegion
+
+# Run this only after the INITIALIZE command in step 14 returns a receipt ID.
+# The script validates its SHA-256 shape; it does not remotely verify the receipt.
+$InitializationReceiptId = '<64-character-initialize-receipt-id>'
+.\infra\gcp\configure_automation_scheduler.ps1 `
+  -ServiceUrl $ServiceUrl `
+  -ServiceName $ServiceName `
+  -SchedulerServiceAccount $SchedulerServiceAccount `
+  -JobName $AutomationSchedulerJobName `
+  -Location $RunRegion `
+  -InitializationReceiptId $InitializationReceiptId `
+  -EnableAutomaticWatch
 ~~~
 
-The second command updates the canonical body/auth configuration and pauses the
-job. It does not create a job or choose a schedule. Do not resume or manually
-run it as a generic smoke test.
+The scheduler uses the existing dedicated scheduler identity and private Cloud
+Run IAM boundary. It does not add IAM bindings, expose a public route, or mint
+service-account keys. The older standalone `astra-outbox-drain` job is not
+needed for the automatic watch; if it exists, leave it paused.
 
 ## 12. Authentication: normal local presentation versus optional Drive check
 
@@ -377,28 +407,40 @@ demonstrator permission and cleanup sequence, follow
 [google-cloud-setup.md](google-cloud-setup.md) rather than leaving a permanent
 Token Creator grant.
 
-## 14. Drive reconciliation and live demo authority
+## 14. Initialize once, then let the automatic watch reconcile
 
-The present release implements Drive **changes.list plus authoritative byte
-refetch**. It does not currently expose a Workspace Events/Pub/Sub event
-endpoint, so do not claim event subscriptions as a deployed feature.
+The present release uses a private Cloud Scheduler cycle, not a Workspace
+Events/Pub/Sub subscription. The cycle runs **Drive changes.list plus
+authoritative byte refetch**. A notification, timestamp, or scheduler tick is
+never source truth on its own.
 
-An authorized human may exercise the real source read through:
+Before enabling the watch, register the matching accepted baseline through the
+authenticated baseline workflow. Then initialize the Drive cursor and first
+accepted source revision once through the deliberate diagnostic/initialization
+tool. The initial outbox record can then converge quietly against that baseline:
 
 ~~~powershell
-.\infra\gcp\reconcile_live_drive.ps1 -Operation RECONCILE -ExecuteDriveRead
+.\infra\gcp\reconcile_live_drive.ps1 -Operation INITIALIZE -ExecuteDriveRead
 ~~~
 
-That is not a dashboard action. It uses the scheduler identity and the
-project’s temporary scoped impersonation procedure. Read
-[authoritative-drive-source.md](authoritative-drive-source.md) and
+Record the returned `receipt_id` and pass it to the enable command in step 11.
+That script validates the receipt's SHA-256 shape only; it does not remotely
+verify the record. The initialization operation is not a dashboard action. It
+uses the scheduler identity and the project's temporary scoped impersonation
+procedure.
+
+After it succeeds and the automatic watch is enabled in step 11, a human Drive
+V1-to-V2 edit requires no reconciliation command: Astra detects it on the next
+cycle and begins the durable investigation. `reconcile_live_drive.ps1 -Operation RECONCILE`
+remains an explicit diagnostic/recovery tool, not the hero path.
+Read [authoritative-drive-source.md](authoritative-drive-source.md) and
 [live-demo-runbook.md](live-demo-runbook.md) before exercising it.
 
 ## 15. Cleanup and non-negotiable boundaries
 
 At the end of an experiment:
 
-- pause the scheduler and verify it remains paused;
+- pause the automatic scheduler when the live watch is no longer needed;
 - remove only the specific temporary Token Creator bindings created for the
   human operation, and verify their absence;
 - keep Cloud Run private and re-check there is no public invoker binding;

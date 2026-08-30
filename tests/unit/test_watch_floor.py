@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -48,18 +48,65 @@ def _overview(
     }
 
 
+def _automation(
+    *,
+    state: str = "IDLE",
+    outcome: str | None = "COMPLETED",
+    status: str | None = "COMPLETED",
+    source_change_detected: bool = False,
+    content_equivalent_replay: bool = False,
+    source_investigation_pending: bool = False,
+) -> dict[str, object]:
+    return {
+        "schema_version": "automation-cycle-status.v1",
+        "state": state,
+        "last_outcome": outcome,
+        "last_status": status,
+        "last_completed_at": "2026-08-31T12:00:00+00:00",
+        "source_change_detected": source_change_detected,
+        "content_equivalent_replay": content_equivalent_replay,
+        "source_investigation_pending": source_investigation_pending,
+        "source_unavailable": False,
+        "outbox": {
+            "leased": 0,
+            "completed": 0,
+            "retried": 0,
+            "dead_letter_possible": 0,
+        },
+        "last_error_code": None,
+        "private_drive_file_id": "private-file-must-not-cross-browser-boundary",
+        "private_receipt_id": "a" * 64,
+    }
+
+
 class OverviewApi:
-    def __init__(self, *responses: dict[str, object] | Exception) -> None:
+    def __init__(
+        self,
+        *responses: dict[str, object] | Exception,
+        automation_responses: Sequence[dict[str, object] | Exception] | None = None,
+    ) -> None:
         self._responses = list(responses)
+        self._automation_responses = list(automation_responses or (_automation(),))
         self.calls = 0
+        self.paths: list[str] = []
 
     async def get_json(self, path: str) -> dict[str, object]:
-        assert path == "/api/v1/incidents"
-        response = self._responses[min(self.calls, len(self._responses) - 1)]
+        if path == "/api/v1/incidents":
+            response = self._responses[min(self.calls_for(path), len(self._responses) - 1)]
+        elif path == "/api/v1/automation-status":
+            response = self._automation_responses[
+                min(self.calls_for(path), len(self._automation_responses) - 1)
+            ]
+        else:
+            raise AssertionError(f"unexpected watch API path: {path}")
         self.calls += 1
+        self.paths.append(path)
         if isinstance(response, Exception):
             raise response
         return response
+
+    def calls_for(self, path: str) -> int:
+        return sum(candidate == path for candidate in self.paths)
 
     async def post_json(self, _path: str, _payload: Mapping[str, object]) -> dict[str, object]:
         raise AssertionError("watch floor must not post to the private API")
@@ -88,7 +135,11 @@ def test_watch_snapshot_drops_private_fields_and_invalid_rows() -> None:
         {"incident_id": "not-a-hash", "workflow_stage": "NEEDS_REVIEW"},
     ]
 
-    snapshot = sanitize_watch_snapshot(payload, observed_at=datetime(2026, 8, 30, tzinfo=UTC))
+    snapshot = sanitize_watch_snapshot(
+        payload,
+        observed_at=datetime(2026, 8, 30, tzinfo=UTC),
+        automation=_automation(source_change_detected=True),
+    )
     rendered = str(snapshot)
 
     assert snapshot["source_label"] == "Authoritative source"
@@ -104,6 +155,25 @@ def test_watch_snapshot_drops_private_fields_and_invalid_rows() -> None:
     ]
     for forbidden in ("private-baseline", "private source", "private@example"):
         assert forbidden not in rendered
+    assert snapshot["automation"] == {
+        "state": "IDLE",
+        "last_outcome": "COMPLETED",
+        "last_status": "COMPLETED",
+        "last_completed_at": "2026-08-31T12:00:00+00:00",
+        "source_change_detected": True,
+        "content_equivalent_replay": False,
+        "source_investigation_pending": False,
+        "source_unavailable": False,
+        "outbox": {
+            "leased": 0,
+            "completed": 0,
+            "retried": 0,
+            "dead_letter_possible": 0,
+        },
+        "last_error_code": None,
+    }
+    assert "private-file" not in rendered
+    assert "private_receipt" not in rendered
 
 
 def test_watch_tracker_deduplicates_historical_snapshots_and_emits_one_new_alert() -> None:
@@ -152,6 +222,24 @@ def test_watch_tracker_emits_durable_stage_transition_once() -> None:
     assert repeated == ()
 
 
+def test_watch_tracker_emits_a_durable_automation_transition_once_without_alert() -> None:
+    tracker = WatchEventTracker()
+    first = sanitize_watch_snapshot(_overview(), automation=_automation())
+    changed = sanitize_watch_snapshot(
+        _overview(),
+        automation=_automation(source_change_detected=True),
+    )
+
+    initial = tracker.observe(first)
+    transitioned = tracker.observe(changed)
+    repeated = tracker.observe(changed)
+
+    assert [event.name for event in initial] == ["snapshot"]
+    assert [event.name for event in transitioned] == ["automation_cycle"]
+    assert transitioned[0].payload == {"automation": changed["automation"]}
+    assert repeated == ()
+
+
 def test_watch_sse_endpoint_has_framing_security_headers_and_same_origin_asset() -> None:
     client = _client(OverviewApi(_overview()))
 
@@ -164,6 +252,7 @@ def test_watch_sse_endpoint_has_framing_security_headers_and_same_origin_asset()
     assert "script-src 'self'" in page.headers["content-security-policy"]
     assert "connect-src 'self'" in page.headers["content-security-policy"]
     assert "private-baseline" not in page.text
+    assert "Completed; no new source content requiring investigation" in page.text
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert stream.headers["x-accel-buffering"] == "no"
@@ -172,6 +261,7 @@ def test_watch_sse_endpoint_has_framing_security_headers_and_same_origin_asset()
     assert asset.status_code == 200
     assert asset.headers["content-type"].startswith("application/javascript")
     assert 'new window.EventSource("/events")' in asset.text
+    assert "watch-automatic-cycle" in asset.text
 
 
 def test_watch_sse_upstream_error_is_sanitized_and_heartbeat_framing_is_explicit() -> None:
@@ -188,6 +278,28 @@ def test_watch_sse_upstream_error_is_sanitized_and_heartbeat_framing_is_explicit
         'event: heartbeat\ndata: {"checked_at":"2026-08-30T00:00:00+00:00",'
         '"schema_version":"watch-heartbeat.v1"}\n\n'
     )
+
+
+def test_status_only_failure_keeps_the_watch_floor_available_and_sanitized() -> None:
+    api = OverviewApi(
+        _overview(),
+        automation_responses=[PrivateReviewApiError(503)],
+    )
+    client = _client(api)
+
+    page = client.get("/watch")
+    events = client.get("/events?max_events=1")
+
+    assert page.status_code == 200
+    assert events.status_code == 200
+    assert "Automatic status temporarily unavailable" in page.text
+    assert "private Relay API request returned" not in page.text
+    assert api.paths == [
+        "/api/v1/incidents",
+        "/api/v1/automation-status",
+        "/api/v1/incidents",
+        "/api/v1/automation-status",
+    ]
 
 
 def test_watch_client_controls_are_opt_in_and_do_not_issue_cloud_mutations() -> None:
@@ -229,4 +341,5 @@ def test_watch_endpoint_is_read_only_with_no_background_mutation_calls() -> None
     asyncio.run(asyncio.sleep(0))
 
     assert response.status_code == 200
-    assert api.calls == 1
+    assert api.calls == 2
+    assert api.paths == ["/api/v1/incidents", "/api/v1/automation-status"]

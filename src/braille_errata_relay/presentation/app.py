@@ -507,7 +507,7 @@ _TEMPLATES["watch.html"] = """<!doctype html>
 <main id="watch-floor" class="shell"><section class="hero"><p class="eyebrow">Live production-floor monitor</p><h1>Watching authoritative source</h1><p class="lede">This local monitor reads the existing private review API through the loopback presentation server. It does not submit, hold, cancel, release, restart, or operate CUPS or a production device.</p></section>
 {% if error %}<p class="notice" role="status">{{ error }}</p>{% endif %}
 <section id="mismatch-alert" class="mismatch" {% if not fixture_alert %}hidden{% endif %} aria-labelledby="mismatch-title"><h2 id="mismatch-title">SOURCE / PRODUCTION MISMATCH — HUMAN REVIEW REQUIRED</h2><p id="mismatch-alert-text">A newly observed durable transition requires human review.</p><div class="controls"><button id="enable-audible-alerts" type="button">Enable audible alerts</button><button id="mute-audible-alerts" class="secondary" type="button">Mute</button><button id="acknowledge-alert-locally" class="secondary" type="button">Acknowledge alert locally</button></div><p><small>Local acknowledgement does not record professional disposition, containment, proof, cancellation, resubmission, or any production action.</small></p></section><p id="watch-alert-live" class="skip" role="alert" aria-live="assertive"></p>
-<section class="status-grid" aria-label="Watch monitor status"><article class="status-card"><strong id="watch-connection" class="connection" data-state="connected">{% if fixture_mode %}Connected{% else %}Connecting{% endif %}</strong><span>Loopback event connection</span></article><article class="status-card"><strong id="watch-last-check">{{ watch.last_successful_check }}</strong><span>Last successful check</span></article><article class="status-card"><strong>{{ watch.source_label }}</strong><span>Sanitized source display label</span></article><article class="status-card"><strong id="watch-stage">{{ watch.durable_stage }}</strong><span>Current durable stage</span></article></section>
+<section class="status-grid" aria-label="Watch monitor status"><article class="status-card"><strong id="watch-connection" class="connection" data-state="connected">{% if fixture_mode %}Connected{% else %}Connecting{% endif %}</strong><span>Loopback event connection</span></article><article class="status-card"><strong id="watch-automatic-cycle" aria-live="polite">{{ watch.automatic_cycle }}</strong><span>Automatic Drive reconciliation</span></article><article class="status-card"><strong>{{ watch.source_label }}</strong><span>Sanitized source display label</span></article><article class="status-card"><strong id="watch-stage">{{ watch.durable_stage }}</strong><span>Current durable stage</span></article></section>
 <section class="panel"><h2>Current safe next action</h2><p id="watch-next-action">{{ watch.next_safe_action }}</p></section>
 <section class="pipeline" aria-label="Durable incident pipeline"><div class="pipeline-step"><strong>1</strong>Drive revision</div><div class="pipeline-step"><strong>2</strong>Deterministic diff</div><div class="pipeline-step"><strong>3</strong>Liblouis candidate</div><div class="pipeline-step"><strong>4</strong>Page impact</div><div class="pipeline-step"><strong>5</strong>Gemini semantic assessment</div><div class="pipeline-step"><strong>6</strong>Professional report</div></section>
 <section class="watch-grid"><section class="panel" aria-labelledby="live-incidents"><h2 id="live-incidents">Durable watch events</h2><ul id="watch-incidents" class="watch-list">{% for incident in snapshot.incidents %}<li class="watch-incident"><a href="/incidents/{{ incident.incident_id }}">Incident {{ incident.incident_id[:12] }}…</a><span>{{ incident.workflow_stage }} — {{ incident.next_safe_action }}</span></li>{% endfor %}</ul><p id="watch-empty" class="empty" {% if snapshot.incidents %}hidden{% endif %}>No incident is currently awaiting review. A quiet queue is not evidence of a completed production action.</p></section><aside class="panel"><h2>Truthful activity</h2><p>Only persisted durable stages are shown. An impact-ready incident says “Next step: semantic assessment”; the monitor never claims Gemini is thinking without a persisted fact.</p><div class="boundary"><strong>Boundary:</strong> deterministic computation, Gemini semantic assessment, real read-only CUPS evidence, human records, and the simulated physical endpoint remain visibly distinct.</div></aside></section>
@@ -663,6 +663,27 @@ def create_presentation_app(
     def render(name: str, **context: object) -> HTMLResponse:
         return HTMLResponse(templates.get_template(name).render(**context))
 
+    async def watch_snapshot() -> dict[str, object]:
+        """Combine private read-only incident and durable automation state.
+
+        Incident availability is the requirement for the watch floor.  A
+        status-only failure is represented locally as an unavailable automation
+        card so the browser never mistakes its own polling for a Drive check.
+        """
+
+        incidents = await api.get_json("/api/v1/incidents")
+        try:
+            automation = await api.get_json("/api/v1/automation-status")
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+            ValueError,
+        ):
+            automation = None
+        return sanitize_watch_snapshot(incidents, automation=automation)
+
     def csrf_token(request: Request) -> str:
         token = request.session.get("csrf_token")
         if isinstance(token, str) and token:
@@ -741,7 +762,7 @@ def create_presentation_app(
     @app.get("/watch", response_class=HTMLResponse)
     async def watch_floor() -> HTMLResponse:
         try:
-            snapshot = sanitize_watch_snapshot(await api.get_json("/api/v1/incidents"))
+            snapshot = await watch_snapshot()
             error: str | None = None
         except (
             httpx.HTTPError,
@@ -779,7 +800,7 @@ def create_presentation_app(
                 if await request.is_disconnected():
                     return
                 try:
-                    snapshot = sanitize_watch_snapshot(await api.get_json("/api/v1/incidents"))
+                    snapshot = await watch_snapshot()
                     transitions = tracker.observe(snapshot)
                     upstream_unavailable = False
                 except (

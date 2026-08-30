@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -10,6 +11,7 @@ from braille_errata_relay.adapters.adk_assessor import (
     AdkModelRunner,
     AdkSemanticAssessor,
     SemanticAssessmentBlocked,
+    SemanticAssessmentUnavailable,
 )
 from braille_errata_relay.domain.models import (
     AssessmentInput,
@@ -52,6 +54,12 @@ class ExplodingAdkRuntime:
         if False:
             yield object()
         raise RuntimeError("transport failed")
+
+
+class HangingRunner:
+    async def generate(self, _prompt: str) -> object:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 def _evidence() -> AssessmentInput:
@@ -245,6 +253,23 @@ async def test_assessor_rejects_context_only_citations(tmp_path: Path) -> None:
 
     with pytest.raises(SemanticAssessmentBlocked, match="one constrained retry"):
         await assessor.assess(_context_evidence())
+
+
+@pytest.mark.asyncio
+async def test_assessor_bounds_a_hung_model_call_before_semantic_lease_expiry(
+    tmp_path: Path,
+) -> None:
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("Return the schema.", encoding="utf-8")
+    assessor = AdkSemanticAssessor(
+        model_id="gemini-test",
+        runner=HangingRunner(),
+        prompt_path=prompt,
+        model_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(SemanticAssessmentUnavailable, match="timed out"):
+        await assessor.assess(_evidence())
 
 
 def test_semantic_input_rejects_more_than_bounded_context() -> None:

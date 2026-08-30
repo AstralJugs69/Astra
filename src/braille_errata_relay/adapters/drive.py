@@ -222,6 +222,7 @@ class DriveChangeReconciler:
         signals: list[DriveChangeSignal] = []
         snapshots_by_revision: dict[str, SourceSnapshot] = {}
         final_cursor: str | None = None
+        last_matching_change_removed: bool | None = None
         while True:
             request = self.service.changes().list(
                 pageToken=page_token,
@@ -254,17 +255,7 @@ class DriveChangeReconciler:
                         removed=removed or trashed,
                     )
                 )
-                if removed or trashed:
-                    raise DriveSourceRemoved(
-                        "configured Drive source was removed in the change feed"
-                    )
-                locator = SourceLocator(
-                    provider=SourceProvider.GOOGLE_DRIVE,
-                    file_id=self.provider.expected_file_id,
-                    mime_type=self.provider.supported_mime_type,
-                )
-                snapshot = await self.provider.fetch_revision(locator)
-                snapshots_by_revision[snapshot.revision.revision_id] = snapshot
+                last_matching_change_removed = removed or trashed
             next_page = value.get("nextPageToken")
             if next_page is not None:
                 if not isinstance(next_page, str) or not next_page:
@@ -276,6 +267,27 @@ class DriveChangeReconciler:
                 raise DriveSourceInvalid("Drive final start page token is missing")
             final_cursor = new_start
             break
+
+        # Drive change entries are wake-up signals, not historical source
+        # bytes. Refetch exactly once after the complete relevant feed segment
+        # has been drained. This keeps a large backlog bounded by one source
+        # read and makes a remove-then-restore sequence converge to its final
+        # observed state. A final removal still becomes a durable cursor
+        # checkpoint with no candidate or model invocation.
+        if last_matching_change_removed is False:
+            locator = SourceLocator(
+                provider=SourceProvider.GOOGLE_DRIVE,
+                file_id=self.provider.expected_file_id,
+                mime_type=self.provider.supported_mime_type,
+            )
+            try:
+                snapshot = await self.provider.fetch_revision(locator)
+            except DriveSourceRemoved:
+                signals.append(
+                    DriveChangeSignal(file_id=self.provider.expected_file_id, removed=True)
+                )
+            else:
+                snapshots_by_revision[snapshot.revision.revision_id] = snapshot
         return DriveChangeBatch(
             start_cursor=cursor,
             final_cursor=final_cursor,

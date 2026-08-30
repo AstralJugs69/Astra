@@ -27,7 +27,9 @@ making a live claim.
 
 1. **Prepare the baseline and source.** Use one supported authoritative
    text/Markdown Drive file and a known V1 to V2 correction. See
-   [authoritative-drive-source.md](authoritative-drive-source.md).
+   [authoritative-drive-source.md](authoritative-drive-source.md). Register the
+   matching accepted baseline, then initialize that source once before recording
+   and retain the returned receipt ID for the automatic-watch enablement.
 2. **Prepare production observation honestly.** If you plan to show a CUPS
    card as fresh evidence, use the independent human-owned local-floor
    procedure and preserve the resulting read-only observation. If you did not
@@ -42,10 +44,15 @@ making a live claim.
    present only during the human-authorized local presentation operation, and
    verified absent afterward. See
    [google-cloud-setup.md](google-cloud-setup.md).
-5. **Keep the scheduler paused.** Do not use the dashboard to reconcile Drive,
-   drain the outbox, submit a job, or mutate CUPS.
+5. **Enable the automatic watch.** Configure
+   `astra-automation-cycle` through
+   [fresh-project-deployment.md](fresh-project-deployment.md#11-automatic-drive-watch-configure-paused-then-enable-explicitly),
+   then explicitly enable it with the one-time `INITIALIZE` receipt ID. The
+   cycle invokes Astra privately every minute;
+   the older standalone outbox job can remain paused. Do not use the dashboard
+   to reconcile Drive, submit a job, or mutate CUPS.
 
-## Live flow: 3–4 minutes
+## Live flow: 4–5 minutes
 
 ### 0:00–0:25 — establish the real problem
 
@@ -56,23 +63,25 @@ Show the approved baseline/current production context and say:
 > not merely ‘can we regenerate a file?’ It is ‘what can no longer be trusted,
 > what output may be affected, and what must the responsible professional do?’”
 
-### 0:25–0:50 — change the authoritative source
+### 0:25–1:10 — change the authoritative source
 
 In the normal Google Drive UI, make the prepared V1-to-V2 edit. Astra never
-makes this edit.
+makes this edit. Then leave Astra alone: its already-enabled private automatic
+cycle notices the change, drains the change feed, and re-fetches authoritative
+metadata and bytes. No reconciliation command is run after the edit.
 
-Then, from the human-authorized operational terminal rather than the dashboard,
-run the explicit Drive reconciliation:
+Keep the watch page visible while the next cycle completes; allow up to one
+minute for the scheduled check, plus normal processing. The scheduler is a
+private OIDC caller, not a browser button or a synthetic event. The manual
+`reconcile_live_drive.ps1` command remains available for baseline setup and
+diagnostics, but is deliberately absent from this path.
 
-~~~powershell
-.\infra\gcp\reconcile_live_drive.ps1 -Operation RECONCILE -ExecuteDriveRead
-~~~
+The watch page labels the durable automatic cycle explicitly. It can say that
+the source is being checked, that no source revision was found, that a revision
+advanced the durable workflow, or that the status is unavailable. It never
+labels the browser's own poll time as a successful Drive check.
 
-This performs the configured read-only Drive path through private Cloud Run.
-It drains the change feed and refetches authoritative metadata/bytes; it is not
-a browser button or a synthetic event.
-
-### 0:50–1:40 — reveal autonomous investigation
+### 1:10–2:00 — reveal autonomous investigation
 
 Open the loopback **/watch** page. Explain:
 
@@ -93,7 +102,7 @@ Show the progression:
 Emphasize that Astra completes this investigation and recovery preparation
 without asking a human to reconstruct the evidence manually.
 
-### 1:40–2:25 — make the evidence legible
+### 2:00–2:45 — make the evidence legible
 
 Open incident detail. Contrast the evidence types rather than collapsing them:
 
@@ -110,7 +119,7 @@ Open incident detail. Contrast the evidence types rather than collapsing them:
 The dashboard's local alert acknowledgement and sound control are local UI
 preferences. They do not record a professional decision or operate equipment.
 
-### 2:25–3:05 — show the authority gate
+### 2:45–3:25 — show the authority gate
 
 Now explain the deliberate boundary:
 
@@ -124,7 +133,7 @@ If the incident is fail-closed, show the block. Do not advance it for the
 video. Scheduler cancellation, device stop, physical-output isolation, proof
 approval, and final verification are separate facts.
 
-### 3:05–3:25 — optional bounded Story 5 ending
+### 3:25–3:45 — optional bounded Story 5 ending
 
 Only if the preconditions are real:
 
@@ -137,7 +146,7 @@ Then Astra may link the observation and reach **REPLACEMENT_OBSERVED**. This
 does not claim endpoint completion, final physical verification, notification,
 or closure. Astra does not submit the replacement.
 
-### 3:25–3:50 — show deployment and close
+### 3:45–4:10 — show deployment and close
 
 Show private Cloud Run, the architecture, the deterministic/semantic split, and
 the read-only CUPS boundary. Close with:
@@ -150,12 +159,12 @@ the read-only CUPS boundary. Close with:
 | Time | Visual | Narration focus |
 | --- | --- | --- |
 | 0:00–0:25 | Approved baseline and current production context | Late corrections create a source-to-production trust problem. |
-| 0:25–0:50 | Human Drive edit, then authorized reconciliation | Drive is authoritative; bytes are refetched rather than inferred. |
-| 0:50–1:40 | Watch alert and stage changes | Astra autonomously builds the recovery case. |
-| 1:40–2:25 | Incident detail | Diff, BRF/page impact, Gemini assessment, and observation are different evidence types. |
-| 2:25–3:05 | Human authority gate | No device-control capability; fail-closed evidence is a feature. |
-| 3:05–3:25 | Optional replacement observation | Human submits independently; Astra may observe, not submit. |
-| 3:25–3:50 | Private Cloud Run / architecture | Production-minded, deeply implemented vertical slice with deliberate authority boundaries. |
+| 0:25–1:10 | Human Drive edit, then the automatic watch reacts | Drive is authoritative; bytes are refetched rather than inferred. |
+| 1:10–2:00 | Watch alert and stage changes | Astra autonomously builds the recovery case. |
+| 2:00–2:45 | Incident detail | Diff, BRF/page impact, Gemini assessment, and observation are different evidence types. |
+| 2:45–3:25 | Human authority gate | No device-control capability; fail-closed evidence protects the decision. |
+| 3:25–3:45 | Optional replacement observation | Human submits independently; Astra may observe, not submit. |
+| 3:45–4:10 | Private Cloud Run / architecture | Production-minded, deeply implemented vertical slice with deliberate authority boundaries. |
 
 ## Offline fixture fallback
 

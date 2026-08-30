@@ -60,7 +60,13 @@ Before using this path:
 Ordinary `cloud-platform` ADC is enough for the local watch and private Cloud
 Run access. A local Drive diagnostic is optional and requires a project-owned
 OAuth client for `drive.readonly`; the deployed runtime identity performs
-read-only Drive reconciliation.
+read-only Drive reconciliation. For the live hero path, register the matching
+accepted baseline, initialize the source once, and explicitly enable the
+private automatic scheduler described in
+[fresh-project deployment](fresh-project-deployment.md#11-automatic-drive-watch-configure-paused-then-enable-explicitly).
+After that, a human Drive edit needs no reconciliation command: the background
+cycle detects the revision, validates authoritative bytes, and processes the
+next durable investigation record.
 
 Start the local presentation process:
 
@@ -72,9 +78,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\infra\demo\start_demo.
 
 The launcher binds only to `127.0.0.1`, opens `/watch` once, and keeps cloud
 credentials on the local server. A browser page receives no private URL or
-credential. It cannot reconcile Drive, change CUPS, or make a human production
-decision. If `doctor` is blocked, resolve the documented prerequisite before
-claiming live data is ready.
+credential. It displays durable state while the private service performs any
+configured automatic reconciliation; it cannot initiate Drive writes, change
+CUPS, or make a human production decision. If `doctor` is blocked, resolve the
+documented prerequisite before claiming live data is ready.
 
 ## 5. Verify the code
 

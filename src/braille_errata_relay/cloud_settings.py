@@ -19,6 +19,7 @@ class CloudSettings(BaseModel):
     drive_source_mime_type: str = "text/markdown"
     source_max_bytes: int = Field(default=1_048_576, gt=0)
     semantic_context_chars: int = Field(default=12_000, gt=0, le=12_000)
+    semantic_model_timeout_seconds: float = Field(default=90.0, gt=0, le=90.0)
     firestore_database: str = "(default)"
     artifact_bucket: str | None = None
     runtime_service_account_email: str | None = None
@@ -44,6 +45,9 @@ class CloudSettings(BaseModel):
             drive_source_mime_type=values.get("DRIVE_SOURCE_MIME_TYPE", "text/markdown"),
             source_max_bytes=int(values.get("SOURCE_MAX_BYTES", "1048576")),
             semantic_context_chars=int(values.get("SEMANTIC_CONTEXT_CHARS", "12000")),
+            semantic_model_timeout_seconds=float(
+                values.get("SEMANTIC_MODEL_TIMEOUT_SECONDS", "90")
+            ),
             firestore_database=values.get("FIRESTORE_DATABASE", "(default)"),
             artifact_bucket=values.get("GCS_ARTIFACT_BUCKET") or None,
             runtime_service_account_email=values.get("RUNTIME_SERVICE_ACCOUNT_EMAIL") or None,

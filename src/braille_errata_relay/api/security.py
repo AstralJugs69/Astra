@@ -64,7 +64,11 @@ def _expected_principal(path: str, settings: CloudSettings) -> str | None:
         return settings.source_push_principal_email
     if path == "/internal/site-observations":
         return settings.telemetry_push_principal_email
-    if path in {"/internal/drive-reconcile", "/internal/outbox-drain"}:
+    if path in {
+        "/internal/drive-reconcile",
+        "/internal/outbox-drain",
+        "/internal/automation-cycle",
+    }:
         return settings.scheduler_principal_email
     if path in {
         "/internal/endpoint-receipts",

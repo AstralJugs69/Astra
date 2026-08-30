@@ -108,8 +108,14 @@ class MemoryLedger:
         self,
         checkpoint: IncidentCheckpoint,
     ) -> IncidentCheckpointCommit:
-        existing = self.incidents.setdefault(checkpoint.incident_id, checkpoint)
-        return IncidentCheckpointCommit(existing, existing is not checkpoint)
+        existing = self.incidents.get(checkpoint.incident_id)
+        if existing is None:
+            self.incidents[checkpoint.incident_id] = checkpoint
+            return IncidentCheckpointCommit(checkpoint, False)
+        assert existing.baseline_id == checkpoint.baseline_id
+        assert existing.new_source_sha256 == checkpoint.new_source_sha256
+        assert existing.production_job_lineage_id == checkpoint.production_job_lineage_id
+        return IncidentCheckpointCommit(existing, True)
 
     async def get_incident_checkpoint(self, incident_id: str) -> IncidentCheckpoint | None:
         return self.incidents.get(incident_id)
@@ -428,6 +434,67 @@ async def test_v1_to_v2_builds_one_report_first_incident_and_reuses_it() -> None
         schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
         validator = Draft202012Validator(schema, format_checker=FormatChecker())
         assert list(validator.iter_errors(payload)) == []
+
+
+@pytest.mark.asyncio
+async def test_content_equivalent_drive_revision_reuses_first_incident_without_model_call() -> None:
+    workflow, ledger, artifacts, semantic, baseline, v2 = await _system()
+    first = await workflow.process_source_revision(
+        baseline_id=baseline.baseline.baseline_id,
+        new_source_revision_id=v2.revision_id,
+    )
+    repeated_v2 = _add_source(
+        ledger,
+        artifacts,
+        version="64",
+        raw=artifacts.values[v2.artifact.uri],
+        fetched_at=v2.fetched_at + timedelta(minutes=1),
+    )
+
+    replay = await workflow.process_source_revision(
+        baseline_id=baseline.baseline.baseline_id,
+        new_source_revision_id=repeated_v2.revision_id,
+    )
+
+    assert replay.checkpoint == first.checkpoint
+    assert replay.checkpoint.new_source_revision_id == v2.revision_id
+    assert replay.report == first.report
+    assert replay.report is not None
+    assert replay.report.new_source_revision_id == v2.revision_id
+    assert semantic.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_content_equivalent_replay_resumes_partial_incident_on_first_revision_lineage() -> (
+    None
+):
+    workflow, ledger, artifacts, _semantic, baseline, v2 = await _system()
+    delegate = IdempotentSemantic()
+    workflow.semantic_workflow = FailOnceSemantic(
+        SemanticAssessmentUnavailable("model transport unavailable"), delegate
+    )
+    with pytest.raises(SemanticAssessmentUnavailable):
+        await workflow.process_source_revision(
+            baseline_id=baseline.baseline.baseline_id,
+            new_source_revision_id=v2.revision_id,
+        )
+    repeated_v2 = _add_source(
+        ledger,
+        artifacts,
+        version="64",
+        raw=artifacts.values[v2.artifact.uri],
+        fetched_at=v2.fetched_at + timedelta(minutes=1),
+    )
+
+    recovered = await workflow.process_source_revision(
+        baseline_id=baseline.baseline.baseline_id,
+        new_source_revision_id=repeated_v2.revision_id,
+    )
+
+    assert recovered.checkpoint.new_source_revision_id == v2.revision_id
+    assert recovered.report is not None
+    assert recovered.report.new_source_revision_id == v2.revision_id
+    assert delegate.calls == 1
 
 
 @pytest.mark.parametrize(

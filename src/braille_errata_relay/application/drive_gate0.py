@@ -30,6 +30,8 @@ class DriveGate0Result:
     execution_id: str
     outbox_ids: tuple[str, ...]
     duplicate_replay: bool
+    source_unavailable: bool = False
+    new_outbox_ids: tuple[str, ...] = ()
 
     def sanitized_record(self) -> dict[str, object]:
         return {
@@ -45,7 +47,9 @@ class DriveGate0Result:
             "receipt_id": self.receipt_id,
             "execution_id": self.execution_id,
             "outbox_ids": list(self.outbox_ids),
+            "new_outbox_ids": list(self.new_outbox_ids),
             "duplicate_replay": self.duplicate_replay,
+            "source_unavailable": self.source_unavailable,
         }
 
 
@@ -106,6 +110,10 @@ class DriveGate0Workflow:
             execution_id=committed.execution_id,
             outbox_ids=committed.outbox_ids,
             duplicate_replay=committed.duplicate,
+            source_unavailable=(
+                any(signal.removed for signal in batch.signals) and not batch.snapshots
+            ),
+            new_outbox_ids=committed.new_outbox_ids,
         )
 
     async def initialize(self) -> DriveGate0Result:

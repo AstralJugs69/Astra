@@ -76,11 +76,27 @@ exact failing command and sanitized error. Do not use Astra or the bridge to
 operate the queue, and do not weaken the observer policy to make a denial test
 pass.
 
-## A scheduler command refuses to run near an evidence boundary
+## The automatic Drive watch is paused or will not enable
 
-That refusal protects the recurring scheduler's ownership. Wait for a safe
-window or use the documented human operator procedure; do not unpause the
-scheduler or force a run from the dashboard.
+The normal live path is one-time `INITIALIZE`, followed by an explicitly
+enabled private `astra-automation-cycle` job. The enable command requires the
+64-character receipt ID returned by `INITIALIZE`; the configuration script
+checks the receipt's shape but does not remotely verify it. Start with the
+paused configuration and follow the exact sequence in
+[fresh-project deployment](fresh-project-deployment.md#11-automatic-drive-watch-configure-paused-then-enable-explicitly).
+
+To inspect the job without changing it:
+
+~~~text
+gcloud scheduler jobs describe astra-automation-cycle --location=europe-west3
+~~~
+
+If the job is enabled but a Drive edit does not appear after two cycles, verify
+the configured file is shared read-only with the runtime identity and that the
+initialization completed. Preserve the scheduler and Cloud Run error evidence.
+`reconcile_live_drive.ps1 -Operation RECONCILE` is an explicit diagnostic tool,
+not a button to use in the demo hero path. Do not expose the service publicly
+or use the dashboard to force a cycle.
 
 For first-time private deployment, use the explicit
 [fresh-project deployment guide](fresh-project-deployment.md), not this

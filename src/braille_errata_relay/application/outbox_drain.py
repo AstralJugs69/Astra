@@ -68,6 +68,9 @@ class OutboxDrainResult:
     retried: int
     dead_letter_possible: int
     message_ids: tuple[str, ...]
+    content_equivalent_replays: int = 0
+    content_equivalent_replay_message_ids: tuple[str, ...] = ()
+    completed_message_ids: tuple[str, ...] = ()
 
 
 class OutboxDrainWorkflow:
@@ -76,7 +79,7 @@ class OutboxDrainWorkflow:
         *,
         ledger: OutboxLedger,
         incident_workflow: SourceIncidentWorkflow | IncidentWorkflow,
-        lease_seconds: int = 120,
+        lease_seconds: int = 360,
         max_attempts: int = 5,
     ) -> None:
         self.ledger = ledger
@@ -85,16 +88,29 @@ class OutboxDrainWorkflow:
         self.max_attempts = max_attempts
 
     async def drain(self, *, limit: int = 10) -> OutboxDrainResult:
-        lease_token = uuid.uuid4().hex
-        messages = await self.ledger.lease_outbox(
-            lease_token=lease_token,
-            limit=limit,
-            lease_seconds=self.lease_seconds,
-        )
+        if limit < 1 or limit > 100:
+            raise ValueError("outbox drain limit is invalid")
         completed = 0
         retried = 0
         dead_letter_possible = 0
-        for message in messages:
+        content_equivalent_replays = 0
+        content_equivalent_replay_message_ids: list[str] = []
+        completed_message_ids: list[str] = []
+        message_ids: list[str] = []
+        # Claim one message at a time. A semantic assessment can take longer
+        # than a short queue scan; leasing a whole batch and then processing it
+        # serially would let later leases expire before they are reached.
+        for _ in range(limit):
+            lease_token = uuid.uuid4().hex
+            messages = await self.ledger.lease_outbox(
+                lease_token=lease_token,
+                limit=1,
+                lease_seconds=self.lease_seconds,
+            )
+            if not messages:
+                break
+            message = messages[0]
+            message_ids.append(message.message_id)
             try:
                 if message.kind != "SOURCE_REVISION_CLAIMED":
                     raise OutboxProcessingError("UNSUPPORTED_OUTBOX_KIND")
@@ -118,6 +134,7 @@ class OutboxDrainWorkflow:
                         "incident_id": outcome.checkpoint.incident_id,
                         "stage": outcome.checkpoint.stage.value,
                         "duplicate_source": outcome.duplicate_source,
+                        "content_equivalent_replay": outcome.content_equivalent_replay,
                         "report_sha256": (
                             outcome.checkpoint.report.sha256
                             if outcome.checkpoint.report is not None
@@ -126,6 +143,10 @@ class OutboxDrainWorkflow:
                     },
                 )
                 completed += 1
+                completed_message_ids.append(message.message_id)
+                if outcome.content_equivalent_replay:
+                    content_equivalent_replays += 1
+                    content_equivalent_replay_message_ids.append(message.message_id)
             except Exception as exc:  # noqa: BLE001 - lease boundary must durably retry crashes
                 error_code = (
                     exc.code if isinstance(exc, OutboxProcessingError) else type(exc).__name__
@@ -139,10 +160,17 @@ class OutboxDrainWorkflow:
                 retried += 1
                 if message.attempts >= self.max_attempts:
                     dead_letter_possible += 1
+                # Retry backoff is deliberately observed on a later drain. In
+                # particular, a memory-backed or nonstandard ledger must not
+                # be able to spin the same failing message within one request.
+                break
         return OutboxDrainResult(
-            leased=len(messages),
+            leased=len(message_ids),
             completed=completed,
             retried=retried,
             dead_letter_possible=dead_letter_possible,
-            message_ids=tuple(message.message_id for message in messages),
+            message_ids=tuple(message_ids),
+            content_equivalent_replays=content_equivalent_replays,
+            content_equivalent_replay_message_ids=tuple(content_equivalent_replay_message_ids),
+            completed_message_ids=tuple(completed_message_ids),
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -30,6 +31,7 @@ from braille_errata_relay.domain.models import (
 
 PROMPT_VERSION = "semantic-assessment.v1"
 APP_NAME = "braille-errata-relay"
+DEFAULT_MODEL_TIMEOUT_SECONDS = 90.0
 
 
 class SemanticAssessmentOutput(DomainModel):
@@ -185,11 +187,16 @@ class AdkSemanticAssessor:
         runner: SemanticModelRunner | None = None,
         prompt_path: str | Path | None = None,
         context_char_limit: int = 12_000,
+        model_timeout_seconds: float = DEFAULT_MODEL_TIMEOUT_SECONDS,
     ) -> None:
         if not model_id.strip():
             raise ValueError("GEMINI_MODEL must be explicit")
         if context_char_limit <= 0 or context_char_limit > 12_000:
             raise ValueError("semantic context limit must be in the range 1..12000")
+        if not 0 < model_timeout_seconds <= DEFAULT_MODEL_TIMEOUT_SECONDS:
+            raise ValueError(
+                "semantic model timeout must be greater than zero and no more than 90 seconds"
+            )
         selected_prompt = Path(prompt_path) if prompt_path is not None else _prompt_path()
         instruction = selected_prompt.read_text(encoding="utf-8")
         if not instruction.strip():
@@ -197,6 +204,7 @@ class AdkSemanticAssessor:
         self.model_id = model_id
         self.prompt_version = PROMPT_VERSION
         self.context_char_limit = context_char_limit
+        self.model_timeout_seconds = model_timeout_seconds
         self.runner = runner or AdkModelRunner(model_id=model_id, instruction=instruction)
 
     def _request_prompt(self, evidence: AssessmentInput, *, schema_retry: bool) -> str:
@@ -266,13 +274,16 @@ class AdkSemanticAssessor:
         for attempt in range(2):
             attempts = attempt + 1
             try:
-                raw = await self.runner.generate(
-                    self._request_prompt(evidence, schema_retry=attempt == 1)
-                )
+                async with asyncio.timeout(self.model_timeout_seconds):
+                    raw = await self.runner.generate(
+                        self._request_prompt(evidence, schema_retry=attempt == 1)
+                    )
                 candidate = self._validate_output(raw)
                 self._validate_grounding(candidate, evidence)
                 output = candidate
                 break
+            except TimeoutError as exc:
+                raise SemanticAssessmentUnavailable("semantic model invocation timed out") from exc
             except SemanticAssessmentBlocked as exc:
                 last_failure = exc
             except Exception as exc:

@@ -14,6 +14,9 @@ from braille_errata_relay.adapters.drive import DriveBlobProvider, DriveChangeRe
 from braille_errata_relay.adapters.firestore_ledger import FirestoreGate0Ledger
 from braille_errata_relay.adapters.gcs_artifacts import GcsArtifactStore
 from braille_errata_relay.api.security import GoogleOidcVerifier, IdentityVerifier
+from braille_errata_relay.application.automatic_reconciliation import (
+    AutomaticReconciliationWorkflow,
+)
 from braille_errata_relay.application.baseline_registration import BaselineRegistrationWorkflow
 from braille_errata_relay.application.containment_proof import ContainmentProofWorkflow
 from braille_errata_relay.application.drive_gate0 import DRIVE_READONLY_SCOPE, DriveGate0Workflow
@@ -55,6 +58,7 @@ class RuntimeDependencies:
     telemetry_workflow: TelemetryIngestionWorkflow | None
     incident_workflow: IncidentWorkflow | None
     outbox_workflow: OutboxDrainWorkflow | None
+    automatic_reconciliation_workflow: AutomaticReconciliationWorkflow | None
     identity_verifier: IdentityVerifier
 
 
@@ -75,6 +79,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             telemetry_workflow=None,
             incident_workflow=None,
             outbox_workflow=None,
+            automatic_reconciliation_workflow=None,
             identity_verifier=GoogleOidcVerifier(),
         )
     try:
@@ -95,11 +100,13 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             telemetry_workflow=None,
             incident_workflow=None,
             outbox_workflow=None,
+            automatic_reconciliation_workflow=None,
             identity_verifier=GoogleOidcVerifier(),
         )
     assessor = AdkSemanticAssessor(
         model_id=settings.gemini_model,
         context_char_limit=settings.semantic_context_chars,
+        model_timeout_seconds=settings.semantic_model_timeout_seconds,
     )
     ledger = FirestoreGate0Ledger(
         project_id=settings.project_id,
@@ -116,6 +123,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
     telemetry_workflow = None
     incident_workflow = None
     outbox_workflow = None
+    automatic_reconciliation_workflow = None
     if (
         settings.drive_file_id
         and settings.artifact_bucket
@@ -175,6 +183,11 @@ def build_runtime_dependencies() -> RuntimeDependencies:
                 ledger=ledger,
                 incident_workflow=incident_workflow,
             )
+            automatic_reconciliation_workflow = AutomaticReconciliationWorkflow(
+                drive_workflow=drive_workflow,
+                outbox_workflow=outbox_workflow,
+                ledger=ledger,
+            )
             endpoint_receipt_workflow = EndpointReceiptWorkflow(
                 ledger=ledger,
                 artifact_store=artifact_store,
@@ -218,5 +231,6 @@ def build_runtime_dependencies() -> RuntimeDependencies:
         telemetry_workflow,
         incident_workflow,
         outbox_workflow,
+        automatic_reconciliation_workflow,
         GoogleOidcVerifier(),
     )

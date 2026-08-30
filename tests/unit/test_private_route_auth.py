@@ -16,6 +16,11 @@ from braille_errata_relay.api.security import (
     OidcVerificationError,
     VerifiedIdentity,
 )
+from braille_errata_relay.application.automatic_reconciliation import (
+    AutomaticReconciliationResult,
+    AutomaticReconciliationWorkflow,
+    AutomationCycleStatus,
+)
 from braille_errata_relay.cloud_settings import CloudSettings
 from braille_errata_relay.contracts.canonical_json import canonical_sha256
 from braille_errata_relay.domain.models import SemanticAssessment
@@ -63,6 +68,54 @@ class FakeAssessor:
             attempts=1,
             outcome_sha256=canonical_sha256(assessment.model_dump(mode="json")),
         )
+
+
+class FakeAutomaticReconciliationWorkflow:
+    def __init__(
+        self,
+        *,
+        error: Exception | None = None,
+        status_error: Exception | None = None,
+    ) -> None:
+        self.error = error
+        self.status_error = status_error
+        self.calls: list[int] = []
+        self.status_calls = 0
+
+    async def run(self, *, outbox_limit: int = 1) -> AutomaticReconciliationResult:
+        self.calls.append(outbox_limit)
+        if self.error is not None:
+            raise self.error
+        return AutomaticReconciliationResult(
+            cycle_id="a" * 64,
+            status=AutomationCycleStatus.COMPLETED,
+            source_change_detected=True,
+            source_revision_count=1,
+            drive_receipt_id="b" * 64,
+            outbox_leased=1,
+            outbox_completed=1,
+        )
+
+    async def status(self) -> dict[str, object]:
+        self.status_calls += 1
+        if self.status_error is not None:
+            raise self.status_error
+        return {
+            "schema_version": "automation-cycle-status.v1",
+            "state": "IDLE",
+            "last_outcome": "COMPLETED",
+            "last_status": "COMPLETED",
+            "last_completed_at": "2026-08-31T00:00:00+00:00",
+            "source_change_detected": False,
+            "source_unavailable": False,
+            "outbox": {
+                "leased": 0,
+                "completed": 0,
+                "retried": 0,
+                "dead_letter_possible": 0,
+            },
+            "last_error_code": None,
+        }
 
 
 class FakeLedger:
@@ -287,6 +340,144 @@ def test_telemetry_and_scheduler_principals_are_route_scoped() -> None:
     assert outbox.status_code == 503
     assert wrong_telemetry.status_code == 403
     assert wrong_scheduler.status_code == 403
+
+
+def test_automatic_cycle_is_scheduler_only_and_returns_a_sanitized_record() -> None:
+    workflow = FakeAutomaticReconciliationWorkflow()
+    client = TestClient(
+        create_app(
+            cloud_settings=_settings(),
+            automatic_reconciliation_workflow=cast(AutomaticReconciliationWorkflow, workflow),
+            identity_verifier=cast(IdentityVerifier, FakeVerifier()),
+        )
+    )
+    scheduler_headers = {"Authorization": "Bearer scheduler@example.iam.gserviceaccount.com"}
+
+    admitted = client.post(
+        "/internal/automation-cycle",
+        json={"schema_version": "automation-cycle-request.v1", "outbox_limit": 1},
+        headers=scheduler_headers,
+    )
+    unauthenticated = client.post(
+        "/internal/automation-cycle",
+        json={"schema_version": "automation-cycle-request.v1", "outbox_limit": 1},
+    )
+    wrong_principal = client.post(
+        "/internal/automation-cycle",
+        json={"schema_version": "automation-cycle-request.v1", "outbox_limit": 1},
+        headers={"Authorization": "Bearer source@example.iam.gserviceaccount.com"},
+    )
+
+    assert admitted.status_code == 200
+    assert admitted.json()["schema_version"] == "automation-cycle-result.v1"
+    assert admitted.json()["source_change_detected"] is True
+    assert workflow.calls == [1]
+    assert unauthenticated.status_code == 401
+    assert wrong_principal.status_code == 403
+
+
+def test_automatic_cycle_rejects_batching_and_sanitizes_runtime_failure() -> None:
+    workflow = FakeAutomaticReconciliationWorkflow(error=RuntimeError("Drive token detail"))
+    client = TestClient(
+        create_app(
+            cloud_settings=_settings(),
+            automatic_reconciliation_workflow=cast(AutomaticReconciliationWorkflow, workflow),
+            identity_verifier=cast(IdentityVerifier, FakeVerifier()),
+        )
+    )
+    headers = {"Authorization": "Bearer scheduler@example.iam.gserviceaccount.com"}
+
+    invalid = client.post(
+        "/internal/automation-cycle",
+        json={"schema_version": "automation-cycle-request.v1", "outbox_limit": 2},
+        headers=headers,
+    )
+    unavailable = client.post(
+        "/internal/automation-cycle",
+        json={"schema_version": "automation-cycle-request.v1", "outbox_limit": 1},
+        headers=headers,
+    )
+
+    assert invalid.status_code == 422
+    assert workflow.calls == [1]
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {"status": "BLOCKED", "sanitized_error": "RuntimeError"}
+    assert "Drive token detail" not in unavailable.text
+
+
+def test_automatic_cycle_sanitizes_a_bounded_timeout_for_scheduler_retry() -> None:
+    workflow = FakeAutomaticReconciliationWorkflow(error=TimeoutError("private timeout detail"))
+    client = TestClient(
+        create_app(
+            cloud_settings=_settings(),
+            automatic_reconciliation_workflow=cast(AutomaticReconciliationWorkflow, workflow),
+            identity_verifier=cast(IdentityVerifier, FakeVerifier()),
+        )
+    )
+
+    response = client.post(
+        "/internal/automation-cycle",
+        json={"schema_version": "automation-cycle-request.v1", "outbox_limit": 1},
+        headers={"Authorization": "Bearer scheduler@example.iam.gserviceaccount.com"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "BLOCKED", "sanitized_error": "TimeoutError"}
+    assert "private timeout detail" not in response.text
+
+
+def test_automatic_cycle_status_is_demonstrator_only_and_read_only() -> None:
+    workflow = FakeAutomaticReconciliationWorkflow()
+    client = TestClient(
+        create_app(
+            cloud_settings=_settings(),
+            automatic_reconciliation_workflow=cast(AutomaticReconciliationWorkflow, workflow),
+            identity_verifier=cast(IdentityVerifier, FakeVerifier()),
+        )
+    )
+
+    admitted = client.get(
+        "/api/v1/automation-status",
+        headers={"Authorization": "Bearer demonstrator@example.com"},
+    )
+    scheduler_denied = client.get(
+        "/api/v1/automation-status",
+        headers={"Authorization": "Bearer scheduler@example.iam.gserviceaccount.com"},
+    )
+    unauthenticated = client.get("/api/v1/automation-status")
+
+    assert admitted.status_code == 200
+    assert admitted.json()["schema_version"] == "automation-cycle-status.v1"
+    assert admitted.json()["state"] == "IDLE"
+    assert workflow.status_calls == 1
+    assert scheduler_denied.status_code == 403
+    assert unauthenticated.status_code == 401
+    assert client.post(
+        "/api/v1/automation-status",
+        headers={"Authorization": "Bearer demonstrator@example.com"},
+    ).status_code in {404, 405}
+
+
+def test_automatic_cycle_status_sanitizes_storage_failure() -> None:
+    workflow = FakeAutomaticReconciliationWorkflow(
+        status_error=RuntimeError("private Firestore detail")
+    )
+    client = TestClient(
+        create_app(
+            cloud_settings=_settings(),
+            automatic_reconciliation_workflow=cast(AutomaticReconciliationWorkflow, workflow),
+            identity_verifier=cast(IdentityVerifier, FakeVerifier()),
+        )
+    )
+
+    response = client.get(
+        "/api/v1/automation-status",
+        headers={"Authorization": "Bearer demonstrator@example.com"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "BLOCKED", "sanitized_error": "RuntimeError"}
+    assert "private Firestore detail" not in response.text
 
 
 def test_production_link_route_is_demonstrator_only() -> None:

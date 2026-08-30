@@ -47,7 +47,7 @@ physical-production actions.
 
 | Workflow | What Astra completes |
 | --- | --- |
-| **Detect** | On an authorized Drive reconciliation, drains the change feed and performs an authoritative metadata-and-byte refetch. The fetched bytes, not a notification, establish truth. |
+| **Detect** | When enabled, a private automatic cycle drains the Drive change feed and performs an authoritative metadata-and-byte refetch. The fetched bytes, not a notification, establish truth. |
 | **Understand** | Validates immutable source lineage, derives stable source-block differences, and identifies the accepted source revision that supersedes the baseline. |
 | **Regenerate** | Uses a pinned Liblouis profile and deterministic formatter to create a candidate BRF, source map, manifest, hashes, and exact page-impact report. |
 | **Assess impact** | Sends only persisted, bounded evidence to Gemini through ADK for semantic assessment; deterministic code owns BRF bytes, hashes, page counts, and state. |
@@ -79,16 +79,16 @@ determining when a previously approved master is no longer trustworthy,
 establishing the evidence behind that conclusion, preparing the recovery case,
 and knowing exactly where its authority ends.
 
-## The memorable demo story
+## End-to-end workflow
 
 The intended live hero path is:
 
 1. Show an approved baseline and its observed production context.
 2. Change the prepared authoritative Drive source from V1 to V2 through the
    normal Drive UI.
-3. An authorized reconciliation invokes Astra, which refetches the source
-   bytes, detects the revision, and builds the candidate BRF and page-impact
-   evidence.
+3. Astra's enabled private automatic cycle detects the revision, refetches the
+   source bytes, and builds the candidate BRF and page-impact evidence. No
+   reconciliation command is run after the edit.
 4. Show the bounded Gemini assessment alongside deterministic source, BRF, and
    production-observation evidence.
 5. Show a recovery recommendation and the human professional gate.
@@ -96,12 +96,14 @@ The intended live hero path is:
    observes an independently submitted replacement job and records
    **REPLACEMENT_OBSERVED**.
 
-The final readiness evidence honestly records that the final fresh Drive edit,
-human CUPS lifecycle, professional disposition, and replacement submission
-were **NOT_RUN** in that release pass. The path is implemented; it must be
-demonstrated only from actual observed execution. See
-[live-demo-runbook.md](docs/live-demo-runbook.md) and
-[final-demo-readiness.json](demo/evidence/final-demo-readiness.json).
+## Contents
+
+- [Architecture](#technical-architecture)
+- [Evidence and release chronology](#evidence-recorded-release-chronology)
+- [Quick start](#quick-start-choose-the-truthful-path)
+- [Fresh-project deployment](docs/fresh-project-deployment.md)
+- [Security and authority](docs/security-and-authority.md)
+- [Scope and limits](#scope-and-unclaimed-behavior)
 
 ## Deliberate human authority boundary
 
@@ -114,16 +116,15 @@ cancel, restart, pause, or physically stop a production job. Scheduler state
 does not prove physical containment. A candidate BRF is not an approved
 production master.
 
-This is a feature, not an omission: a recovery layer should not silently acquire
-the authority to operate specialized physical equipment or substitute its
-judgment for professional braille proofing.
+This keeps professional braille proofing and physical-production authority
+with the people and controls already responsible for them.
 
 ## Demonstrated vertical slice: real, simulated, and fixture-only
 
 | Capability | Truthful status |
 | --- | --- |
 | Liblouis translation, BRF serialization, pagination, source maps, profile/table binding, hashing, and page impact | **Real and reproducible.** Pinned profiles and exact BRF golden checks are part of the verification evidence. |
-| Google Drive change/reconcile path | **Real read-only adapter.** It uses Drive change information plus authoritative byte refetch; the final release's fresh hero edit remains NOT_RUN. |
+| Google Drive change/reconcile path | **Real read-only adapter.** When enabled, a private scheduler cycle uses Drive change information plus authoritative byte refetch, then processes one durable outbox record. |
 | Gemini / Google ADK semantic assessment | **Real bounded adapter when configured.** It returns structured semantic assessment only; it never owns production facts or device tools. |
 | Firestore ledger and GCS artifact lineage | **Real cloud adapters.** They hold durable workflow state and immutable content-addressed evidence, not a publishing system of record. |
 | Private Cloud Run deployment and authenticated read-only smoke | **Real.** The final readiness evidence records a private deployment and authenticated GET-only smoke. |
@@ -149,14 +150,13 @@ production-floor workflow](https://www.nbp.org/ic/nbp/about/aboutus/tour.html);
 and the U.S. Department of Education documents the
 [NIMAS/NIMAC source path](https://sites.ed.gov/idea/idea-files/questions-and-answers-on-the-national-instructional-materials-accessibility-standard-nimas-aug-9-2021/).
 
-Google Drive and CUPS are intentionally the hackathon's reproducible adapters,
-not claims about industry-standard intake or production control. The durable
-architecture is based on **source authority** and **production observation**
-boundaries, not on those two products.
+Google Drive and CUPS are the hackathon's reproducible adapters, not claims
+about industry-standard intake or production control. The durable architecture
+is based on **source authority** and **production observation** boundaries, not
+on those two products.
 
-> We did not attempt to simulate every braille facility. We implemented the
-> smallest complete production topology necessary to prove the recovery
-> architecture.
+> The implementation uses the smallest complete production topology needed to
+> demonstrate the recovery architecture.
 
 The deeper reference workflow, facility role map, sources, and integration
 rationale are preserved in
@@ -193,7 +193,8 @@ no-device-control boundary without claiming unimplemented integrations.
 
 ~~~mermaid
 flowchart LR
-    drive["Authoritative Drive source<br/>(read-only adapter)"] --> reconcile["Change feed + authoritative byte refetch"]
+    drive["Authoritative Drive source<br/>(read-only adapter)"] --> cycle["Private automatic cycle"]
+    cycle --> reconcile["Change feed + authoritative byte refetch"]
     reconcile --> deterministic["Deterministic diff → Liblouis → BRF → page impact"]
     deterministic --> gemini["Gemini / ADK<br/>semantic assessment only"]
     gemini --> ledger["Firestore state + append-only timeline"]
@@ -305,7 +306,8 @@ Set-Location -LiteralPath $RepoRoot
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\infra\demo\start_demo.ps1
 ~~~
 
-It cannot grant IAM, reconcile Drive, submit a job, change CUPS, or make a
+It displays durable state while the private service performs configured
+background reconciliation. It cannot grant IAM, control CUPS, or make a
 professional disposition. Its temporary authentication prerequisite is
 explained in the Google Cloud setup guide.
 
@@ -343,7 +345,7 @@ docker build --tag braille-errata-relay:final-demo-readiness .
 docker run --rm --network none --read-only --cap-drop ALL --entrypoint python braille-errata-relay:final-demo-readiness -m braille_errata_relay.container_smoke
 ~~~
 
-The current release evidence records a passing frozen suite, lock check, Ruff,
+The latest recorded release evidence records a passing frozen suite, lock check, Ruff,
 strict mypy, Docker build, container readiness, repeated Liblouis golden
 renders, WSL Liblouis smoke, an evidence-recorded WSL full-application golden,
 responsive fixture inspection, private Cloud Run deployment, authenticated
@@ -352,7 +354,7 @@ WSL golden is the deterministic Liblouis render check; Windows-host skips
 remain platform-specific and are not passing mocks. Read the exact chronology
 in [testing-and-evidence.md](docs/testing-and-evidence.md).
 
-## Evidence: current release versus history
+## Evidence: recorded release chronology
 
 Evidence is sanitized, schema-validated, and deliberately chronological:
 
@@ -361,15 +363,20 @@ Evidence is sanitized, schema-validated, and deliberately chronological:
 | [gate0-local-floor.json](demo/evidence/gate0-local-floor.json) | Historical local CUPS/Liblouis foundation evidence. |
 | [cloud-gate0.json](demo/evidence/cloud-gate0.json) | Historical private Cloud Run, Drive, Firestore, GCS, and Gemini/ADK seam evidence. |
 | [final-story5-dashboard.json](demo/evidence/final-story5-dashboard.json) | Historical Story 5 and dashboard evidence. |
-| [final-demo-readiness.json](demo/evidence/final-demo-readiness.json) | **Current release evidence.** It supersedes earlier WSL-runtime uncertainty and labels unexecuted live hero actions as NOT_RUN. |
+| [final-demo-readiness.json](demo/evidence/final-demo-readiness.json) | **Latest recorded release evidence.** It supersedes earlier WSL-runtime uncertainty and records the execution boundary of that release. |
 
 Historical snapshots remain valuable because they show the gates crossed, but
-they do not override the current release's facts. Fixture screenshots are
+they do not override the latest recorded release's facts. Fixture screenshots are
 separate from live execution evidence and never stand in for it.
+
+The final-demo-readiness release labels its unexecuted fresh Drive edit, human
+CUPS lifecycle, professional disposition, and replacement submission as
+**NOT_RUN**. It is not evidence of a later automatic-watch exercise; a new
+release record is created only after that path is actually run.
 
 ## Record the demo honestly
 
-Use [live-demo-runbook.md](docs/live-demo-runbook.md) for the 3–4 minute
+Use [live-demo-runbook.md](docs/live-demo-runbook.md) for the 4–5 minute
 problem-first recording story. The detailed human action/CUPS procedure stays
 in [active-professional-review-demo.md](docs/active-professional-review-demo.md).
 
@@ -394,39 +401,19 @@ The demonstrated topology is intentionally narrow:
 - a simulated final physical embossing endpoint;
 - human-controlled professional and physical production authority.
 
-The limitation is **adapter coverage**, not ignorance of the surrounding
-production process. [instruction.md](instruction.md) and
-[architecture.md](architecture.md) preserve the grounded target design and
-research context. This README and
+The current boundary is **adapter coverage**. [instruction.md](instruction.md)
+and [architecture.md](architecture.md) preserve the grounded target design and
+research context. This README and the recorded
 [final-demo-readiness.json](demo/evidence/final-demo-readiness.json) define
-the implemented release boundary: the current Story 5 workflow ends at
+the evidenced Story 5 boundary: the workflow ends at
 **REPLACEMENT_OBSERVED** and makes no final-verification, physical-completion,
 notification, or closure claim.
-
-## Submission handoff
-
-The current completed release branch is **codex/final-demo-readiness**. The
-remote's locally recorded default branch is older, so before submitting the
-repository URL, a repository administrator must make the branch containing the
-latest code, documentation, and evidence the GitHub default branch (or merge
-this release into the selected default branch). Judges should not have to
-manually discover the release branch.
-
-Before submission, verify:
-
-1. the submitted GitHub URL opens the release branch by default;
-2. the README at that URL is this judge-facing version;
-3. the sanitized current evidence file is present;
-4. the Devpost description and video use the same name: **Astra — Braille
-   Errata Relay**;
-5. any live claim in the video is backed by actual observed evidence.
-6. upload [astra-architecture-diagram.png](docs/assets/astra-architecture-diagram.png)
-   to Devpost as the static architecture-diagram artifact.
 
 ## Further reading
 
 - [Fresh-project Google Cloud deployment](docs/fresh-project-deployment.md)
 - [Google Cloud authentication and Drive setup](docs/google-cloud-setup.md)
+- [Authoritative Drive source and automatic watch](docs/authoritative-drive-source.md)
 - [Testing and evidence chronology](docs/testing-and-evidence.md)
 - [Security and authority model](docs/security-and-authority.md)
 - [Live demonstration runbook](docs/live-demo-runbook.md)

@@ -4,6 +4,15 @@ Status: implementation contract for the hackathon MVP
 Last grounded: 2026-08-28  
 Companion product context: `instruction.md`
 
+> **Implementation status — 2026-08-31:** This document preserves the original
+> research and target architecture. The shipped autonomous source trigger is
+> **Cloud Scheduler → private Cloud Run `/internal/automation-cycle` → Drive
+> `changes.list` → authoritative metadata-and-byte refetch → durable outbox**.
+> Workspace Events and Pub/Sub source-event diagrams below are researched target
+> alternatives, not deployed release claims. Use the README and
+> `docs/fresh-project-deployment.md` for the implemented setup and release
+> evidence.
+
 ## 0. Build contract
 
 Braille Errata Relay is a report-first overlay on an existing Braille-production workflow. It observes a changed authoritative source, investigates semantic and deterministic Braille impact, prepares a traceable candidate BRF, reports to the responsible professional, and verifies the recovery that authorized humans perform through their existing controls.
@@ -68,8 +77,9 @@ Windows 11 laptop
    `- relay-capture backend and simulated endpoint evidence
 
 Google Cloud
-|- Google Workspace/Drive event source
-|- Pub/Sub source-events and site-telemetry topics
+|- Cloud Scheduler automatic Drive reconciliation (private OIDC)
+|- Drive changes.list + authoritative byte refetch
+|- site-telemetry topic/adapter where configured
 |- one Cloud Run FastAPI/ADK application
 |- Vertex AI Gemini
 |- Firestore lineage/evidence ledger

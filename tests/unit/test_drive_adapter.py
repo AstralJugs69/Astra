@@ -15,7 +15,7 @@ from braille_errata_relay.adapters.drive import (
     DriveSourceInvalid,
     DriveSourceRemoved,
 )
-from braille_errata_relay.domain.models import SourceLocator, SourceProvider
+from braille_errata_relay.domain.models import DriveChangeSignal, SourceLocator, SourceProvider
 
 
 class Response(dict[str, object]):
@@ -202,7 +202,7 @@ async def test_reconciler_drains_every_page_filters_and_refetches() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconciler_does_not_return_advanced_cursor_for_removed_file() -> None:
+async def test_reconciler_checkpoints_a_removed_file_without_creating_a_snapshot() -> None:
     changes = FakeChanges(
         {"startPageToken": "cursor-0"},
         [
@@ -214,8 +214,46 @@ async def test_reconciler_does_not_return_advanced_cursor_for_removed_file() -> 
     )
     service = FakeDrive(FakeFiles([], []), changes)
 
-    with pytest.raises(DriveSourceRemoved):
-        await DriveChangeReconciler(provider=_provider(service)).drain("cursor-0")
+    batch = await DriveChangeReconciler(provider=_provider(service)).drain("cursor-0")
+
+    assert batch.start_cursor == "cursor-0"
+    assert batch.final_cursor == "cursor-final"
+    assert batch.signals == (DriveChangeSignal(file_id="drive-file", removed=True),)
+    assert batch.snapshots == ()
+
+
+@pytest.mark.asyncio
+async def test_reconciler_recovers_a_remove_then_restore_sequence_with_one_final_refetch() -> None:
+    content = b"# Restored source\n"
+    files = FakeFiles([_metadata(size=len(content)), _metadata(size=len(content))], [content])
+    changes = FakeChanges(
+        {"startPageToken": "cursor-0"},
+        [
+            {
+                "changes": [{"fileId": "drive-file", "removed": True}],
+                "nextPageToken": "cursor-page-2",
+            },
+            {
+                "changes": [
+                    {
+                        "fileId": "drive-file",
+                        "removed": False,
+                        "file": {"id": "drive-file", "trashed": False},
+                    }
+                ],
+                "newStartPageToken": "cursor-final",
+            },
+        ],
+    )
+    reconciler = DriveChangeReconciler(provider=_provider(FakeDrive(files, changes)))
+
+    batch = await reconciler.drain("cursor-0")
+
+    assert batch.final_cursor == "cursor-final"
+    assert [signal.removed for signal in batch.signals] == [True, False]
+    assert len(batch.snapshots) == 1
+    assert batch.snapshots[0].source_bytes == content
+    assert len(files.calls) == 3
 
 
 @pytest.mark.asyncio

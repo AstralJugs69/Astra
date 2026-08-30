@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from braille_errata_relay.adapters.firestore_ledger import (
+    AutomationCycleClaimStatus,
     FirestoreGate0Ledger,
     LedgerIntegrityError,
     SemanticClaimStatus,
@@ -213,6 +214,8 @@ async def test_change_batch_commits_cursor_receipt_revision_execution_and_outbox
     assert replay.duplicate is True
     assert replay.receipt_id == first.receipt_id
     assert len(first.outbox_ids) == 1
+    assert first.new_outbox_ids == first.outbox_ids
+    assert replay.new_outbox_ids == ()
     assert client.store[f"drive_cursors/{scope_hash}"]["raw_token"] == "cursor-final"
     assert client.store[f"drive_cursors/{scope_hash}"]["state_version"] == 1
     assert sum(path.startswith("event_receipts/") for path in client.store) == 1
@@ -221,6 +224,38 @@ async def test_change_batch_commits_cursor_receipt_revision_execution_and_outbox
     assert sum(path.startswith("outbox/") for path in client.store) == 1
     assert "source_bytes" not in repr(client.store)
     assert content_not_present(client.store)
+
+
+@pytest.mark.asyncio
+async def test_new_drive_receipt_with_preexisting_outbox_does_not_report_new_work() -> None:
+    client = FakeClient()
+    ledger = _ledger(client)
+    scope_hash = "c" * 64
+    await ledger.initialize_cursor(scope_hash, "cursor-start")
+    first_batch, refs = _batch()
+    first = await ledger.commit_change_batch(
+        principal_scope_hash=scope_hash,
+        batch=first_batch,
+        artifact_refs=refs,
+    )
+    replayed_metadata_batch = DriveChangeBatch(
+        start_cursor="cursor-final",
+        final_cursor="cursor-after-metadata-replay",
+        signals=first_batch.signals,
+        snapshots=first_batch.snapshots,
+    )
+
+    second = await ledger.commit_change_batch(
+        principal_scope_hash=scope_hash,
+        batch=replayed_metadata_batch,
+        artifact_refs=refs,
+    )
+
+    assert first.new_outbox_ids == first.outbox_ids
+    assert second.duplicate is False
+    assert second.outbox_ids == first.outbox_ids
+    assert second.new_outbox_ids == ()
+    assert sum(path.startswith("outbox/") for path in client.store) == 1
 
 
 @pytest.mark.asyncio
@@ -835,6 +870,43 @@ async def test_report_timestamps_are_transactionally_allocated_once_across_repla
 
 
 @pytest.mark.asyncio
+async def test_incident_claim_reuses_first_provider_revision_for_identical_source_bytes() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 29, 17, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    source_sha256 = "8" * 64
+    first = IncidentCheckpoint(
+        incident_id="6" * 64,
+        baseline_id="7" * 64,
+        new_source_revision_id=f"drive:file:63:{source_sha256}",
+        new_source_sha256=source_sha256,
+        production_job_lineage_id="9" * 64,
+        updated_at=now[0],
+    )
+    original = await ledger.claim_incident(first)
+    now[0] += timedelta(minutes=1)
+    later_provider_version = first.model_copy(
+        update={
+            "new_source_revision_id": f"drive:file:64:{source_sha256}",
+            "updated_at": now[0],
+        }
+    )
+
+    replay = await ledger.claim_incident(later_provider_version)
+
+    assert original.duplicate is False
+    assert replay.duplicate is True
+    assert replay.checkpoint == first
+    persisted = client.store[f"incidents/{first.incident_id}"]["record"]
+    assert isinstance(persisted, dict)
+    assert persisted["new_source_revision_id"] == first.new_source_revision_id
+
+    conflicting = later_provider_version.model_copy(update={"new_source_sha256": "a" * 64})
+    with pytest.raises(LedgerIntegrityError, match="incident identity conflicts"):
+        await ledger.claim_incident(conflicting)
+
+
+@pytest.mark.asyncio
 async def test_semantic_execution_is_claimed_before_model_and_reuses_first_result() -> None:
     client = FakeClient()
     ledger = _ledger(client)
@@ -1300,6 +1372,116 @@ async def test_operator_attestation_requires_prior_halt_and_never_infers_contain
     assert attestation.state.state.value != "CONTAINED_BY_HUMAN"
     assert attestation.attestation.truth_basis is TruthBasis.SIMULATED_DEMO
     assert len(await ledger.list_incident_timeline_events(checkpoint.incident_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_automation_cycle_lease_rejects_overlap_and_records_immutable_completion() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 30, 12, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    cycle_key = "a" * 64
+    first_cycle = "b" * 64
+
+    first = await ledger.claim_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id=first_cycle,
+        lease_token="first-lease",
+        lease_seconds=360,
+    )
+    overlap = await ledger.claim_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id="c" * 64,
+        lease_token="second-lease",
+        lease_seconds=360,
+    )
+
+    assert first.status is AutomationCycleClaimStatus.ACQUIRED
+    assert overlap.status is AutomationCycleClaimStatus.IN_PROGRESS
+    assert overlap.cycle_id == first_cycle
+    assert await ledger.complete_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id=first_cycle,
+        lease_token="first-lease",
+        result={"status": "COMPLETED", "source_change_detected": False},
+    )
+    assert await ledger.complete_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id=first_cycle,
+        lease_token="first-lease",
+        result={"status": "COMPLETED", "source_change_detected": False},
+    )
+    assert client.store[f"automation_cycle_leases/{cycle_key}"]["status"] == "IDLE"
+    execution = client.store[f"automation_cycle_executions/{first_cycle}"]
+    assert execution["outcome"] == "COMPLETED"
+    assert execution["result_sha256"] == canonical_sha256(
+        {"status": "COMPLETED", "source_change_detected": False}
+    )
+    state = await ledger.get_automation_cycle_state(cycle_key=cycle_key)
+    assert state is not None
+    assert state.state == "IDLE"
+    assert state.last_execution_cycle_id == first_cycle
+    assert state.last_outcome == "COMPLETED"
+    assert state.last_result == {"status": "COMPLETED", "source_change_detected": False}
+    assert state.last_error_code is None
+    assert state.last_completed_at == now[0]
+
+
+@pytest.mark.asyncio
+async def test_automation_cycle_expiry_and_failure_release_work_for_restart_recovery() -> None:
+    client = FakeClient()
+    now = [datetime(2026, 8, 30, 12, 0, tzinfo=UTC)]
+    ledger = _ledger_with_clock(client, now)
+    cycle_key = "d" * 64
+    abandoned_cycle = "e" * 64
+
+    acquired = await ledger.claim_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id=abandoned_cycle,
+        lease_token="expired-lease",
+        lease_seconds=10,
+    )
+    assert acquired.status is AutomationCycleClaimStatus.ACQUIRED
+    now[0] += timedelta(seconds=11)
+    replacement = await ledger.claim_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id="f" * 64,
+        lease_token="replacement-lease",
+        lease_seconds=360,
+    )
+
+    assert replacement.status is AutomationCycleClaimStatus.ACQUIRED
+    lease = client.store[f"automation_cycle_leases/{cycle_key}"]
+    assert lease["last_abandoned_cycle_id"] == abandoned_cycle
+    assert await ledger.fail_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id="f" * 64,
+        lease_token="replacement-lease",
+        error_code="DriveSourceError",
+    )
+    assert client.store[f"automation_cycle_executions/{'f' * 64}"]["outcome"] == "FAILED"
+    state = await ledger.get_automation_cycle_state(cycle_key=cycle_key)
+    assert state is not None
+    assert state.state == "IDLE"
+    assert state.last_outcome == "FAILED"
+    assert state.last_result is None
+    assert state.last_error_code == "DriveSourceError"
+    retry = await ledger.claim_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id="1" * 64,
+        lease_token="retry-lease",
+        lease_seconds=360,
+    )
+    assert retry.status is AutomationCycleClaimStatus.ACQUIRED
+    assert await ledger.complete_automation_cycle(
+        cycle_key=cycle_key,
+        cycle_id="1" * 64,
+        lease_token="retry-lease",
+        result={"status": "COMPLETED", "source_change_detected": False},
+    )
+    recovered_state = await ledger.get_automation_cycle_state(cycle_key=cycle_key)
+    assert recovered_state is not None
+    assert recovered_state.last_outcome == "COMPLETED"
+    assert recovered_state.last_error_code is None
 
 
 @pytest.mark.asyncio

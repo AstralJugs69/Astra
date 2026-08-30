@@ -95,7 +95,8 @@ not weaken the policy.
 ## Runtime Drive access is separate
 
 The deployed service uses the attached runtime service account and asks Google
-authentication libraries for Drive read-only scope. Before live reconciliation:
+authentication libraries for Drive read-only scope. Before enabling the live
+automatic watch:
 
 1. enable the Drive API in the Cloud project;
 2. use exactly one supported **text/markdown** Drive file;
@@ -104,10 +105,15 @@ authentication libraries for Drive read-only scope. Before live reconciliation:
 4. configure the same file ID as **DRIVE_FILE_ID** in the Cloud Run runtime
    environment.
 
-The source adapter drains the Drive change feed and then re-fetches
-authoritative metadata and bytes. A notification or changed timestamp is not
-accepted as source truth on its own. See
-[authoritative-drive-source.md](authoritative-drive-source.md).
+Register the matching accepted baseline, then run the one-time `INITIALIZE`
+source setup, retain its receipt ID, and use the explicit enablement in
+[fresh-project deployment](fresh-project-deployment.md#11-automatic-drive-watch-configure-paused-then-enable-explicitly).
+The dedicated scheduler identity invokes the private automation route every
+minute. The source adapter drains the Drive change feed and then re-fetches
+authoritative metadata and bytes; a notification, changed timestamp, or local
+browser action is never source truth on its own. After the watch is enabled, a
+human Drive edit needs no local Drive credential or manual reconciliation
+command. See [authoritative-drive-source.md](authoritative-drive-source.md).
 
 ## Private Cloud Run and the temporary demonstrator grant
 

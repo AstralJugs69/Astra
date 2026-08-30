@@ -7,6 +7,14 @@
 > Team shape: solo build, deadline-first scope  
 > Binding source of truth: the [official Devpost rules](https://allthingsagentichackathon.devpost.com/rules) and live submission form. If this file conflicts with either, Devpost prevails.
 
+> **Implementation status — 2026-08-31:** This is the project's original
+> research and target-design brief. The shipped automatic Drive trigger is a
+> private Cloud Scheduler cycle that calls Cloud Run, drains `changes.list`,
+> and authoritatively refetches the configured file before durable work begins.
+> The Workspace Events/Pub/Sub source-ingress designs documented below are
+> alternatives retained for research, not deployed release claims. See the
+> README and `docs/fresh-project-deployment.md` for the implemented path.
+
 ## 0. How to use this file
 
 This file is the project's constitution. Read it before changing architecture, adding integrations, or expanding scope. It records what is being built, what is deliberately simulated, where model judgment is allowed, where deterministic software must decide, how evidence is preserved, and what the demo must prove.
@@ -15,7 +23,7 @@ The non-negotiable build contract is:
 
 > **Braille Errata Relay observes a changed source document, determines whether the correction materially affects an in-flight Braille production run, regenerates a candidate Braille artifact with Liblouis, computes the exact deterministic BRF impact, reports a decision-ready intervention to the responsible professional, and verifies the recovery that authorized humans perform through their existing production controls. The relay never holds, cancels, submits, releases, restarts, or physically stops a production job. Only the physical embossing mechanism is simulated; human-operated CUPS actions remain real.**
 
-Do not turn this into a new Braille editor, publishing suite, digital asset manager, inventory system, recipient CRM, or system of record. It is an event-driven agent overlay on an existing source-to-production workflow.
+Do not turn this into a new Braille editor, publishing suite, digital asset manager, inventory system, recipient CRM, or system of record. It is a background agent overlay on an existing source-to-production workflow.
 
 ## 1. Executive brief
 

@@ -34,7 +34,7 @@ class SemanticLedger(Protocol):
         prompt_version: str,
         analysis_revision: int,
         lease_token: str,
-        lease_seconds: int = 120,
+        lease_seconds: int = 240,
     ) -> SemanticExecutionClaim: ...
 
     async def complete_semantic_execution(
@@ -68,8 +68,12 @@ class IdempotentSemanticWorkflow:
         *,
         assessor: AdkSemanticAssessor,
         ledger: SemanticLedger,
-        lease_seconds: int = 120,
+        lease_seconds: int = 240,
     ) -> None:
+        if lease_seconds < 240:
+            raise ValueError(
+                "semantic execution lease must cover two bounded model attempts and completion"
+            )
         self.assessor = assessor
         self.ledger = ledger
         self.lease_seconds = lease_seconds

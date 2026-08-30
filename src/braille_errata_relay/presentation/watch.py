@@ -1,10 +1,10 @@
 """Sanitized, loopback-only watch-floor event primitives.
 
-The presentation server polls the existing private, read-only incident list on
-behalf of a local browser.  This module deliberately knows nothing about
-credentials, CUPS, Drive, or human-record mutations.  It reduces a private
-incident overview to the small, stable subset the watch floor needs and emits
-deduplicated transition facts for Server-Sent Events.
+The presentation server polls existing private, read-only incident and
+automation-status APIs on behalf of a local browser.  This module deliberately
+knows nothing about credentials, CUPS, Drive, or human-record mutations.  It
+reduces private responses to the small, stable subset the watch floor needs and
+emits deduplicated transition facts for Server-Sent Events.
 """
 
 from __future__ import annotations
@@ -28,6 +28,14 @@ QUALIFYING_STAGES = frozenset(
 _WORKFLOW_STAGES = frozenset(stage.value for stage in IncidentWorkflowStage)
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_ENUM = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,127}$")
+_AUTOMATION_STATES = frozenset({"NOT_YET_RUN", "RUNNING", "IDLE", "UNAVAILABLE"})
+_AUTOMATION_OUTCOMES = frozenset({"COMPLETED", "FAILED"})
+_AUTOMATION_STATUSES = frozenset(
+    {"COMPLETED", "ALREADY_RUNNING", "SOURCE_UNAVAILABLE", "NEEDS_ATTENTION"}
+)
+_AUTOMATION_SCHEMA_VERSION = "automation-cycle-status.v1"
+_MAX_OUTBOX_COUNT = 100
 
 
 @dataclass(frozen=True)
@@ -95,10 +103,91 @@ def _sanitize_incident(row: Mapping[str, object]) -> dict[str, object] | None:
     }
 
 
+def _sanitize_automation_status(automation: Mapping[str, object] | None) -> dict[str, object]:
+    """Reduce one private automation record to a fixed, browser-safe shape."""
+
+    unavailable: dict[str, object] = {
+        "state": "UNAVAILABLE",
+        "last_outcome": None,
+        "last_status": None,
+        "last_completed_at": None,
+        "source_change_detected": False,
+        "content_equivalent_replay": False,
+        "source_investigation_pending": False,
+        "source_unavailable": False,
+        "outbox": {
+            "leased": 0,
+            "completed": 0,
+            "retried": 0,
+            "dead_letter_possible": 0,
+        },
+        "last_error_code": None,
+    }
+    if automation is None or automation.get("schema_version") != _AUTOMATION_SCHEMA_VERSION:
+        return unavailable
+
+    state_value = automation.get("state")
+    state = state_value if state_value in _AUTOMATION_STATES else "UNAVAILABLE"
+    outcome_value = automation.get("last_outcome")
+    last_outcome = outcome_value if outcome_value in _AUTOMATION_OUTCOMES else None
+    status_value = automation.get("last_status")
+    last_status = status_value if status_value in _AUTOMATION_STATUSES else None
+    completed_at = automation.get("last_completed_at")
+    last_completed_at: str | None = None
+    if isinstance(completed_at, str) and len(completed_at) <= 64:
+        try:
+            parsed = datetime.fromisoformat(completed_at)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            else:
+                parsed = parsed.astimezone(UTC)
+            last_completed_at = parsed.isoformat()
+    raw_outbox = automation.get("outbox")
+    outbox = raw_outbox if isinstance(raw_outbox, Mapping) else {}
+
+    def safe_count(name: str) -> int:
+        value = outbox.get(name)
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= _MAX_OUTBOX_COUNT
+        ):
+            return value
+        return 0
+
+    error_value = automation.get("last_error_code")
+    error_code = (
+        error_value
+        if isinstance(error_value, str) and _SAFE_IDENTIFIER.fullmatch(error_value) is not None
+        else None
+    )
+    return {
+        "state": state,
+        "last_outcome": last_outcome,
+        "last_status": last_status,
+        "last_completed_at": last_completed_at,
+        "source_change_detected": automation.get("source_change_detected") is True,
+        "content_equivalent_replay": automation.get("content_equivalent_replay") is True,
+        "source_investigation_pending": automation.get("source_investigation_pending") is True,
+        "source_unavailable": automation.get("source_unavailable") is True,
+        "outbox": {
+            "leased": safe_count("leased"),
+            "completed": safe_count("completed"),
+            "retried": safe_count("retried"),
+            "dead_letter_possible": safe_count("dead_letter_possible"),
+        },
+        "last_error_code": error_code,
+    }
+
+
 def sanitize_watch_snapshot(
     payload: Mapping[str, object],
     *,
     observed_at: datetime | None = None,
+    automation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Reduce an API response to a deterministic, browser-safe watch snapshot.
 
@@ -127,7 +216,38 @@ def sanitize_watch_snapshot(
         "source_label": WATCH_SOURCE_LABEL,
         "checked_at": now.isoformat(),
         "incidents": incidents,
+        "automation": _sanitize_automation_status(automation),
     }
+
+
+def _automation_summary(automation: Mapping[str, object]) -> str:
+    state = automation.get("state")
+    if state == "UNAVAILABLE":
+        return "Automatic status temporarily unavailable"
+    if state == "NOT_YET_RUN":
+        return "Waiting for the background scheduler"
+    if state == "RUNNING":
+        return "Checking authoritative Drive source"
+    if automation.get("last_outcome") == "FAILED":
+        label = "Last automatic cycle failed safely; inspect scheduler and error state"
+    elif automation.get("last_status") == "NEEDS_ATTENTION":
+        label = "Automatic cycle needs attention"
+    elif automation.get("last_status") == "SOURCE_UNAVAILABLE":
+        label = "Authoritative source is currently unavailable"
+    elif automation.get("source_investigation_pending") is True:
+        label = "Drive source content detected; investigation is queued"
+    elif automation.get("content_equivalent_replay") is True:
+        label = "Drive revision matched existing source bytes; no new investigation"
+    elif automation.get("source_change_detected") is True:
+        label = "Drive source content detected; durable workflow advanced"
+    elif automation.get("last_status") == "COMPLETED":
+        label = "Completed; no new source content requiring investigation"
+    else:
+        label = "Waiting for durable automatic-cycle evidence"
+    completed_at = automation.get("last_completed_at")
+    if isinstance(completed_at, str):
+        return f"{label} · {completed_at}"
+    return label
 
 
 def watch_summary(snapshot: Mapping[str, object]) -> dict[str, str]:
@@ -135,12 +255,15 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, str]:
 
     raw_incidents = snapshot.get("incidents")
     incidents = raw_incidents if isinstance(raw_incidents, list) else []
+    raw_automation = snapshot.get("automation")
+    automation = raw_automation if isinstance(raw_automation, Mapping) else {}
+    automatic_cycle = _automation_summary(automation)
     if not incidents:
         return {
             "source_label": WATCH_SOURCE_LABEL,
             "durable_stage": "WATCHING",
             "next_safe_action": "No incident is awaiting review. Continue watching authoritative source.",
-            "last_successful_check": str(snapshot.get("checked_at", "Unavailable")),
+            "automatic_cycle": automatic_cycle,
         }
     first = incidents[0] if isinstance(incidents[0], Mapping) else {}
     return {
@@ -152,7 +275,7 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, str]:
                 "Review authoritative evidence; Relay performs no production action.",
             )
         ),
-        "last_successful_check": str(snapshot.get("checked_at", "Unavailable")),
+        "automatic_cycle": automatic_cycle,
     }
 
 
@@ -194,6 +317,7 @@ class WatchEventTracker:
 
     def __init__(self) -> None:
         self._previous: dict[str, dict[str, object]] | None = None
+        self._previous_automation: dict[str, object] | None = None
 
     @staticmethod
     def _by_id(snapshot: Mapping[str, object]) -> dict[str, dict[str, object]]:
@@ -235,8 +359,11 @@ class WatchEventTracker:
         """Observe one sanitized snapshot and report only new durable facts."""
 
         current = self._by_id(snapshot)
+        raw_automation = snapshot.get("automation")
+        current_automation = dict(raw_automation) if isinstance(raw_automation, Mapping) else {}
         if self._previous is None:
             self._previous = current
+            self._previous_automation = current_automation
             return (
                 WatchEvent(
                     name="snapshot",
@@ -245,6 +372,8 @@ class WatchEventTracker:
             )
 
         events: list[WatchEvent] = []
+        if current_automation != self._previous_automation:
+            events.append(WatchEvent("automation_cycle", {"automation": current_automation}))
         for incident_id in sorted(current):
             row = current[incident_id]
             prior = self._previous.get(incident_id)
@@ -267,4 +396,5 @@ class WatchEventTracker:
             if became_qualifying or qualifying_changed:
                 events.append(WatchEvent("review_required", self._incident_payload(row)))
         self._previous = current
+        self._previous_automation = current_automation
         return tuple(events)

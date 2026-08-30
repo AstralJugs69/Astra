@@ -8,7 +8,7 @@ WATCH_JAVASCRIPT = r"""(() => {
   "use strict";
 
   const status = document.getElementById("watch-connection");
-  const checkedAt = document.getElementById("watch-last-check");
+  const automaticCycle = document.getElementById("watch-automatic-cycle");
   const stage = document.getElementById("watch-stage");
   const nextAction = document.getElementById("watch-next-action");
   const rows = document.getElementById("watch-incidents");
@@ -55,11 +55,34 @@ WATCH_JAVASCRIPT = r"""(() => {
     });
   }
 
+  function automationLabel(automation) {
+    if (!automation || typeof automation !== "object") return "Automatic status temporarily unavailable";
+    if (automation.state === "UNAVAILABLE") return "Automatic status temporarily unavailable";
+    if (automation.state === "NOT_YET_RUN") return "Waiting for the background scheduler";
+    if (automation.state === "RUNNING") return "Checking authoritative Drive source";
+    let label = "Waiting for durable automatic-cycle evidence";
+    if (automation.last_outcome === "FAILED") label = "Last automatic cycle failed safely; inspect scheduler and error state";
+    else if (automation.last_status === "NEEDS_ATTENTION") label = "Automatic cycle needs attention";
+    else if (automation.last_status === "SOURCE_UNAVAILABLE") label = "Authoritative source is currently unavailable";
+    else if (automation.source_investigation_pending === true) label = "Drive source content detected; investigation is queued";
+    else if (automation.content_equivalent_replay === true) label = "Drive revision matched existing source bytes; no new investigation";
+    else if (automation.source_change_detected === true) label = "Drive source content detected; durable workflow advanced";
+    else if (automation.last_status === "COMPLETED") label = "Completed; no new source content requiring investigation";
+    if (automation.state === "IDLE" && typeof automation.last_completed_at === "string") {
+      return label + " · " + automation.last_completed_at;
+    }
+    return label;
+  }
+
+  function renderAutomation(automation) {
+    automaticCycle.textContent = automationLabel(automation);
+  }
+
   function renderSnapshot(payload) {
     const snapshot = payload && payload.snapshot;
     if (!snapshot || typeof snapshot !== "object") return;
     const incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
-    checkedAt.textContent = safeText(snapshot.checked_at, "Unavailable");
+    renderAutomation(snapshot.automation);
     const lead = incidents[0] || null;
     stage.textContent = lead ? safeText(lead.workflow_stage, "DETECTED") : "WATCHING";
     nextAction.textContent = lead ? safeText(lead.next_safe_action, "Review authoritative evidence.") : "No incident is currently awaiting review.";
@@ -141,6 +164,13 @@ WATCH_JAVASCRIPT = r"""(() => {
   });
   events.addEventListener("incident_detected", () => setConnection(true));
   events.addEventListener("stage_changed", () => setConnection(true));
+  events.addEventListener("automation_cycle", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      renderAutomation(payload && payload.automation);
+      setConnection(true);
+    } catch (_) { setConnection(false); }
+  });
   events.addEventListener("report_ready", (event) => {
     try { showAlert(JSON.parse(event.data)); } catch (_) { /* Keep the monitor read-only. */ }
   });

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -121,6 +121,7 @@ class IncidentWorkflowResult:
     report: ProductionIncidentReport | None
     disposition_packet: HumanDispositionPacket | None
     duplicate_source: bool = False
+    content_equivalent_replay: bool = False
 
 
 def production_job_lineage_id(baseline: RegisteredBaseline) -> str:
@@ -277,7 +278,13 @@ class IncidentWorkflow:
                 stage=IncidentWorkflowStage.REPORT_READY,
                 updated_at=source.fetched_at,
             )
-            return IncidentWorkflowResult(checkpoint, None, None, duplicate_source=True)
+            return IncidentWorkflowResult(
+                checkpoint,
+                None,
+                None,
+                duplicate_source=True,
+                content_equivalent_replay=True,
+            )
         if baseline.baseline.status is not BaselineStatus.PRODUCTION_LINK_VERIFIED:
             raise IncidentWorkflowError("baseline production link is not verified")
         job_lineage = production_job_lineage_id(baseline)
@@ -287,23 +294,46 @@ class IncidentWorkflow:
             translation_profile_sha256=baseline.baseline.translation_profile_sha256,
             job_lineage_id=job_lineage,
         )
-        checkpoint = (
-            await self.ledger.claim_incident(
-                IncidentCheckpoint(
-                    incident_id=identity,
-                    baseline_id=baseline_id,
-                    new_source_revision_id=source.revision_id,
-                    new_source_sha256=source.source_sha256,
-                    production_job_lineage_id=job_lineage,
-                    updated_at=source.fetched_at,
-                )
+        claim = await self.ledger.claim_incident(
+            IncidentCheckpoint(
+                incident_id=identity,
+                baseline_id=baseline_id,
+                new_source_revision_id=source.revision_id,
+                new_source_sha256=source.source_sha256,
+                production_job_lineage_id=job_lineage,
+                updated_at=source.fetched_at,
             )
-        ).checkpoint
+        )
+        checkpoint = claim.checkpoint
+        content_equivalent_replay = False
+        if claim.duplicate and checkpoint.new_source_revision_id != source.revision_id:
+            # A later Drive provider version can carry byte-identical source
+            # content.  The incident keeps the first accepted provider
+            # revision as immutable provenance.  Resume any partial work from
+            # that canonical source rather than mixing a newer Drive version
+            # into the existing candidate/report lineage.
+            canonical_source = await self.ledger.get_source_revision(
+                checkpoint.new_source_revision_id
+            )
+            if (
+                canonical_source is None
+                or canonical_source.source_sha256 != source.source_sha256
+                or canonical_source.file_id != source.file_id
+                or canonical_source.mime_type != source.mime_type
+            ):
+                raise IncidentWorkflowError(
+                    "content-equivalent source replay cannot be bound to canonical lineage"
+                )
+            source = canonical_source
+            content_equivalent_replay = True
         if checkpoint.stage in {
             IncidentWorkflowStage.REPORT_READY,
             IncidentWorkflowStage.NEEDS_REVIEW,
         }:
-            return await self._load_result(checkpoint)
+            return replace(
+                await self._load_result(checkpoint),
+                content_equivalent_replay=content_equivalent_replay,
+            )
 
         try:
             if checkpoint.stage is IncidentWorkflowStage.DETECTED:
@@ -468,7 +498,10 @@ class IncidentWorkflow:
                 stage=IncidentWorkflowStage.NEEDS_REVIEW,
                 updates={"blocking_reason": BlockingReason.SEMANTIC_ASSESSMENT_INVALID},
             )
-        return await self._load_result(checkpoint)
+        return replace(
+            await self._load_result(checkpoint),
+            content_equivalent_replay=content_equivalent_replay,
+        )
 
     async def _build_report(
         self,

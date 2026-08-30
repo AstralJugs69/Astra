@@ -27,6 +27,9 @@ from braille_errata_relay.api.security import (
     IdentityVerifier,
     enforce_route_identity,
 )
+from braille_errata_relay.application.automatic_reconciliation import (
+    AutomaticReconciliationWorkflow,
+)
 from braille_errata_relay.application.baseline_registration import (
     BaselineRegistrationError,
     BaselineRegistrationWorkflow,
@@ -110,6 +113,13 @@ class DriveReconcileRequest(BaseModel):
 
     schema_version: Literal["cloud-gate0-drive-reconcile.v1"]
     operation: Literal["INITIALIZE", "RECONCILE"]
+
+
+class AutomationCycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["automation-cycle-request.v1"] = "automation-cycle-request.v1"
+    outbox_limit: int = Field(default=1, ge=1, le=1)
 
 
 class BaselineSourceRequest(BaseModel):
@@ -308,6 +318,7 @@ def create_app(
     containment_proof_workflow: ContainmentProofWorkflow | None = None,
     replacement_observation_workflow: ReplacementObservationWorkflow | None = None,
     outbox_workflow: OutboxDrainWorkflow | None = None,
+    automatic_reconciliation_workflow: AutomaticReconciliationWorkflow | None = None,
     identity_verifier: IdentityVerifier | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Braille Errata Relay", version="0.1.0")
@@ -430,7 +441,7 @@ def create_app(
                 if payload.operation == "INITIALIZE"
                 else await drive_workflow.reconcile()
             )
-        except (RuntimeError, ValueError) as exc:
+        except (RuntimeError, TimeoutError, ValueError) as exc:
             return JSONResponse(
                 status_code=503,
                 content={
@@ -447,6 +458,58 @@ def create_app(
                 **result.sanitized_record(),
             },
         )
+
+    @app.post("/internal/automation-cycle")
+    async def automation_cycle(payload: AutomationCycleRequest) -> JSONResponse:
+        if automatic_reconciliation_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "BLOCKED",
+                    "detail": "automatic reconciliation workflow is not configured",
+                },
+            )
+        try:
+            result = await automatic_reconciliation_workflow.run(outbox_limit=payload.outbox_limit)
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "BLOCKED",
+                    "sanitized_error": type(exc).__name__,
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "schema_version": "automation-cycle-result.v1",
+                **result.sanitized_record(),
+            },
+        )
+
+    @app.get("/api/v1/automation-status")
+    async def automation_status() -> JSONResponse:
+        """Expose only durable automatic-cycle state to the local watch floor."""
+
+        if automatic_reconciliation_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "BLOCKED",
+                    "detail": "automatic reconciliation workflow is not configured",
+                },
+            )
+        try:
+            status = await automatic_reconciliation_workflow.status()
+        except (RuntimeError, TimeoutError, ValueError) as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "BLOCKED",
+                    "sanitized_error": type(exc).__name__,
+                },
+            )
+        return JSONResponse(status_code=200, content=status)
 
     @app.post("/internal/site-observations")
     async def ingest_site_observation(payload: dict[str, object]) -> JSONResponse:
@@ -1397,5 +1460,6 @@ app = create_app(
     containment_proof_workflow=_runtime.containment_proof_workflow,
     replacement_observation_workflow=_runtime.replacement_observation_workflow,
     outbox_workflow=_runtime.outbox_workflow,
+    automatic_reconciliation_workflow=_runtime.automatic_reconciliation_workflow,
     identity_verifier=_runtime.identity_verifier,
 )

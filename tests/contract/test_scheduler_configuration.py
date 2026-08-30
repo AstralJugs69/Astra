@@ -4,11 +4,13 @@ import base64
 import json
 from pathlib import Path
 
-from braille_errata_relay.api.main import OutboxDrainRequest
+from braille_errata_relay.api.main import AutomationCycleRequest, OutboxDrainRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 BODY = ROOT / "config" / "scheduler" / "outbox-drain-request.v1.json"
+AUTOMATION_BODY = ROOT / "config" / "scheduler" / "automation-cycle-request.v1.json"
 SCRIPT = ROOT / "infra" / "gcp" / "configure_outbox_scheduler.ps1"
+AUTOMATION_SCRIPT = ROOT / "infra" / "gcp" / "configure_automation_scheduler.ps1"
 PRIVATE_ROUTE_SCRIPT = ROOT / "infra" / "gcp" / "test_private_routes.ps1"
 LIVE_LINK_SCRIPT = ROOT / "infra" / "gcp" / "link_local_baseline_job.ps1"
 SINGLE_RUN_SCRIPT = ROOT / "infra" / "gcp" / "run_single_scheduler_closure.ps1"
@@ -29,6 +31,20 @@ def test_scheduler_body_round_trips_as_strict_json_contract() -> None:
     assert decoded.strip() == b'{"schema_version":"outbox-drain-request.v1","limit":10}'
 
 
+def test_automatic_scheduler_body_is_bounded_to_one_recovery_item_per_cycle() -> None:
+    body = AUTOMATION_BODY.read_bytes()
+    decoded = base64.b64decode(base64.b64encode(body), validate=True)
+    payload = json.loads(decoded)
+
+    request = AutomationCycleRequest.model_validate(payload)
+
+    assert request.model_dump(mode="json") == {
+        "schema_version": "automation-cycle-request.v1",
+        "outbox_limit": 1,
+    }
+    assert decoded.strip() == b'{"schema_version":"automation-cycle-request.v1","outbox_limit":1}'
+
+
 def test_scheduler_configuration_uses_file_body_json_header_and_repauses() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
 
@@ -36,6 +52,40 @@ def test_scheduler_configuration_uses_file_body_json_header_and_repauses() -> No
     assert '--update-headers "Content-Type=application/json"' in script
     assert "gcloud scheduler jobs pause $JobName" in script
     assert "--message-body " not in script
+
+
+def test_automatic_scheduler_stays_private_paused_until_explicitly_armed() -> None:
+    script = AUTOMATION_SCRIPT.read_text(encoding="utf-8")
+
+    assert "/internal/automation-cycle" in script
+    assert "INTERNAL_OIDC_AUDIENCE" in script
+    assert "$deployedServiceUrl = [string]$service.status.url" in script
+    assert "ServiceUrl must exactly match the deployed private Cloud Run status URL." in script
+    assert '$target = $canonicalServiceUrl + "/internal/automation-cycle"' in script
+    assert "--message-body-from-file" in script
+    assert '"--headers"' in script
+    assert '"--update-headers"' in script
+    assert '"--attempt-deadline", "300s"' in script
+    assert "SupportsShouldProcess" in script
+    assert "$InitializationReceiptId" in script
+    assert "-EnableAutomaticWatch" in script
+    assert "jobs pause $JobName" in script
+    assert "jobs resume $JobName" in script
+    assert 'Set-SchedulerJobConfiguration -Mode "create" -EffectiveSchedule "0 0 1 1 *"' in script
+    assert "--message-body " not in script
+    for forbidden in (
+        "add-iam-policy-binding",
+        "remove-iam-policy-binding",
+        "allusers",
+        "allauthenticatedusers",
+        "cups",
+        "cancel",
+        "hold",
+        "release",
+        "restart",
+        "print-job",
+    ):
+        assert forbidden not in script.casefold()
 
 
 def test_private_route_smoke_scopes_and_removes_temporary_token_authority() -> None:

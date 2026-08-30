@@ -106,9 +106,11 @@ class RecoveringIncidentWorkflow:
         *,
         fail_first: bool = False,
         first_error: RuntimeError | None = None,
+        content_equivalent_replay: bool = False,
     ) -> None:
         self.fail_first = fail_first
         self.first_error = first_error
+        self.content_equivalent_replay = content_equivalent_replay
         self.calls = 0
 
     async def process_source_revision(
@@ -134,7 +136,55 @@ class RecoveringIncidentWorkflow:
             ),
             report=None,
             disposition_packet=None,
+            content_equivalent_replay=self.content_equivalent_replay,
         )
+
+
+class SequentialOutboxLedger(MemoryOutboxLedger):
+    """Expose two pending records and reject any batch lease request."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending = ["a" * 64, "b" * 64]
+        self.leased: dict[str, str] = {}
+        self.lease_limits: list[int] = []
+        self.completed_ids: list[str] = []
+
+    async def lease_outbox(
+        self,
+        *,
+        lease_token: str,
+        limit: int = 10,
+        lease_seconds: int = 120,
+    ) -> tuple[OutboxLease, ...]:
+        assert limit == 1
+        assert lease_seconds == 360
+        self.lease_limits.append(limit)
+        if not self.pending:
+            return ()
+        message_id = self.pending.pop(0)
+        self.leased[message_id] = lease_token
+        return (
+            OutboxLease(
+                message_id=message_id,
+                kind="SOURCE_REVISION_CLAIMED",
+                payload={"revision_id": self.source.revision_id},
+                lease_token=lease_token,
+                attempts=1,
+            ),
+        )
+
+    async def complete_outbox(
+        self,
+        *,
+        message_id: str,
+        lease_token: str,
+        result: dict[str, object],
+    ) -> bool:
+        assert self.leased.get(message_id) == lease_token
+        assert result["stage"] == "REPORT_READY"
+        self.completed_ids.append(message_id)
+        return False
 
 
 @pytest.mark.asyncio
@@ -152,6 +202,37 @@ async def test_scheduler_drain_leases_and_completes_source_work_once() -> None:
     assert ledger.status == "SENT"
     assert ledger.completion is not None
     assert ledger.completion["stage"] == "REPORT_READY"
+
+
+@pytest.mark.asyncio
+async def test_drain_marks_content_equivalent_replay_without_retrying_it() -> None:
+    ledger = MemoryOutboxLedger()
+    incidents = RecoveringIncidentWorkflow(content_equivalent_replay=True)
+    workflow = OutboxDrainWorkflow(ledger=ledger, incident_workflow=incidents)
+
+    result = await workflow.drain()
+
+    assert result.completed == 1
+    assert result.content_equivalent_replays == 1
+    assert result.content_equivalent_replay_message_ids == (ledger.message_id,)
+    assert ledger.completion is not None
+    assert ledger.completion["content_equivalent_replay"] is True
+
+
+@pytest.mark.asyncio
+async def test_drain_claims_each_serial_message_only_when_it_is_ready_to_process() -> None:
+    ledger = SequentialOutboxLedger()
+    incidents = RecoveringIncidentWorkflow()
+    workflow = OutboxDrainWorkflow(ledger=ledger, incident_workflow=incidents)
+
+    result = await workflow.drain(limit=2)
+
+    assert result.leased == result.completed == 2
+    assert result.retried == 0
+    assert result.message_ids == ("a" * 64, "b" * 64)
+    assert ledger.lease_limits == [1, 1]
+    assert ledger.completed_ids == ["a" * 64, "b" * 64]
+    assert incidents.calls == 2
 
 
 @pytest.mark.asyncio
@@ -203,6 +284,7 @@ async def test_active_semantic_lease_retries_outbox_then_resumes_same_incident()
         "incident_id": "d" * 64,
         "stage": "REPORT_READY",
         "duplicate_source": False,
+        "content_equivalent_replay": False,
         "report_sha256": None,
     }
     assert incidents.calls == 2
