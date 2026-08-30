@@ -1,6 +1,6 @@
 {
   "schema_version": "slice-2-3-containment-proof-gate-evidence.v1",
-  "recorded_at": "2026-08-30T14:03:59Z",
+  "recorded_at": "2026-08-30T14:50:33Z",
   "branch": "codex/slice-2-3-containment-proof-gate",
   "base_commit": "1ec284fcd9ae4c5c82f0b2dfffe730b6f776c0e4",
   "governing_documents": {
@@ -12,6 +12,7 @@
     "profile_id": "demo-ueb-40x25-v1",
     "profile_sha256": "7011f99e9351d9d70da9eddf89a2d38c3c88318e325cb4422ec98f492a9d2772",
     "translation_smoke_sha256": "84736d9d626b65389103686d828297518f95be98f29935426920a67fd2a9f419",
+    "wsl_verification_commit": "1609323039efbb1184b685ab5c6bfbd5b92c51a5",
     "tables": [
       {
         "name": "en-ueb-g2.ctb",
@@ -26,8 +27,9 @@
     "v2_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d",
     "wsl_container_toolchain_identity_equal": true,
     "wsl_container_rendered_brf_parity": {
-      "status": "BLOCKED",
-      "blocking_reason": "The current-commit WSL application golden run and direct WSL-to-container rendered BRF comparison were not executed in this Slice 2.3 session."
+      "status": "PASS",
+      "v1_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+      "v2_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d"
     }
   },
   "implementation": {
@@ -57,11 +59,9 @@
     "container_real_liblouis_golden_twice": "PASS",
     "wsl_liblouis_binding_api": "PASS",
     "wsl_cupsd_config_validation": "PASS",
-    "wsl_full_golden": "BLOCKED"
+    "wsl_full_golden": "PASS"
   },
   "remaining_blockers": [
-    "The WSL system Python has the real pinned Liblouis binding but lacks Pydantic and pytest, so a full WSL application golden run was not exercised in this session.",
-    "A direct WSL-to-container BRF identity comparison remains blocked until the locked project runtime is installed in WSL.",
     "The active private incident remains intentionally untouched and still requires human-only fresh observation, containment confirmation, and tactile proof review."
   ],
   "deferred_authority": [

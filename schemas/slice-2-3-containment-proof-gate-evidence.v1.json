@@ -27,6 +27,7 @@
       "additionalProperties": false,
       "required": [
         "version", "profile_id", "profile_sha256", "translation_smoke_sha256", "tables",
+        "wsl_verification_commit",
         "v1_brf_sha256", "v2_brf_sha256", "wsl_container_toolchain_identity_equal",
         "wsl_container_rendered_brf_parity"
       ],
@@ -35,6 +36,7 @@
         "profile_id": {"const": "demo-ueb-40x25-v1"},
         "profile_sha256": {"$ref": "#/$defs/sha256"},
         "translation_smoke_sha256": {"$ref": "#/$defs/sha256"},
+        "wsl_verification_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "tables": {
           "type": "array",
           "minItems": 2,
@@ -190,6 +192,31 @@
           }
         },
         "required": ["verification"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verification": {
+            "required": ["wsl_full_golden"],
+            "properties": {"wsl_full_golden": {"const": "PASS"}}
+          }
+        },
+        "required": ["verification"]
+      },
+      "then": {
+        "properties": {
+          "liblouis_identity": {
+            "required": ["wsl_container_rendered_brf_parity"],
+            "properties": {
+              "wsl_container_rendered_brf_parity": {
+                "required": ["status"],
+                "properties": {"status": {"const": "PASS"}}
+              }
+            }
+          }
+        },
+        "required": ["liblouis_identity"]
       }
     }
   ],

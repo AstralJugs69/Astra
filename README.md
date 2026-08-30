@@ -54,10 +54,9 @@ the presentation labels **awaiting human submission**.
   `CONTAINMENT_IN_PROGRESS` with `SITE_OBSERVATION_STALE`. It has **not** reached
   a containment confirmation, proof approval/rejection, replacement submission,
   final verification, notification, or closure.
-- Current container golden renders pass. WSL's pinned Liblouis binding, profile,
-  and table identities have been verified. Current-commit WSL application golden
-  rendering and direct WSL-to-container rendered-BRF parity are recorded as
-  blocked unless the isolated WSL verification is actually rerun.
+- Current container golden renders pass. An isolated frozen-lock WSL environment
+  ran the real application golden test twice; V1/V2 rendered BRF bytes, profile
+  hash, Liblouis version, and table hashes match the current container exactly.
 
 ### Deferred by design
 
@@ -132,8 +131,8 @@ Evidence is sanitized, schema-validated, and deliberately separated by slice:
 - `demo/evidence/slice-2-3-containment-proof-gate.json` records the Story 4
   implementation, toolchain identity, container goldens, and the fail-closed
   historical incident state. Its schema distinguishes matched WSL/container
-  *toolchain* identity from rendered-BRF byte parity; a blocked WSL golden run
-  cannot claim parity.
+  *toolchain* identity from rendered-BRF byte parity, and a blocked WSL golden
+  run cannot claim parity.
 
 The historical incident remains a review artifact, not a production master or
 authorization to act. A cancellation fact, device-stop fact, physical-output
