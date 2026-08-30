@@ -29,6 +29,7 @@ BACKEND_PATH = ROOT / "simulator" / "cups_backend" / "relay_capture_backend.py"
 LIVE_CLOSURE_EVIDENCE = ROOT / "demo" / "evidence" / "report-first-live-closure.json"
 ACTIVE_REVIEW_EVIDENCE = ROOT / "demo" / "evidence" / "active-professional-review.json"
 CONTAINMENT_PROOF_EVIDENCE = ROOT / "demo" / "evidence" / "slice-2-3-containment-proof-gate.json"
+RELEASE_CANDIDATE_EVIDENCE = ROOT / "demo" / "evidence" / "release-candidate-1.json"
 
 
 def _load_module(name: str, path: Path):
@@ -661,6 +662,45 @@ def test_containment_proof_evidence_is_sanitized_and_preserves_human_authority()
         "client_email",
         "drive.google.com",
         "gs://",
+        "password",
+    ):
+        assert forbidden not in rendered
+
+
+def test_release_candidate_evidence_is_sanitized_and_does_not_claim_human_actions() -> None:
+    payload = json.loads(RELEASE_CANDIDATE_EVIDENCE.read_text(encoding="utf-8"))
+
+    assert (
+        sorted(_validator("release-candidate-1-evidence.v1.json").iter_errors(payload), key=str)
+        == []
+    )
+    assert payload["deployment"]["private"] is True
+    assert payload["deployment"]["public_invoker_member_count"] == 0
+    assert payload["deployment"]["scheduler_state"] == "PAUSED"
+    assert (
+        payload["deployment"]["authenticated_read_only_smoke"]["mutating_routes_invoked"] is False
+    )
+    assert payload["route_boundary"]["containment_confirmation_route"] == "PRESENT_NOT_INVOKED"
+    assert payload["route_boundary"]["proof_route"] == "PRESENT_NOT_INVOKED"
+    assert payload["route_boundary"]["production_control_routes"] == "ABSENT"
+
+    api_source = (ROOT / "src" / "braille_errata_relay" / "api" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    assert '@app.post("/api/v1/incidents/{incident_id}/containment-confirmations")' in api_source
+    assert '@app.post("/api/v1/incidents/{incident_id}/proof-records")' in api_source
+    assert '@app.post("/api/v1/cups' not in api_source
+
+    rendered = json.dumps(payload).casefold()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "credentials",
+        "private_key",
+        "client_email",
+        "project_id",
+        "drive.google.com",
         "password",
     ):
         assert forbidden not in rendered

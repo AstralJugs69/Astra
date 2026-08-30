@@ -1,0 +1,96 @@
+{
+  "schema_version": "release-candidate-1-evidence.v1",
+  "recorded_at": "2026-08-30T15:22:52Z",
+  "branch": "codex/release-candidate-1",
+  "deployed_source_commit": "126f3b901b214946d542216c4a87c31ec1bbfcff",
+  "governing_documents": {
+    "instruction.md": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb",
+    "architecture.md": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+  },
+  "deployment": {
+    "status": "PASS",
+    "region": "europe-west3",
+    "revision": "braille-errata-relay-00012-hg4",
+    "image_digest": "sha256:57ce712685fc29e69980dae818f93694ae160dc2bcc474a7bf17f84844652806",
+    "private": true,
+    "public_invoker_member_count": 0,
+    "scheduler_state": "PAUSED",
+    "route_principals_isolated": true,
+    "persistent_temporary_token_creator_grants": 0,
+    "readyz_status": 200,
+    "authenticated_read_only_smoke": {
+      "health_status": 200,
+      "readyz_status": 200,
+      "incident_list_status": 200,
+      "incident_detail_statuses": [200, 200],
+      "mutating_routes_invoked": false
+    }
+  },
+  "toolchain": {
+    "liblouis_version": "3.38.0",
+    "profile_id": "demo-ueb-40x25-v1",
+    "profile_sha256": "7011f99e9351d9d70da9eddf89a2d38c3c88318e325cb4422ec98f492a9d2772",
+    "tables": [
+      {
+        "name": "en-ueb-g2.ctb",
+        "sha256": "45b83481438667b57f57793d9369aeb44a5e5c50980767c69ba99ea83f442059"
+      },
+      {
+        "name": "en-us-brf.dis",
+        "sha256": "47ff9400f4b8a0206b0c1942e13c32b539d17ec099dcd1097873a1b9f5cb8b3c"
+      }
+    ],
+    "v1_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
+    "v2_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d",
+    "wsl_golden_twice": "PASS",
+    "wsl_container_rendered_brf_parity": "PASS"
+  },
+  "verification": {
+    "frozen_lock": "PASS",
+    "full_test_suite": {
+      "status": "PASS",
+      "passed": 312,
+      "skipped": 3
+    },
+    "ruff_lint": "PASS",
+    "scoped_format": "PASS",
+    "strict_mypy": "PASS",
+    "local_container_build": "PASS",
+    "installed_container_readiness": "PASS",
+    "cloud_build": "PASS"
+  },
+  "implemented_scope": [
+    "Stories 1 through 3 report-first incident workflow and Story 4 containment and proof gate are implemented.",
+    "Candidate approval can advance only to AWAITING_REPLACEMENT, which remains awaiting human submission.",
+    "The agent and cloud service have no production CUPS or device-control surface."
+  ],
+  "deferred_scope": [
+    "Replacement submission, production linking, notifications, and final resolution remain human-owned and deferred.",
+    "No Drive, CUPS, physical endpoint, or historical incident mutation was performed for this release candidate."
+  ],
+  "historical_state": {
+    "incident_count": 2,
+    "workflow_stages": ["NEEDS_REVIEW", "NEEDS_REVIEW"],
+    "blocking_reasons": ["SITE_OBSERVATION_STALE", "SITE_OBSERVATION_STALE"],
+    "containment_confirmation_blocking_reasons": [
+      "CONTAINMENT_EVIDENCE_STALE",
+      "CONTAINMENT_EVIDENCE_MISSING"
+    ],
+    "proof_blocking_reasons": ["PROOF_NOT_ELIGIBLE", "PROOF_NOT_ELIGIBLE"],
+    "release_claims": {
+      "containment_confirmation": "NOT_CLAIMED",
+      "proof": "NOT_CLAIMED",
+      "replacement_submission": "NOT_CLAIMED",
+      "closure": "NOT_CLAIMED"
+    }
+  },
+  "route_boundary": {
+    "containment_confirmation_route": "PRESENT_NOT_INVOKED",
+    "proof_route": "PRESENT_NOT_INVOKED",
+    "production_control_routes": "ABSENT"
+  },
+  "remaining_blockers": [
+    "The two historical records remain blocked until professionals provide fresh attributable containment evidence and exact tactile proof review.",
+    "No candidate is a production master and no human replacement submission or closure has been claimed."
+  ]
+}
