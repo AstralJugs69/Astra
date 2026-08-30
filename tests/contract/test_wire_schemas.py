@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from braille_errata_relay.domain.models import (
     ProfessionalDisposition,
     ProofDecision,
     ProofRecord,
+    ReplacementObservationLink,
     SiteObservation,
     TruthBasis,
 )
@@ -30,6 +32,7 @@ LIVE_CLOSURE_EVIDENCE = ROOT / "demo" / "evidence" / "report-first-live-closure.
 ACTIVE_REVIEW_EVIDENCE = ROOT / "demo" / "evidence" / "active-professional-review.json"
 CONTAINMENT_PROOF_EVIDENCE = ROOT / "demo" / "evidence" / "slice-2-3-containment-proof-gate.json"
 RELEASE_CANDIDATE_EVIDENCE = ROOT / "demo" / "evidence" / "release-candidate-1.json"
+SCREENSHOT_MANIFEST = ROOT / "demo" / "screenshots" / "manifest.json"
 
 
 def _load_module(name: str, path: Path):
@@ -606,6 +609,63 @@ def test_containment_and_exact_candidate_proof_records_match_contract_schemas() 
     invalid_payload = proof.model_dump(mode="json")
     invalid_payload["review_basis"] = "HUMAN_REVIEW"
     assert list(_validator("proof-record.v1.json").iter_errors(invalid_payload))
+
+
+def test_replacement_observation_link_matches_append_only_contract_schema() -> None:
+    link = ReplacementObservationLink(
+        record_id="1" * 64,
+        incident_id="2" * 64,
+        approved_candidate_sha256="3" * 64,
+        candidate_manifest_sha256="4" * 64,
+        proof_record_id="5" * 64,
+        original_scheduler_job_id=42,
+        scheduler_job_id=43,
+        observed_job_title=f"BER|{'2' * 64}|{'3' * 12}|REPLACEMENT",
+        site_id="demo-site",
+        bridge_id="single-pc-bridge",
+        queue_name="Braille-Embosser-Sim",
+        site_observation_id="6" * 64,
+        observed_job_state="PENDING_HELD",
+        observed_at="2026-08-30T12:05:00+00:00",
+        selected_role="machine_operator",
+        expected_state_version=6,
+        idempotency_key="replacement-link-1",
+        note="Human association with fresh read-only evidence only.",
+        actor_principal="operator@example.test",
+        recorded_at="2026-08-30T12:05:01+00:00",
+    )
+
+    assert (
+        sorted(
+            _validator("replacement-observation-link.v1.json").iter_errors(
+                link.model_dump(mode="json")
+            ),
+            key=str,
+        )
+        == []
+    )
+
+
+def test_screenshot_manifest_validates_and_hashes_the_sanitized_offline_fixture() -> None:
+    payload = json.loads(SCREENSHOT_MANIFEST.read_text(encoding="utf-8"))
+
+    assert sorted(_validator("screenshot-manifest.v1.json").iter_errors(payload), key=str) == []
+    assert len(payload["screenshots"]) == 4
+    for screenshot in payload["screenshots"]:
+        image = ROOT / "demo" / "screenshots" / screenshot["filename"]
+        assert image.is_file()
+        assert sha256(image.read_bytes()).hexdigest() == screenshot["sha256"]
+
+    rendered = json.dumps(payload).casefold()
+    for forbidden in (
+        "@",
+        "project-",
+        "gs://",
+        "drive.google.com",
+        "access_token",
+        "c:\\\\",
+    ):
+        assert forbidden not in rendered
 
 
 def test_active_professional_review_evidence_is_sanitized_and_does_not_claim_a_live_run() -> None:

@@ -13,10 +13,16 @@ from braille_errata_relay.application.containment_proof import (
     ContainmentProofWorkflow,
     ProofRecordResult,
 )
+from braille_errata_relay.application.replacement_observation import (
+    ApprovedCandidateDownload,
+    ReplacementObservationLinkResult,
+    ReplacementObservationRejected,
+)
 from braille_errata_relay.cloud_settings import CloudSettings
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactRef,
+    BlockingReason,
     BoundTranslationTable,
     ContainmentConfirmation,
     IncidentCheckpoint,
@@ -26,6 +32,7 @@ from braille_errata_relay.domain.models import (
     JobState,
     ProofDecision,
     ProofRecord,
+    ReplacementObservationLink,
 )
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
@@ -153,6 +160,64 @@ class _ContainmentProofWorkflow:
         return ProofRecordResult(self._state(IncidentState.AWAITING_REPLACEMENT, 6), record, False)
 
 
+class _ReplacementObservationWorkflow:
+    def __init__(self) -> None:
+        self.download_blocked = False
+        self.link_call: dict[str, object] | None = None
+
+    @staticmethod
+    def _state() -> IncidentReviewState:
+        return IncidentReviewState(
+            incident_id=INCIDENT_ID,
+            baseline_id="b" * 64,
+            state=IncidentState.REPLACEMENT_OBSERVED,
+            state_version=7,
+            report_ready_at=NOW,
+            current_candidate_sha256="e" * 64,
+            updated_at=NOW,
+        )
+
+    async def download_current_candidate(self, *, incident_id: str) -> ApprovedCandidateDownload:
+        assert incident_id == INCIDENT_ID
+        if self.download_blocked:
+            raise ReplacementObservationRejected(
+                BlockingReason.PROOF_NOT_ELIGIBLE,
+                "proof approval is required",
+            )
+        return ApprovedCandidateDownload(
+            content=b"immutable-candidate-brf\r\n",
+            candidate_sha256="e" * 64,
+            manifest_sha256="7" * 64,
+            proof_record_id="6" * 64,
+            filename=f"braille-errata-relay-{INCIDENT_ID[:12]}-{'e' * 12}.brf",
+        )
+
+    async def record_observation_link(self, **values: object) -> ReplacementObservationLinkResult:
+        self.link_call = values
+        link = ReplacementObservationLink(
+            record_id="8" * 64,
+            incident_id=INCIDENT_ID,
+            approved_candidate_sha256="e" * 64,
+            candidate_manifest_sha256="7" * 64,
+            proof_record_id="6" * 64,
+            original_scheduler_job_id=42,
+            scheduler_job_id=43,
+            observed_job_title=f"BER|{INCIDENT_ID}|{'e' * 12}|REPLACEMENT",
+            site_id="demo-site",
+            bridge_id="single-pc-bridge",
+            queue_name="Braille-Embosser-Sim",
+            site_observation_id="9" * 64,
+            observed_job_state=JobState.PENDING_HELD,
+            observed_at=NOW,
+            selected_role="machine_operator",
+            expected_state_version=6,
+            idempotency_key="replacement-api-1",
+            actor_principal="demonstrator@example.test",
+            recorded_at=NOW,
+        )
+        return ReplacementObservationLinkResult(self._state(), link, False)
+
+
 def _settings() -> CloudSettings:
     return CloudSettings(
         project_id="test-project",
@@ -168,7 +233,9 @@ def _settings() -> CloudSettings:
     )
 
 
-def _client() -> tuple[TestClient, _ContainmentProofWorkflow]:
+def _client(
+    replacement: _ReplacementObservationWorkflow | None = None,
+) -> tuple[TestClient, _ContainmentProofWorkflow]:
     workflow = _ContainmentProofWorkflow()
     return (
         TestClient(
@@ -177,6 +244,7 @@ def _client() -> tuple[TestClient, _ContainmentProofWorkflow]:
                 ledger=cast(object, _Ledger()),
                 incident_workflow=cast(object, _IncidentWorkflow()),
                 containment_proof_workflow=cast(ContainmentProofWorkflow, workflow),
+                replacement_observation_workflow=cast(object, replacement),
                 identity_verifier=cast(IdentityVerifier, _Verifier()),
             )
         ),
@@ -212,6 +280,20 @@ def _proof_payload() -> dict[str, object]:
         "findings": ["Exact immutable lineage reviewed."],
         "visual_only_uncertainty": False,
         "idempotency_key": "proof-api-1",
+    }
+
+
+def _replacement_payload() -> dict[str, object]:
+    return {
+        "candidate_sha256": "e" * 64,
+        "candidate_manifest_sha256": "7" * 64,
+        "proof_record_id": "6" * 64,
+        "scheduler_job_id": 43,
+        "site_observation_id": "9" * 64,
+        "selected_role": "machine_operator",
+        "expected_state_version": 6,
+        "note": "Operator links an independently submitted job observation only.",
+        "idempotency_key": "replacement-api-1",
     }
 
 
@@ -286,3 +368,62 @@ def test_candidate_manifest_browser_evidence_omits_private_artifact_locations() 
         "artifact_sha256": "a" * 64,
         "source_revision_id": "drive:file:63:revision",
     }
+
+
+def test_current_candidate_download_is_private_rehashed_and_has_no_artifact_path_input() -> None:
+    replacement = _ReplacementObservationWorkflow()
+    client, _ = _client(replacement)
+    path = f"/api/v1/incidents/{INCIDENT_ID}/approved-candidate"
+
+    admitted = client.get(path, headers=_headers())
+    wrong_principal = client.get(path, headers=_headers("source@example.test"))
+    arbitrary_query = client.get(path + "?uri=gs://private/example", headers=_headers())
+    replacement.download_blocked = True
+    blocked = client.get(path, headers=_headers())
+
+    expected_filename = f"braille-errata-relay-{INCIDENT_ID[:12]}-{'e' * 12}.brf"
+    assert admitted.status_code == 200
+    assert admitted.content == b"immutable-candidate-brf\r\n"
+    assert admitted.headers["cache-control"] == "no-store"
+    assert admitted.headers["content-disposition"] == f'attachment; filename="{expected_filename}"'
+    assert admitted.headers["x-content-type-options"] == "nosniff"
+    assert wrong_principal.status_code == 403
+    assert arbitrary_query.status_code == 200
+    assert arbitrary_query.content == admitted.content
+    assert blocked.status_code == 403
+    assert blocked.content != admitted.content
+
+
+def test_replacement_link_route_is_demonstrator_only_derives_actor_and_stops_at_observed() -> None:
+    replacement = _ReplacementObservationWorkflow()
+    client, _ = _client(replacement)
+    path = f"/api/v1/incidents/{INCIDENT_ID}/replacement-observation-links"
+
+    admitted = client.post(path, json=_replacement_payload(), headers=_headers())
+    wrong_principal = client.post(
+        path,
+        json=_replacement_payload(),
+        headers=_headers("source@example.test"),
+    )
+    bad_role = client.post(
+        path,
+        json={**_replacement_payload(), "selected_role": "proofreader"},
+        headers=_headers(),
+    )
+    control_field = client.post(
+        path,
+        json={**_replacement_payload(), "cancel": True},
+        headers=_headers(),
+    )
+
+    assert admitted.status_code == 201
+    assert admitted.json()["status"] == "REPLACEMENT_OBSERVED"
+    assert admitted.json()["next_human_stage"] == (
+        "OBSERVED_REPLACEMENT_REQUIRES_SEPARATE_VERIFICATION"
+    )
+    assert "RESOLVED_BY_HUMAN" not in admitted.text
+    assert wrong_principal.status_code == 403
+    assert bad_role.status_code == 422
+    assert control_field.status_code == 422
+    assert replacement.link_call is not None
+    assert replacement.link_call["actor_principal"] == "demonstrator@example.test"

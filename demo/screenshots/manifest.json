@@ -1,0 +1,53 @@
+{
+  "schema_version": "screenshot-manifest.v1",
+  "fixture_identity": "braille-errata-relay-sanitized-offline-v1",
+  "truth_basis": "SANITIZED_OFFLINE_DEMO_FIXTURE",
+  "fixture_data_as_of": "2026-08-30T18:00:00+00:00",
+  "screenshots": [
+    {
+      "filename": "incident-overview-desktop.png",
+      "route": "/",
+      "viewport": {
+        "width": 1440,
+        "height": 1100,
+        "device_scale_factor": 1
+      },
+      "sha256": "95f3c582bdfef610a8046a39de7788f3923a1b128e1cf5c29844e331c858cb57"
+    },
+    {
+      "filename": "incident-detail-desktop.png",
+      "route": "/incidents/3333333333333333333333333333333333333333333333333333333333333333",
+      "viewport": {
+        "width": 1440,
+        "height": 1100,
+        "device_scale_factor": 1
+      },
+      "sha256": "72442952e77500e58480ef81bc35ca25501c66fe1e7c683175c3aed2cd699e0a"
+    },
+    {
+      "filename": "incident-detail-mobile.png",
+      "route": "/incidents/4444444444444444444444444444444444444444444444444444444444444444",
+      "viewport": {
+        "width": 390,
+        "height": 844,
+        "device_scale_factor": 1
+      },
+      "sha256": "e5470000844ef81547752f809c4f299a75afd1fc5cff0bc94a56a819d037623c"
+    },
+    {
+      "filename": "evidence-timeline-desktop.png",
+      "route": "/incidents/4444444444444444444444444444444444444444444444444444444444444444",
+      "viewport": {
+        "width": 1440,
+        "height": 1100,
+        "device_scale_factor": 1
+      },
+      "sha256": "bb342a15b20ed4971ecdcb7588274af2a2509225c94d1eaf4c7adce7b58fb016"
+    }
+  ],
+  "sanitization_assertions": [
+    "Rendered only by the dedicated offline fixture; it has synthetic IDs and no Cloud, Drive, CUPS, or device client.",
+    "The fixture visibly labels every view SANITIZED DEMO FIXTURE and exposes GET routes only.",
+    "Browser verification found no external requests, email address, project identifier, bucket URI, Drive identifier, token marker, or local credential path."
+  ]
+}

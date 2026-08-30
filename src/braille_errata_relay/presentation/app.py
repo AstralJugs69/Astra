@@ -89,6 +89,8 @@ class PrivateReviewApi(Protocol):
 
     async def post_json(self, path: str, payload: Mapping[str, object]) -> dict[str, object]: ...
 
+    async def get_bytes(self, path: str) -> tuple[bytes, str]: ...
+
 
 class GoogleAudienceTokenProvider:
     """Mint short-lived Cloud Run tokens from ordinary user ADC by impersonation.
@@ -249,6 +251,20 @@ class CloudRunPrivateReviewApi:
 
     async def post_json(self, path: str, payload: Mapping[str, object]) -> dict[str, object]:
         return await self._request("POST", path, payload)
+
+    async def get_bytes(self, path: str) -> tuple[bytes, str]:
+        token = await self.token_provider.token_for(self.audience)
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+            response = await client.get(
+                f"{self.base_url}{self._path(path)}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if response.status_code < 200 or response.status_code >= 300:
+            raise PrivateReviewApiError(response.status_code)
+        disposition = response.headers.get("content-disposition")
+        if disposition is None:
+            raise PrivateReviewApiError(502)
+        return response.content, disposition
 
 
 @dataclass(frozen=True)
@@ -426,6 +442,48 @@ _TEMPLATES = {
 }
 
 
+_TEMPLATES["index.html"] = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Braille Errata Relay | Professional review</title>
+<style>
+:root{color-scheme:light;--ink:#15233b;--muted:#52627a;--paper:#f5f7fb;--card:#fff;--line:#d7dfeb;--navy:#173f75;--blue:#1769aa;--teal:#027b7b;--amber:#8a5b00;--red:#a02638;--violet:#604da3;--shadow:0 12px 28px rgba(20,42,74,.09)}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:3;background:#fff;padding:.6rem 1rem;border:3px solid var(--blue)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #2ca5b5}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.site-header .shell{display:flex;gap:1rem;align-items:center;justify-content:space-between;padding:1rem 0}.brand{font-weight:800;letter-spacing:.015em}.eyebrow{margin:0;color:#bce7ee;font-size:.78rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.hero{padding:2.5rem 0 1.25rem}.hero h1{margin:.25rem 0 .6rem;font-size:clamp(2rem,5vw,3.5rem);line-height:1.08}.lede{max-width:75ch;margin:0;color:var(--muted);font-size:1.1rem}.notice,.empty{background:#fff9df;border-left:5px solid var(--amber);padding:1rem 1.1rem;margin:1rem 0}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1rem 0 2rem}.summary-card,.incident-card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.summary-card{padding:1rem}.summary-card strong{display:block;font-size:1.7rem}.summary-card span{color:var(--muted);font-size:.9rem}.section-heading{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin:1rem 0}.section-heading h2{margin:0;font-size:1.35rem}.section-heading p{margin:0;color:var(--muted)}.incident-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;padding-bottom:3rem}.incident-card{display:block;color:inherit;text-decoration:none;padding:1.1rem;transition:transform .15s ease,box-shadow .15s ease}.incident-card:hover{transform:translateY(-2px)}.incident-card:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}.card-top{display:flex;justify-content:space-between;gap:.75rem;align-items:flex-start}.incident-card h3{margin:0;font-size:1.05rem;overflow-wrap:anywhere}.state{font-weight:800;margin:.75rem 0 .3rem}.meta{color:var(--muted);font-size:.9rem;margin:.25rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.real{color:var(--teal);background:#e8faf8}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.simulated{color:var(--red);background:#fff0f2}.blocked{color:var(--red);font-weight:800}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}@media(max-width:640px){.summary-grid{grid-template-columns:1fr}.site-header .shell{align-items:flex-start;flex-direction:column}.hero{padding-top:1.5rem}}
+</style></head>
+<body><a class="skip" href="#incidents">Skip to incidents</a>
+<header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div></div><div class="badges">{% if fixture_mode %}<span class="badge simulated">SANITIZED DEMO FIXTURE</span>{% endif %}<span class="badge real">READ-ONLY REVIEW</span><span class="badge human">HUMAN AUTHORITY</span></div></div></header>
+<main class="shell"><section class="hero"><p class="eyebrow">Professional review dashboard</p><h1>Evidence before action.</h1><p class="lede">Relay detects and explains a correction, preserves immutable Braille lineage, and records professional evidence. It does not control CUPS, an embosser, or a production device.</p></section>
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<section class="summary-grid" aria-label="Incident summary"><article class="summary-card"><strong>{{ summary.total|default(incidents|length) }}</strong><span>Report-bearing incidents</span></article><article class="summary-card"><strong>{{ summary.blocked|default(0) }}</strong><span>Visible blocked/review outcomes</span></article><article class="summary-card"><strong>Human</strong><span>Disposition, proof, and resubmission remain external</span></article></section>
+<section id="incidents"><div class="section-heading"><h2>Current review queue</h2><p>Open an incident to inspect authoritative detail.</p></div><div class="incident-grid">
+{% for incident in incidents %}<a class="incident-card" href="/incidents/{{ incident.incident_id }}"><div class="card-top"><h3 title="{{ incident.incident_id }}">Incident {{ incident.incident_id[:12] }}...</h3><div class="badges"><span class="badge deterministic">DETERMINISTIC</span>{% if incident.blocking_reason %}<span class="badge human">REVIEW</span>{% endif %}</div></div><p class="state">{{ incident.review_state.state }}</p>{% if incident.blocking_reason %}<p class="blocked">Block: {{ incident.blocking_reason }}</p>{% endif %}<p class="meta">{{ incident.source_change_summary|default("Open detail for source correction and semantic context.") }}</p><p class="meta">{{ incident.page_impact_summary|default("Page impact is available in immutable detail.") }}</p><p class="meta"><strong>Next safe human action:</strong> {{ incident.next_safe_action|default("Review attributable evidence.") }}</p></a>{% else %}<p class="empty">No report-bearing incidents are available. A quiet queue is not evidence of a completed production action.</p>{% endfor %}
+</div></section></main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. A read-only observation of a replacement job does not prove endpoint completion or physical output.</div></footer></body></html>"""
+
+_TEMPLATES["incident.html"] = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Braille Errata Relay | Incident review</title>
+<style>
+:root{color-scheme:light;--ink:#15233b;--muted:#52627a;--paper:#f5f7fb;--card:#fff;--line:#d7dfeb;--navy:#173f75;--blue:#1769aa;--teal:#027b7b;--amber:#8a5b00;--red:#a02638;--violet:#604da3;--shadow:0 12px 28px rgba(20,42,74,.09)}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:3;background:#fff;padding:.6rem 1rem;border:3px solid var(--blue)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #2ca5b5}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.site-header .shell{padding:1rem 0}.brand{font-weight:800}.eyebrow{margin:0;color:#bce7ee;font-size:.78rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}main{padding:1.5rem 0 3rem}.back{color:var(--navy);font-weight:700}.status-card,.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.status-card{padding:1.25rem;margin:1rem 0 1.25rem;border-left:7px solid var(--navy)}.status-card h1{margin:.2rem 0 .5rem;font-size:clamp(1.7rem,4vw,2.8rem);line-height:1.1}.grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.8fr);gap:1rem}.card{padding:1.15rem;margin-bottom:1rem}.card h2{margin:0 0 .65rem;font-size:1.2rem}.card h3{margin:1rem 0 .45rem;font-size:1rem}.card p{margin:.45rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.real{color:var(--teal);background:#e8faf8}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.simulated{color:var(--red);background:#fff0f2}.block{color:var(--red);font-weight:800}.notice{background:#fff9df;border-left:5px solid var(--amber);padding:1rem 1.1rem;margin:1rem 0}.role{border:1px solid #e5c66b;background:#fffbeb;padding:.75rem;border-radius:8px;font-size:.92rem}.action{background:#173f75;color:#fff;border:0;border-radius:7px;padding:.65rem .9rem;font:inherit;font-weight:800;cursor:pointer}.action:hover{background:#0f315f}.action[disabled]{background:#9ba8b8;cursor:not-allowed}.download{display:inline-block;background:#0e6576;color:#fff;padding:.65rem .9rem;border-radius:7px;font-weight:800;text-decoration:none}.download:hover{background:#064d5b}dl{display:grid;grid-template-columns:minmax(130px,.42fr) 1fr;gap:.45rem .8rem;margin:0}dt{font-weight:800}dd{margin:0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f9;border:1px solid var(--line);padding:.75rem;border-radius:7px;font-size:.84rem}details{margin-top:.75rem}summary{cursor:pointer;font-weight:800}ol{padding-left:1.35rem}li{margin:.55rem 0}.timeline-kind{font-weight:800;overflow-wrap:anywhere;word-break:break-word}.boundary{background:#fff0f2;border:1px solid #efb7c1;border-radius:10px;padding:1rem}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}label{display:block;font-weight:700;margin:.75rem 0}select,textarea,input[type=number]{display:block;width:100%;margin-top:.25rem;border:1px solid #8797ad;border-radius:6px;padding:.55rem;font:inherit;background:#fff}textarea{min-height:5rem}input[type=hidden]{display:none}a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}@media(max-width:800px){.grid{grid-template-columns:1fr}main{padding-top:1rem}}@media(max-width:500px){.shell{width:min(100% - 1rem,1180px)}.status-card,.card{padding:1rem}dl{grid-template-columns:1fr}dt{margin-top:.35rem}}
+</style><style>@media(max-width:800px){.grid{grid-template-columns:minmax(0,1fr)}.grid>*,.card{min-width:0}.card p,.card h2,.card h3,.badge{overflow-wrap:anywhere}}</style></head>
+<body><a class="skip" href="#incident-content">Skip to incident</a><header class="site-header"><div class="shell"><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div>{% if fixture_mode %}<div class="badges"><span class="badge simulated">SANITIZED DEMO FIXTURE</span></div>{% endif %}</div></header>
+<main id="incident-content" class="shell"><p><a class="back" href="/">&larr; All incidents</a></p>{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<section class="status-card" aria-labelledby="incident-title"><div class="badges"><span class="badge deterministic">[DETERMINISTIC]</span>{% if review_state.blocking_reason %}<span class="badge human">REVIEW BLOCK</span>{% endif %}</div><h1 id="incident-title">Professional incident review</h1><p><strong>Current state:</strong> {{ review_state.state }}{% if review_state.blocking_reason %} <span class="block">- {{ review_state.blocking_reason }}</span>{% endif %}</p><p><strong>Next safe action:</strong> {{ next_safe_action|default("Review the authoritative evidence below before any independent production action.") }}</p><p>Relay does not control CUPS or the embosser. Candidate approval does not submit a job.</p></section>
+<div class="grid"><div>
+<section class="card" aria-labelledby="source-correction"><div class="badges"><span class="badge deterministic">[DETERMINISTIC]</span></div><h2 id="source-correction">1. Source correction</h2><p>Immutable source-diff evidence is retained for professional review.</p><details><summary>View source correction evidence</summary><pre>{{ source_correction }}</pre></details></section>
+<section class="card" aria-labelledby="semantic-summary"><div class="badges"><span class="badge gemini">[GEMINI ASSESSMENT]</span></div><h2 id="semantic-summary">2. Semantic assessment and uncertainty</h2><p>{{ semantic_summary }}</p><h3>Uncertainties requiring human judgment</h3><ul>{% for uncertainty in uncertainties %}<li>{{ uncertainty }}</li>{% else %}<li>No uncertainty was recorded in this assessment.</li>{% endfor %}</ul></section>
+<section class="card" aria-labelledby="braille-impact"><div class="badges"><span class="badge deterministic">[DETERMINISTIC]</span></div><h2 id="braille-impact">3. Braille and page impact</h2><dl><dt>Baseline BRF SHA-256</dt><dd title="{{ baseline_brf_sha256 }}">{{ baseline_brf_sha256[:12] }}...</dd><dt>Candidate BRF SHA-256</dt><dd title="{{ candidate_brf_sha256 }}">{{ candidate_brf_sha256[:12] }}...</dd></dl><details><summary>View exact page-impact evidence</summary><pre>{{ braille_impact }}</pre></details></section>
+<section class="card" aria-labelledby="current-observation"><div class="badges"><span class="badge real">[REAL]</span><span class="badge real">[REAL QUEUE OBSERVATION]</span></div><h2 id="current-observation">4. Production observation and freshness</h2><p><strong>Observation age:</strong> {{ observation_age }}</p><p>A scheduler cancellation is not a device-stop or physical-isolation fact. An observed replacement is not endpoint completion or physical output.</p><details><summary>View normalized read-only observation</summary><pre>{{ current_observation }}</pre></details></section>
+<section class="card" aria-labelledby="candidate-lineage"><div class="badges"><span class="badge deterministic">[DETERMINISTIC]</span><span class="badge human">[DEMO FIXTURE REVIEW]</span></div><h2 id="candidate-lineage">5. Immutable candidate lineage</h2><p><strong>Candidate status:</strong> CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER</p><p>This is an <strong>approved demo-fixture candidate for human-controlled submission</strong>, not a certified production master.</p>{% if review_actions.replacement_observation.candidate_download_eligible %}<p><a class="download" href="/incidents/{{ incident_id }}/approved-candidate">Download exact approved candidate BRF</a></p>{% else %}<p class="block">Candidate download is unavailable: {{ review_actions.replacement_observation.blocking_reason }}.</p>{% endif %}<details><summary>View manifest and tool identity</summary><pre>{{ candidate_manifest }}</pre><pre>{{ profile_identity }}</pre></details><h3>{{ candidate_evidence_preview.label }}</h3><pre>{{ candidate_evidence_preview.text }}</pre><p>This text preview is evidence for discussion, not tactile proof.</p></section>
+<section class="card" aria-labelledby="human-disposition"><div class="badges"><span class="badge human">[HUMAN RECORD]</span><span class="badge human">[HUMAN ATTESTATION]</span></div><h2 id="human-disposition">6. Professional disposition</h2>{% if error %}<p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>{% elif fixture_mode %}<p class="role">Offline fixture: human-record controls are intentionally disabled.</p>{% else %}<form method="post" action="/incidents/{{ incident_id }}/professional-dispositions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ disposition_idempotency_key }}"><div class="role"><strong>Role required:</strong> production coordinator. This form records a disposition only; perform any scheduler action in the independent CUPS/vendor surface.</div><label>Decision <select name="decision">{% for decision in decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record professional disposition</button></form>{% endif %}</section>
+<section class="card" aria-labelledby="operator-attestation"><div class="badges"><span class="badge human">[HUMAN RECORD]</span></div><h2 id="operator-attestation">7. Operator attestation</h2>{% if error %}<p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>{% elif fixture_mode %}<p class="role">Offline fixture: human-record controls are intentionally disabled.</p>{% else %}<form method="post" action="/incidents/{{ incident_id }}/operator-attestations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ attestation_idempotency_key }}"><div class="role"><strong>Role required:</strong> machine operator. An attestation records an attributable fact; it does not operate a device.</div><label>Fact <select name="attestation_type">{% for kind in attestation_types %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label>Truth basis <select name="truth_basis">{% for basis in truth_bases %}<option value="{{ basis }}">{{ basis }}</option>{% endfor %}</select></label><label>Note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record operator attestation</button></form>{% endif %}</section>
+<section class="card" aria-labelledby="containment-confirmation"><div class="badges"><span class="badge human">[HUMAN + READ-ONLY EVIDENCE]</span></div><h2 id="containment-confirmation">8. Containment confirmation</h2><p>CUPS state alone never proves device stop or physical-output isolation.</p>{% if review_actions.containment_confirmation.eligible %}{% if fixture_mode %}<button class="action" disabled>Offline fixture: containment recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/containment-confirmations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ containment_idempotency_key }}"><input type="hidden" name="halt_disposition_record_id" value="{{ review_actions.containment_confirmation.halt_disposition_record_id }}"><input type="hidden" name="site_observation_id" value="{{ review_actions.containment_confirmation.site_observation_id }}"><input type="hidden" name="physical_output_isolation_attestation_id" value="{{ review_actions.containment_confirmation.physical_output_isolation_attestation_id }}"><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record containment confirmation</button></form>{% endif %}{% else %}<p>Containment confirmation is unavailable: {{ review_actions.containment_confirmation.blocking_reason }}.</p>{% endif %}</section>
+<section class="card" aria-labelledby="proof-review"><div class="badges"><span class="badge human">[DEMO FIXTURE REVIEW]</span></div><h2 id="proof-review">9. Exact candidate proof gate</h2><p>Fixture review is not independent professional certification. Approval does not submit, link, release, or verify a replacement job.</p>{% if review_actions.proof.eligible %}{% if fixture_mode %}<button class="action" disabled>Offline fixture: proof decision recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/proof-records"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="candidate_sha256" value="{{ review_actions.proof.provenance.candidate_sha256 }}"><input type="hidden" name="manifest_sha256" value="{{ review_actions.proof.provenance.manifest_sha256 }}"><input type="hidden" name="review_basis" value="DEMO_FIXTURE_REVIEW"><input type="hidden" name="selected_role" value="proofreader"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ proof_idempotency_key }}"><div class="role"><strong>Role required:</strong> proofreader. The demo fixture label is not independent certification.</div><label>Decision <select name="decision">{% for decision in proof_decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Note <textarea name="note" maxlength="2000"></textarea></label><label><input type="checkbox" name="visual_only_uncertainty" value="true"> Visual-only uncertainty remains (blocks approval).</label><button class="action" type="submit">Record exact-candidate proof decision</button></form>{% endif %}{% else %}<p>Proof review is unavailable: {{ review_actions.proof.blocking_reason }}.</p>{% endif %}</section>
+<section class="card" aria-labelledby="replacement-observation"><div class="badges"><span class="badge real">[REAL QUEUE OBSERVATION]</span><span class="badge human">[HUMAN RECORD]</span></div><h2 id="replacement-observation">10. Replacement observation</h2><p>After independently using the existing CUPS/vendor surface, the machine operator may associate only a fresh read-only observation. This does not prove endpoint completion or physical output.</p>{% if review_actions.replacement_observation.eligible %}{% if fixture_mode %}<div class="role"><strong>Proof-ready offline fixture:</strong> replacement linking is intentionally disabled; no human record can be posted.</div>{% else %}<form method="post" action="/incidents/{{ incident_id }}/replacement-observation-links"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="candidate_sha256" value="{{ review_actions.replacement_observation.provenance.candidate_sha256 }}"><input type="hidden" name="candidate_manifest_sha256" value="{{ review_actions.replacement_observation.provenance.manifest_sha256 }}"><input type="hidden" name="proof_record_id" value="{{ review_actions.replacement_observation.provenance.proof_record_id }}"><input type="hidden" name="site_observation_id" value="{{ current_observation_id|default('') }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ replacement_idempotency_key }}"><div class="role"><strong>Role required:</strong> machine operator. Enter only the scheduler job ID observed by the independent read-only bridge.</div><label>Observed replacement scheduler job ID <input name="scheduler_job_id" type="number" min="1" required></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record replacement observation link</button></form>{% endif %}{% else %}<p>Replacement observation is unavailable: {{ review_actions.replacement_observation.blocking_reason }}.</p>{% endif %}</section>
+</div><aside>
+<section class="card" aria-labelledby="timeline"><div class="badges"><span class="badge human">ATTRIBUTABLE TIMELINE</span></div><h2 id="timeline">11. Evidence timeline</h2><ol>{% for event in timeline %}<li><span class="timeline-kind">[{{ event.truth_basis }}] {{ event.kind }}</span><br><span class="meta">{{ event.recorded_at }}</span>{% if event.device_stop_confirmed is defined %}<br><span class="meta">Device stop: {{ event.device_stop_confirmed }}; physical output isolated: {{ event.physical_output_isolated }}</span>{% endif %}</li>{% else %}<li>No attributable events are available.</li>{% endfor %}</ol></section>
+<section class="boundary"><div class="badges"><span class="badge simulated">[SIMULATED ENDPOINT]</span><span class="badge simulated">[SIMULATED PHYSICAL ENDPOINT]</span></div><h2>12. System boundary</h2><p>Only the physical endpoint is simulated. CUPS observation is read-only, and all disposition, proof, submission, containment, and final verification authority stays with human professionals.</p><p>Historical blocked incidents are valid fail-closed outcomes.</p></section>
+</aside></div></main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. Relay does not run the production queue or device.</div></footer></body></html>"""
+
+
 def _templates() -> Environment:
     return Environment(
         loader=DictLoader(_TEMPLATES),
@@ -439,6 +497,23 @@ def _mapping(value: object) -> dict[str, object]:
 
 def _pretty(value: object) -> str:
     return json.dumps(value if value is not None else {}, indent=2, sort_keys=True)
+
+
+def _next_safe_action(review_state: Mapping[str, object]) -> str:
+    """Render a human instruction, never a production-control instruction."""
+
+    state = review_state.get("state")
+    if state == "AWAITING_REPLACEMENT":
+        return "Use the independent production surface, then link a fresh read-only observation."
+    if state == "REPLACEMENT_OBSERVED":
+        return "Observed replacement evidence is recorded; final verification remains separate."
+    if state == "AWAITING_PROOF":
+        return "A proofreader must review the exact candidate before any human submission."
+    if state == "CONTAINMENT_IN_PROGRESS":
+        return "Complete attributable containment evidence; scheduler state alone is insufficient."
+    if review_state.get("blocking_reason"):
+        return "Resolve the visible block through human review before changing any production workflow."
+    return "Review the authoritative evidence and select the next human-owned action."
 
 
 def _form_error(status_code: int, message: str) -> HTMLResponse:
@@ -479,7 +554,8 @@ def create_presentation_app(
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
+            "base-uri 'none'; frame-ancestors 'none'"
         )
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -568,13 +644,27 @@ def create_presentation_app(
             PresentationAuthenticationError,
             ValueError,
         ):
-            return render("index.html", incidents=(), error="Private review data is unavailable.")
+            return render(
+                "index.html",
+                incidents=(),
+                summary={"total": 0, "blocked": 0},
+                error="Private review data is unavailable.",
+                fixture_mode=False,
+            )
         incidents = payload.get("incidents")
+        rows = incidents if isinstance(incidents, list) else ()
+        blocked = sum(
+            1
+            for incident in rows
+            if isinstance(incident, dict) and incident.get("blocking_reason") is not None
+        )
         return render(
             "index.html",
-            incidents=incidents if isinstance(incidents, list) else (),
+            incidents=rows,
+            summary={"total": len(rows), "blocked": blocked},
             error=None,
             csrf_token=csrf_token(request),
+            fixture_mode=False,
         )
 
     @app.get("/incidents/{incident_id}", response_class=HTMLResponse)
@@ -611,6 +701,7 @@ def create_presentation_app(
                 },
                 observation_age="Unavailable",
                 current_observation="{}",
+                current_observation_id="",
                 containment_evidence="{}",
                 review_actions={
                     "containment_confirmation": {
@@ -620,6 +711,12 @@ def create_presentation_app(
                     "proof": {
                         "eligible": False,
                         "blocking_reason": "PRIVATE_REVIEW_DATA_UNAVAILABLE",
+                    },
+                    "replacement_observation": {
+                        "eligible": False,
+                        "candidate_download_eligible": False,
+                        "blocking_reason": "PRIVATE_REVIEW_DATA_UNAVAILABLE",
+                        "provenance": None,
                     },
                 },
                 timeline=(),
@@ -632,6 +729,9 @@ def create_presentation_app(
                 attestation_idempotency_key=secrets.token_urlsafe(24),
                 containment_idempotency_key=secrets.token_urlsafe(24),
                 proof_idempotency_key=secrets.token_urlsafe(24),
+                replacement_idempotency_key=secrets.token_urlsafe(24),
+                fixture_mode=False,
+                next_safe_action="Private review data is unavailable; no action form is enabled.",
                 error="Private review data is unavailable.",
             )
         report = _mapping(detail.get("report"))
@@ -653,9 +753,19 @@ def create_presentation_app(
             "provenance": None,
         }
         proof_action.update(_mapping(_mapping(detail.get("review_actions")).get("proof")))
+        replacement_action: dict[str, object] = {
+            "eligible": False,
+            "candidate_download_eligible": False,
+            "blocking_reason": "REPLACEMENT_NOT_ELIGIBLE",
+            "provenance": None,
+        }
+        replacement_action.update(
+            _mapping(_mapping(detail.get("review_actions")).get("replacement_observation"))
+        )
         review_actions = {
             "containment_confirmation": containment_action,
             "proof": proof_action,
+            "replacement_observation": replacement_action,
         }
         candidate_evidence_preview: dict[str, object] = {
             "label": "TEXT EVIDENCE PREVIEW ONLY — NOT TACTILE PROOF",
@@ -677,6 +787,9 @@ def create_presentation_app(
             candidate_evidence_preview=candidate_evidence_preview,
             observation_age=packet.get("observation_age_seconds", "Unavailable"),
             current_observation=_pretty(detail.get("current_site_observation")),
+            current_observation_id=_mapping(detail.get("current_site_observation")).get(
+                "observation_id", ""
+            ),
             containment_evidence=_pretty(containment_action),
             review_actions=review_actions,
             timeline=_mapping(timeline_payload).get("events", ()),
@@ -689,6 +802,9 @@ def create_presentation_app(
             attestation_idempotency_key=secrets.token_urlsafe(24),
             containment_idempotency_key=secrets.token_urlsafe(24),
             proof_idempotency_key=secrets.token_urlsafe(24),
+            replacement_idempotency_key=secrets.token_urlsafe(24),
+            fixture_mode=False,
+            next_safe_action=_next_safe_action(_mapping(detail.get("review_state"))),
             error=None,
         )
 
@@ -879,6 +995,96 @@ def create_presentation_app(
             return _form_error(
                 409,
                 "Proof was not recorded. Reload the incident before retrying.",
+            )
+        return RedirectResponse(f"/incidents/{incident_id}", status_code=303)
+
+    @app.get("/incidents/{incident_id}/approved-candidate")
+    async def download_approved_candidate(incident_id: str, request: Request) -> Response:
+        """Proxy a fixed immutable candidate download without exposing a Cloud token."""
+
+        if request.headers.get("host") != f"127.0.0.1:{settings.port}":
+            return _form_error(404, "Candidate download is available only through local review.")
+        get_bytes = getattr(api, "get_bytes", None)
+        if not callable(get_bytes):
+            return _form_error(404, "Approved candidate download is unavailable.")
+        try:
+            content, disposition = await get_bytes(
+                f"/api/v1/incidents/{incident_id}/approved-candidate"
+            )
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
+            return _form_error(403, "The current approved candidate is unavailable.")
+        if (
+            re.fullmatch(
+                r'attachment; filename="braille-errata-relay-[0-9a-f]{12}-[0-9a-f]{12}\.brf"',
+                disposition,
+            )
+            is None
+        ):
+            return _form_error(502, "Candidate download identity was not accepted.")
+        return Response(
+            content=content,
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": disposition,
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.post("/incidents/{incident_id}/replacement-observation-links")
+    async def submit_replacement_observation_link(
+        incident_id: str,
+        request: Request,
+        csrf_token_value: str = Form(alias="csrf_token"),
+        candidate_sha256: str = Form(),
+        candidate_manifest_sha256: str = Form(),
+        proof_record_id: str = Form(),
+        scheduler_job_id: int = Form(),
+        site_observation_id: str = Form(),
+        selected_role: str = Form(),
+        expected_state_version: int = Form(),
+        note: str = Form(default=""),
+        idempotency_key: str = Form(),
+    ) -> Response:
+        rejected = require_local_form(request, csrf_token_value)
+        if rejected is not None:
+            return rejected
+        hashes = (candidate_sha256, candidate_manifest_sha256, proof_record_id, site_observation_id)
+        if (
+            selected_role != "machine_operator"
+            or scheduler_job_id < 1
+            or any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in hashes)
+        ):
+            return _form_error(422, "The selected replacement observation evidence is invalid.")
+        try:
+            await api.post_json(
+                f"/api/v1/incidents/{incident_id}/replacement-observation-links",
+                {
+                    "candidate_sha256": candidate_sha256,
+                    "candidate_manifest_sha256": candidate_manifest_sha256,
+                    "proof_record_id": proof_record_id,
+                    "scheduler_job_id": scheduler_job_id,
+                    "site_observation_id": site_observation_id,
+                    "selected_role": selected_role,
+                    "expected_state_version": expected_state_version,
+                    "note": note,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
+            return _form_error(
+                409,
+                "Replacement observation was not recorded. Reload the incident before retrying.",
             )
         return RedirectResponse(f"/incidents/{incident_id}", status_code=303)
 

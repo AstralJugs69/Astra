@@ -27,6 +27,7 @@ demo/evidence/*.json
 !demo/evidence/active-professional-review.json
 !demo/evidence/slice-2-3-containment-proof-gate.json
 !demo/evidence/release-candidate-1.json
+!demo/evidence/final-story5-dashboard.json
 uv-cache/
 **/uv-cache/
 *.pem

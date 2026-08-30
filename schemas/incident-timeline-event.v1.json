@@ -11,7 +11,16 @@
     "schema_version": {"const": "incident-timeline-event.v1"},
     "event_id": {"$ref": "#/$defs/sha256"},
     "incident_id": {"$ref": "#/$defs/sha256"},
-    "kind": {"enum": ["PROFESSIONAL_DISPOSITION", "OPERATOR_ATTESTATION"]},
+    "kind": {
+      "enum": [
+        "PROFESSIONAL_DISPOSITION",
+        "OPERATOR_ATTESTATION",
+        "CONTAINMENT_CONFIRMATION",
+        "PROOF_RECORD",
+        "CANDIDATE_APPROVAL_INVALIDATED",
+        "REPLACEMENT_OBSERVATION_LINK"
+      ]
+    },
     "record_id": {"$ref": "#/$defs/sha256"},
     "state_version": {"type": "integer", "minimum": 1},
     "actor_principal": {"type": "string", "minLength": 1, "maxLength": 512},

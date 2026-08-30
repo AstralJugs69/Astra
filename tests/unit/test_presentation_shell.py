@@ -30,6 +30,7 @@ DEMONSTRATOR_IDENTITY = "relay-demonstrator@project-12345.iam.gserviceaccount.co
 class FakePrivateReviewApi:
     def __init__(self) -> None:
         self.posts: list[tuple[str, dict[str, object]]] = []
+        self.downloads: list[str] = []
 
     async def get_json(self, path: str) -> dict[str, object]:
         if path == "/api/v1/incidents":
@@ -87,6 +88,13 @@ class FakePrivateReviewApi:
         self.posts.append((path, dict(payload)))
         return {"status": "HALT_REQUESTED"}
 
+    async def get_bytes(self, path: str) -> tuple[bytes, str]:
+        self.downloads.append(path)
+        return (
+            b"fixture-approved-candidate\r\n",
+            f'attachment; filename="braille-errata-relay-{INCIDENT_ID[:12]}-{("c" * 12)}.brf"',
+        )
+
 
 class GateEligiblePrivateReviewApi(FakePrivateReviewApi):
     """Private API fixture with one authoritative human gate at a time."""
@@ -112,6 +120,34 @@ class GateEligiblePrivateReviewApi(FakePrivateReviewApi):
                         "physical_output_isolation_attestation_id": "d" * 64,
                     },
                     "proof": {"eligible": False, "blocking_reason": "PROOF_NOT_ELIGIBLE"},
+                },
+            }
+        if self.gate == "replacement":
+            return {
+                **response,
+                "review_state": {"state": "AWAITING_REPLACEMENT", "state_version": 6},
+                "candidate_manifest": {"artifact_sha256": "c" * 64},
+                "profile_identity": {"profile_id": "demo-ueb-40x25-v1"},
+                "current_site_observation": {
+                    "observation_id": "e" * 64,
+                    "observed_at": "2026-08-30T12:00:00+00:00",
+                },
+                "review_actions": {
+                    "containment_confirmation": {
+                        "eligible": False,
+                        "blocking_reason": "CONTAINMENT_CONFIRMATION_REQUIRED",
+                    },
+                    "proof": {"eligible": False, "blocking_reason": "PROOF_NOT_ELIGIBLE"},
+                    "replacement_observation": {
+                        "eligible": True,
+                        "candidate_download_eligible": True,
+                        "blocking_reason": None,
+                        "provenance": {
+                            "candidate_sha256": "c" * 64,
+                            "manifest_sha256": "d" * 64,
+                            "proof_record_id": "f" * 64,
+                        },
+                    },
                 },
             }
         return {
@@ -497,6 +533,58 @@ def test_presentation_proof_form_requires_loopback_csrf_and_only_forwards_exact_
                 "findings": [],
                 "visual_only_uncertainty": False,
                 "idempotency_key": "presentation-proof-1",
+            },
+        )
+    ]
+
+
+def test_presentation_proxies_only_the_current_candidate_and_replacement_observation_form() -> None:
+    client, api = _gate_client("replacement")
+    csrf = _csrf(client)
+    detail = client.get(f"/incidents/{INCIDENT_ID}")
+    download = client.get(f"/incidents/{INCIDENT_ID}/approved-candidate")
+
+    assert "approved demo-fixture candidate for human-controlled submission" in detail.text
+    assert "/replacement-observation-links" in detail.text
+    assert "Relay does not control CUPS or the embosser" in detail.text
+    assert download.status_code == 200
+    assert download.content == b"fixture-approved-candidate\r\n"
+    assert download.headers["cache-control"] == "no-store"
+    assert download.headers["content-disposition"].startswith("attachment; filename=")
+    assert api.downloads == [f"/api/v1/incidents/{INCIDENT_ID}/approved-candidate"]
+
+    response = client.post(
+        f"/incidents/{INCIDENT_ID}/replacement-observation-links",
+        data={
+            "csrf_token": csrf,
+            "candidate_sha256": "c" * 64,
+            "candidate_manifest_sha256": "d" * 64,
+            "proof_record_id": "f" * 64,
+            "scheduler_job_id": "43",
+            "site_observation_id": "e" * 64,
+            "selected_role": "machine_operator",
+            "expected_state_version": "6",
+            "note": "Associates a fresh read-only external job observation only.",
+            "idempotency_key": "presentation-replacement-1",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert api.posts == [
+        (
+            f"/api/v1/incidents/{INCIDENT_ID}/replacement-observation-links",
+            {
+                "candidate_sha256": "c" * 64,
+                "candidate_manifest_sha256": "d" * 64,
+                "proof_record_id": "f" * 64,
+                "scheduler_job_id": 43,
+                "site_observation_id": "e" * 64,
+                "selected_role": "machine_operator",
+                "expected_state_version": 6,
+                "note": "Associates a fresh read-only external job observation only.",
+                "idempotency_key": "presentation-replacement-1",
             },
         )
     ]

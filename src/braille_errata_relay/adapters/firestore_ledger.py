@@ -46,6 +46,8 @@ from braille_errata_relay.domain.models import (
     ProfessionalDisposition,
     ProofRecord,
     RegisteredBaseline,
+    ReplacementObservationLink,
+    ReplacementObservationLinkProposal,
     SemanticAssessment,
     SiteObservation,
     TruthBasis,
@@ -156,6 +158,13 @@ class ContainmentConfirmationCommit:
 class ProofRecordCommit:
     state: IncidentReviewState
     proof: ProofRecord
+    duplicate: bool
+
+
+@dataclass(frozen=True)
+class ReplacementObservationLinkCommit:
+    state: IncidentReviewState
+    link: ReplacementObservationLink
     duplicate: bool
 
 
@@ -2398,6 +2407,408 @@ class FirestoreGate0Ledger:
 
     async def record_proof(self, *, proposed_record: ProofRecord) -> ProofRecordCommit:
         return await asyncio.to_thread(self._record_proof_sync, proposed_record=proposed_record)
+
+    def _record_replacement_observation_link_sync(
+        self,
+        *,
+        proposal: ReplacementObservationLinkProposal,
+        max_observation_age_seconds: float,
+    ) -> ReplacementObservationLinkCommit:
+        """Append a human-owned correlation to one fresh canonical observation.
+
+        The transaction repeats every material lineage check.  It intentionally
+        records no endpoint capture or physical-output conclusion and invokes
+        no scheduler or device client.
+        """
+
+        if max_observation_age_seconds < 0:
+            raise ValueError("replacement observation maximum age cannot be negative")
+        for value, label in (
+            (proposal.incident_id, "incident ID"),
+            (proposal.candidate_sha256, "candidate SHA-256"),
+            (proposal.candidate_manifest_sha256, "candidate manifest SHA-256"),
+            (proposal.proof_record_id, "proof record ID"),
+            (proposal.site_observation_id, "site observation ID"),
+        ):
+            _require_sha256(value, label=label)
+        key_hash = canonical_sha256(
+            {"scope": "replacement-observation-link", "key": proposal.idempotency_key}
+        )
+        request_body = proposal.model_dump(
+            mode="json",
+            exclude={"idempotency_key"},
+        )
+        request_body["idempotency_key_sha256"] = key_hash
+        request_sha256 = canonical_sha256(request_body)
+        record_id = canonical_sha256(
+            {"kind": "replacement-observation-link", "request_sha256": request_sha256}
+        )
+        request_id = canonical_sha256(
+            {
+                "scope": "replacement-observation-link-request",
+                "idempotency_key_sha256": key_hash,
+            }
+        )
+        incident_ref = self._document("incidents", proposal.incident_id)
+        review_head_ref = self._document("incident_review_heads", proposal.incident_id)
+        proof_ref = self._document("proof_records", proposal.proof_record_id)
+        proof_event_id = canonical_sha256(
+            {
+                "kind": HumanTimelineEventKind.PROOF_RECORD.value,
+                "incident_id": proposal.incident_id,
+                "record_id": proposal.proof_record_id,
+            }
+        )
+        proof_event_ref = self._document("incident_timeline_events", proof_event_id)
+        observation_ref = self._document("site_observations", proposal.site_observation_id)
+        record_ref = self._document("replacement_observation_links", record_id)
+        replacement_head_ref = self._document("replacement_observation_heads", proposal.incident_id)
+        event_id = canonical_sha256(
+            {
+                "kind": HumanTimelineEventKind.REPLACEMENT_OBSERVATION_LINK.value,
+                "incident_id": proposal.incident_id,
+                "record_id": record_id,
+            }
+        )
+        event_ref = self._document("incident_timeline_events", event_id)
+        request_ref = self._document("replacement_observation_link_requests", request_id)
+
+        def operation(transaction: Any) -> ReplacementObservationLinkCommit:
+            incident_data = self._snapshot_data(incident_ref.get(transaction=transaction))
+            review_head_data = self._snapshot_data(review_head_ref.get(transaction=transaction))
+            proof_data = self._snapshot_data(proof_ref.get(transaction=transaction))
+            proof_event_data = self._snapshot_data(proof_event_ref.get(transaction=transaction))
+            observation_data = self._snapshot_data(observation_ref.get(transaction=transaction))
+            record_data = self._snapshot_data(record_ref.get(transaction=transaction))
+            replacement_head_data = self._snapshot_data(
+                replacement_head_ref.get(transaction=transaction)
+            )
+            event_data = self._snapshot_data(event_ref.get(transaction=transaction))
+            request_data = self._snapshot_data(request_ref.get(transaction=transaction))
+            if incident_data is None or not isinstance(incident_data.get("record"), dict):
+                raise IncidentReviewPrerequisiteError("incident report checkpoint is unavailable")
+            checkpoint = IncidentCheckpoint.model_validate(incident_data["record"])
+            now = self._clock()
+            state = self._read_review_state(review_head_data, checkpoint, now=now)
+            if request_data is not None:
+                if (
+                    request_data.get("request_sha256") != request_sha256
+                    or request_data.get("record_id") != record_id
+                ):
+                    raise IncidentReviewStateConflictError(
+                        "replacement observation idempotency key conflicts"
+                    )
+                if record_data is None or not isinstance(record_data.get("record"), dict):
+                    raise LedgerIntegrityError("replacement observation replay record is missing")
+                return ReplacementObservationLinkCommit(
+                    state,
+                    ReplacementObservationLink.model_validate(record_data["record"]),
+                    True,
+                )
+            if record_data is not None or event_data is not None:
+                raise LedgerIntegrityError("replacement observation record identity already exists")
+            if replacement_head_data is not None:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_LINK_CONFLICT.value,
+                    "the incident already has an immutable replacement observation link",
+                )
+            if state.state_version != proposal.expected_state_version:
+                raise IncidentReviewStateConflictError("incident review state is stale")
+            if state.state is not IncidentState.AWAITING_REPLACEMENT:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_NOT_ELIGIBLE.value,
+                    "replacement correlation requires AWAITING_REPLACEMENT",
+                )
+            if state.blocking_reason is not None:
+                raise IncidentReviewEvidenceError(
+                    state.blocking_reason.value,
+                    "a visible incident block prevents replacement correlation",
+                )
+            if (
+                checkpoint.candidate_brf is None
+                or checkpoint.candidate_manifest is None
+                or checkpoint.candidate_brf.kind is not ArtifactKind.FULL_CANDIDATE_BRF
+                or checkpoint.candidate_brf.sha256 != proposal.candidate_sha256
+                or checkpoint.candidate_manifest.sha256 != proposal.candidate_manifest_sha256
+                or state.current_candidate_sha256 != proposal.candidate_sha256
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.CANDIDATE_APPROVAL_INVALIDATED.value,
+                    "the current immutable candidate no longer matches the requested replacement link",
+                )
+            if proof_data is None or not isinstance(proof_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PROOF_NOT_ELIGIBLE.value,
+                    "the selected proof record is unavailable",
+                )
+            if proof_event_data is None or not isinstance(proof_event_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PROOF_NOT_ELIGIBLE.value,
+                    "the selected proof record is not attributable timeline evidence",
+                )
+            proof = ProofRecord.model_validate(proof_data["record"])
+            proof_event = IncidentTimelineEvent.model_validate(proof_event_data["record"])
+            if (
+                proof.incident_id != proposal.incident_id
+                or proof.record_id != proposal.proof_record_id
+                or proof.decision.value != "APPROVED_FOR_HUMAN_SUBMISSION"
+                or proof.visual_only_uncertainty
+                or proof.candidate_sha256 != proposal.candidate_sha256
+                or proof.manifest_sha256 != proposal.candidate_manifest_sha256
+                or proof_event.kind is not HumanTimelineEventKind.PROOF_RECORD
+                or proof_event.record_id != proposal.proof_record_id
+                or proof_event.incident_id != proposal.incident_id
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.PROOF_NOT_ELIGIBLE.value,
+                    "the selected proof record is not the current approved exact candidate proof",
+                )
+            baseline_data = self._snapshot_data(
+                self._document("baselines", checkpoint.baseline_id).get(transaction=transaction)
+            )
+            production_link_data = self._snapshot_data(
+                self._document("baseline_production_links", checkpoint.baseline_id).get(
+                    transaction=transaction
+                )
+            )
+            if baseline_data is None or not isinstance(baseline_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.MISSING_LINEAGE.value,
+                    "replacement correlation requires the original baseline lineage",
+                )
+            if production_link_data is None or not isinstance(
+                production_link_data.get("record"), dict
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.MISSING_LINEAGE.value,
+                    "replacement correlation requires the original production link",
+                )
+            baseline = RegisteredBaseline.model_validate(baseline_data["record"])
+            production_link = BaselineProductionLink.model_validate(production_link_data["record"])
+            original_job_id = baseline.baseline.scheduler_job_id
+            if (
+                original_job_id is None
+                or baseline.baseline.scheduler_job_title is None
+                or production_link.scheduler_job_id != original_job_id
+                or production_link.scheduler_job_title != baseline.baseline.scheduler_job_title
+                or production_link.site_id != baseline.baseline.site_id
+                or production_link.queue_name != baseline.baseline.queue_name
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.MISSING_LINEAGE.value,
+                    "original scheduler, site, bridge, or queue lineage is incomplete",
+                )
+            if proposal.scheduler_job_id == original_job_id:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_REUSES_ORIGINAL_JOB.value,
+                    "the replacement must be a distinct externally submitted scheduler job",
+                )
+            observation_head_id = canonical_sha256(
+                {
+                    "site_id": production_link.site_id,
+                    "bridge_id": production_link.bridge_id,
+                    "queue_name": production_link.queue_name,
+                }
+            )
+            observation_head_data = self._snapshot_data(
+                self._document("site_observation_heads", observation_head_id).get(
+                    transaction=transaction
+                )
+            )
+            if (
+                observation_head_data is None
+                or observation_head_data.get("observation_id") != proposal.site_observation_id
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_MISSING.value,
+                    "the selected site observation is not the admitted canonical head",
+                )
+            if observation_data is None or not isinstance(observation_data.get("record"), dict):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_MISSING.value,
+                    "the selected site observation is unavailable",
+                )
+            observation = SiteObservation.model_validate(observation_data["record"])
+            if (
+                observation.observation_id != proposal.site_observation_id
+                or observation.site_id != production_link.site_id
+                or observation.bridge_id != production_link.bridge_id
+                or observation.queue_name != production_link.queue_name
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_MISMATCH.value,
+                    "the selected observation conflicts with the original site, bridge, or queue",
+                )
+            observed_at = observation.observed_at
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            current = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+            age_seconds = (current - observed_at).total_seconds()
+            if age_seconds < 0 or age_seconds > max_observation_age_seconds:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_STALE.value,
+                    "the selected replacement observation is stale",
+                )
+            matches = [
+                job
+                for job in observation.observations
+                if job.scheduler_job_id == proposal.scheduler_job_id
+            ]
+            if not matches:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_MISSING.value,
+                    "the selected replacement scheduler job is absent from the observation",
+                )
+            if len(matches) != 1:
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_AMBIGUOUS.value,
+                    "the selected replacement scheduler job is ambiguous",
+                )
+            job = matches[0]
+            expected_title = (
+                f"BER|{proposal.incident_id}|{proposal.candidate_sha256[:12]}|REPLACEMENT"
+            )
+            if (
+                job.destination != production_link.queue_name
+                or job.title != expected_title
+                or proposal.candidate_sha256[:12] not in job.title
+                or job.state is JobState.UNKNOWN
+                or observation.printer_state == "unknown"
+            ):
+                raise IncidentReviewEvidenceError(
+                    BlockingReason.REPLACEMENT_EVIDENCE_MISMATCH.value,
+                    "the selected job does not match the exact replacement title and queue lineage",
+                )
+            record = ReplacementObservationLink(
+                record_id=record_id,
+                incident_id=proposal.incident_id,
+                approved_candidate_sha256=proposal.candidate_sha256,
+                candidate_manifest_sha256=proposal.candidate_manifest_sha256,
+                proof_record_id=proposal.proof_record_id,
+                original_scheduler_job_id=original_job_id,
+                scheduler_job_id=job.scheduler_job_id,
+                observed_job_title=job.title,
+                site_id=observation.site_id,
+                bridge_id=observation.bridge_id,
+                queue_name=observation.queue_name,
+                site_observation_id=observation.observation_id,
+                observed_job_state=job.state,
+                observed_at=job.observed_at,
+                selected_role=proposal.selected_role,
+                expected_state_version=proposal.expected_state_version,
+                idempotency_key=proposal.idempotency_key,
+                note=proposal.note,
+                actor_principal=proposal.actor_principal,
+                recorded_at=current,
+            )
+            try:
+                updated_incident = transition(
+                    self._incident_from_review_state(state),
+                    IncidentState.REPLACEMENT_OBSERVED,
+                    expected_state_version=proposal.expected_state_version,
+                    evidence_id=record.record_id,
+                )
+            except (IllegalStateTransition, StaleStateVersion) as exc:
+                raise IncidentReviewStateConflictError(str(exc)) from exc
+            updated = state.model_copy(
+                update={
+                    "state": updated_incident.state,
+                    "state_version": updated_incident.state_version,
+                    "blocking_reason": None,
+                    "last_attributable_evidence_id": record.record_id,
+                    "updated_at": current,
+                }
+            )
+            event = IncidentTimelineEvent(
+                event_id=event_id,
+                incident_id=record.incident_id,
+                kind=HumanTimelineEventKind.REPLACEMENT_OBSERVATION_LINK,
+                record_id=record.record_id,
+                state_version=updated.state_version,
+                actor_principal=record.actor_principal,
+                recorded_at=record.recorded_at,
+            )
+            head_body = {"record": updated.model_dump(mode="json")}
+            record_body = {"record": record.model_dump(mode="json")}
+            event_body = {"record": event.model_dump(mode="json")}
+            transaction.set(
+                review_head_ref,
+                {
+                    **head_body,
+                    "payload_sha256": canonical_sha256(head_body),
+                    "updated_at": current,
+                },
+            )
+            transaction.create(
+                record_ref,
+                {
+                    **record_body,
+                    "payload_sha256": canonical_sha256(record_body),
+                    "created_at": current,
+                },
+            )
+            transaction.create(
+                replacement_head_ref,
+                {
+                    "record_id": record.record_id,
+                    "incident_id": record.incident_id,
+                    "payload_sha256": canonical_sha256(
+                        {"record_id": record.record_id, "incident_id": record.incident_id}
+                    ),
+                    "created_at": current,
+                },
+            )
+            transaction.create(
+                event_ref,
+                {
+                    **event_body,
+                    "payload_sha256": canonical_sha256(event_body),
+                    "created_at": current,
+                },
+            )
+            transaction.create(
+                request_ref,
+                {
+                    **request_body,
+                    "request_sha256": request_sha256,
+                    "record_id": record.record_id,
+                    "created_at": current,
+                },
+            )
+            return ReplacementObservationLinkCommit(updated, record, False)
+
+        return cast(ReplacementObservationLinkCommit, self._transaction_runner(operation))
+
+    async def record_replacement_observation_link(
+        self,
+        *,
+        proposal: ReplacementObservationLinkProposal,
+        max_observation_age_seconds: float = 15.0,
+    ) -> ReplacementObservationLinkCommit:
+        return await asyncio.to_thread(
+            self._record_replacement_observation_link_sync,
+            proposal=proposal,
+            max_observation_age_seconds=max_observation_age_seconds,
+        )
+
+    def _get_replacement_observation_link_sync(
+        self,
+        record_id: str,
+    ) -> ReplacementObservationLink | None:
+        _require_sha256(record_id, label="replacement observation link record ID")
+        data = self._snapshot_data(self._document("replacement_observation_links", record_id).get())
+        if data is None:
+            return None
+        record = data.get("record")
+        if not isinstance(record, dict):
+            raise LedgerIntegrityError("replacement observation link record is malformed")
+        return ReplacementObservationLink.model_validate(record)
+
+    async def get_replacement_observation_link(
+        self,
+        record_id: str,
+    ) -> ReplacementObservationLink | None:
+        return await asyncio.to_thread(self._get_replacement_observation_link_sync, record_id)
 
     def _get_incident_review_state_sync(self, incident_id: str) -> IncidentReviewState | None:
         _require_sha256(incident_id, label="incident ID")

@@ -142,6 +142,13 @@ class BlockingReason(StrEnum):
     PROOF_REVIEW_REQUIRED = "PROOF_REVIEW_REQUIRED"
     PROOF_REJECTED = "PROOF_REJECTED"
     CANDIDATE_APPROVAL_INVALIDATED = "CANDIDATE_APPROVAL_INVALIDATED"
+    REPLACEMENT_NOT_ELIGIBLE = "REPLACEMENT_NOT_ELIGIBLE"
+    REPLACEMENT_EVIDENCE_MISSING = "REPLACEMENT_EVIDENCE_MISSING"
+    REPLACEMENT_EVIDENCE_STALE = "REPLACEMENT_EVIDENCE_STALE"
+    REPLACEMENT_EVIDENCE_AMBIGUOUS = "REPLACEMENT_EVIDENCE_AMBIGUOUS"
+    REPLACEMENT_EVIDENCE_MISMATCH = "REPLACEMENT_EVIDENCE_MISMATCH"
+    REPLACEMENT_REUSES_ORIGINAL_JOB = "REPLACEMENT_REUSES_ORIGINAL_JOB"
+    REPLACEMENT_LINK_CONFLICT = "REPLACEMENT_LINK_CONFLICT"
 
 
 class Materiality(StrEnum):
@@ -874,6 +881,7 @@ class HumanTimelineEventKind(StrEnum):
     CONTAINMENT_CONFIRMATION = "CONTAINMENT_CONFIRMATION"
     PROOF_RECORD = "PROOF_RECORD"
     CANDIDATE_APPROVAL_INVALIDATED = "CANDIDATE_APPROVAL_INVALIDATED"
+    REPLACEMENT_OBSERVATION_LINK = "REPLACEMENT_OBSERVATION_LINK"
 
 
 class IncidentTimelineEvent(DomainModel):
@@ -942,18 +950,70 @@ class CandidateApprovalInvalidation(DomainModel):
     recorded_at: datetime
 
 
-class ReplacementLink(DomainModel):
-    record_id: HexSha256
+class ReplacementObservationLinkProposal(DomainModel):
+    """Untrusted human link intent; all scheduler evidence is re-read in storage."""
+
     incident_id: HexSha256
-    approved_artifact_sha256: HexSha256
-    queue_name: NonEmpty
+    candidate_sha256: HexSha256
+    candidate_manifest_sha256: HexSha256
+    proof_record_id: HexSha256
     scheduler_job_id: int = Field(gt=0)
-    observed_job_title: NonEmpty
-    selected_role: str = "machine_operator"
+    site_observation_id: HexSha256
+    selected_role: Literal["machine_operator"] = "machine_operator"
     expected_state_version: int = Field(ge=0)
     idempotency_key: NonEmpty
+    note: BoundedNote = ""
+    actor_principal: NonEmpty
+
+
+class ReplacementObservationLink(DomainModel):
+    """An append-only correlation to a job independently submitted by a human.
+
+    This record establishes only a fresh read-only scheduler observation and
+    immutable candidate lineage. It does not establish endpoint completion,
+    physical output, or authority to close the incident.
+    """
+
+    schema_version: Literal["replacement-observation-link.v1"] = "replacement-observation-link.v1"
+    record_id: HexSha256
+    incident_id: HexSha256
+    approved_candidate_sha256: HexSha256
+    candidate_manifest_sha256: HexSha256
+    proof_record_id: HexSha256
+    candidate_label: Literal["CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"] = (
+        "CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"
+    )
+    original_scheduler_job_id: int = Field(gt=0)
+    scheduler_job_id: int = Field(gt=0)
+    observed_job_title: NonEmpty
+    site_id: NonEmpty
+    bridge_id: NonEmpty
+    queue_name: NonEmpty
+    site_observation_id: HexSha256
+    observed_job_state: JobState
+    observed_at: datetime
+    truth_basis: Literal["HUMAN_SUBMITTED_EXTERNAL_JOB_PLUS_READ_ONLY_OBSERVATION"] = (
+        "HUMAN_SUBMITTED_EXTERNAL_JOB_PLUS_READ_ONLY_OBSERVATION"
+    )
+    selected_role: Literal["machine_operator"] = "machine_operator"
+    expected_state_version: int = Field(ge=0)
+    idempotency_key: NonEmpty
+    note: BoundedNote = ""
     actor_principal: NonEmpty
     recorded_at: datetime
+
+    @model_validator(mode="after")
+    def validate_external_job_identity(self) -> ReplacementObservationLink:
+        if self.scheduler_job_id == self.original_scheduler_job_id:
+            raise ValueError("replacement job must differ from the original scheduler job")
+        if self.observed_job_state is JobState.UNKNOWN:
+            raise ValueError("replacement observation cannot carry an unknown scheduler state")
+        expected_title = f"BER|{self.incident_id}|{self.approved_candidate_sha256[:12]}|REPLACEMENT"
+        if self.observed_job_title != expected_title:
+            raise ValueError(
+                "replacement observation title does not match immutable candidate lineage"
+            )
+        return self
 
 
 class VerificationInvariant(DomainModel):

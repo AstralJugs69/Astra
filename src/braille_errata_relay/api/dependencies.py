@@ -25,6 +25,9 @@ from braille_errata_relay.application.incident_workflow import IncidentWorkflow
 from braille_errata_relay.application.outbox_drain import OutboxDrainWorkflow
 from braille_errata_relay.application.production_link import ProductionLinkWorkflow
 from braille_errata_relay.application.professional_review import ProfessionalReviewWorkflow
+from braille_errata_relay.application.replacement_observation import (
+    ReplacementObservationWorkflow,
+)
 from braille_errata_relay.application.semantic_workflow import IdempotentSemanticWorkflow
 from braille_errata_relay.application.telemetry_ingestion import (
     TelemetryAllowlist,
@@ -48,6 +51,7 @@ class RuntimeDependencies:
     historical_link_correction_workflow: HistoricalLinkCorrectionWorkflow | None
     professional_review_workflow: ProfessionalReviewWorkflow | None
     containment_proof_workflow: ContainmentProofWorkflow | None
+    replacement_observation_workflow: ReplacementObservationWorkflow | None
     telemetry_workflow: TelemetryIngestionWorkflow | None
     incident_workflow: IncidentWorkflow | None
     outbox_workflow: OutboxDrainWorkflow | None
@@ -67,6 +71,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             historical_link_correction_workflow=None,
             professional_review_workflow=None,
             containment_proof_workflow=None,
+            replacement_observation_workflow=None,
             telemetry_workflow=None,
             incident_workflow=None,
             outbox_workflow=None,
@@ -86,6 +91,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
             historical_link_correction_workflow=None,
             professional_review_workflow=None,
             containment_proof_workflow=None,
+            replacement_observation_workflow=None,
             telemetry_workflow=None,
             incident_workflow=None,
             outbox_workflow=None,
@@ -106,6 +112,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
     historical_link_correction_workflow = None
     professional_review_workflow = None
     containment_proof_workflow = None
+    replacement_observation_workflow = None
     telemetry_workflow = None
     incident_workflow = None
     outbox_workflow = None
@@ -182,6 +189,11 @@ def build_runtime_dependencies() -> RuntimeDependencies:
                 profile=baseline_workflow.profile,
                 bridge_id=settings.bridge_id,
             )
+            replacement_observation_workflow = ReplacementObservationWorkflow(
+                ledger=ledger,
+                containment_proof_workflow=containment_proof_workflow,
+                artifact_store=artifact_store,
+            )
     if settings.site_id and settings.bridge_id and settings.cups_queue_name:
         telemetry_workflow = TelemetryIngestionWorkflow(
             ledger=ledger,
@@ -202,6 +214,7 @@ def build_runtime_dependencies() -> RuntimeDependencies:
         historical_link_correction_workflow,
         professional_review_workflow,
         containment_proof_workflow,
+        replacement_observation_workflow,
         telemetry_workflow,
         incident_workflow,
         outbox_workflow,

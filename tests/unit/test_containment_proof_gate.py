@@ -14,8 +14,15 @@ from braille_errata_relay.application.containment_proof import (
     ContainmentProofWorkflow,
 )
 from braille_errata_relay.application.professional_review import ProfessionalReviewWorkflow
+from braille_errata_relay.application.replacement_observation import (
+    ReplacementObservationConflict,
+    ReplacementObservationRejected,
+    ReplacementObservationWorkflow,
+    canonical_replacement_job_title,
+)
 from braille_errata_relay.braille.profile import load_translation_profile, profile_sha256
 from braille_errata_relay.contracts.canonical_json import canonical_json_bytes, canonical_sha256
+from braille_errata_relay.domain.errors import IncidentReviewStateConflictError
 from braille_errata_relay.domain.models import (
     ArtifactKind,
     ArtifactManifest,
@@ -34,6 +41,7 @@ from braille_errata_relay.domain.models import (
     ProofDecision,
     QueueObservation,
     RegisteredBaseline,
+    ReplacementObservationLinkProposal,
     SiteObservation,
     TranslationProfile,
     TruthBasis,
@@ -140,6 +148,7 @@ class _Fixture:
     artifacts: _ArtifactStore
     review: ProfessionalReviewWorkflow
     workflow: ContainmentProofWorkflow
+    replacement: ReplacementObservationWorkflow
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -302,7 +311,15 @@ def _fixture() -> _Fixture:
         bridge_id="single-pc-bridge",
         clock=lambda: now[0],
     )
-    return _Fixture(client, ledger, now, checkpoint, profile, artifacts, review, workflow)
+    replacement = ReplacementObservationWorkflow(
+        ledger=ledger,
+        containment_proof_workflow=workflow,
+        artifact_store=artifacts,
+        clock=lambda: now[0],
+    )
+    return _Fixture(
+        client, ledger, now, checkpoint, profile, artifacts, review, workflow, replacement
+    )
 
 
 async def _halt_and_isolate(fixture: _Fixture) -> tuple[object, object]:
@@ -433,6 +450,110 @@ async def _approve_proof(
         visual_only_uncertainty=False,
         idempotency_key=idempotency_key,
         actor_principal="proofreader@example.test",
+    )
+
+
+def _admit_replacement_observation(
+    fixture: _Fixture,
+    *,
+    scheduler_job_id: int = 43,
+    observed_at: datetime | None = None,
+    title: str | None = None,
+    destination: str = "Braille-Embosser-Sim",
+    site_id: str = "demo-site",
+    bridge_id: str = "single-pc-bridge",
+    queue_name: str = "Braille-Embosser-Sim",
+    states: tuple[JobState, ...] = (JobState.PENDING_HELD,),
+    marker: str = "f",
+) -> SiteObservation:
+    current = observed_at or fixture.now[0]
+    expected_title = canonical_replacement_job_title(
+        incident_id=INCIDENT_ID,
+        candidate_sha256=CANDIDATE_SHA256,
+    )
+    observation = SiteObservation(
+        observation_id=marker * 64,
+        site_id=site_id,
+        bridge_id=bridge_id,
+        queue_name=queue_name,
+        sequence=2,
+        observed_at=current,
+        observations=tuple(
+            QueueObservation(
+                scheduler_job_id=scheduler_job_id,
+                owner="relay-operator",
+                title=title or expected_title,
+                destination=destination,
+                state=state,
+                observed_at=current,
+                job_created_at=current,
+            )
+            for state in states
+        ),
+        printer_state="idle",
+        printer_accepting_jobs=True,
+    )
+    fixture.client.store[f"site_observations/{observation.observation_id}"] = {
+        "record": observation.model_dump(mode="json")
+    }
+    head_id = canonical_sha256(
+        {
+            "site_id": "demo-site",
+            "bridge_id": "single-pc-bridge",
+            "queue_name": "Braille-Embosser-Sim",
+        }
+    )
+    fixture.client.store[f"site_observation_heads/{head_id}"] = {
+        "observation_id": observation.observation_id,
+        "sequence": observation.sequence,
+    }
+    return observation
+
+
+async def _ready_for_replacement(
+    fixture: _Fixture,
+) -> tuple[object, SiteObservation]:
+    halt, isolation, containment_observation = await _ready_for_confirmation(fixture)
+    await _confirm(
+        fixture,
+        halt=halt,
+        isolation=isolation,
+        observation=containment_observation,
+    )
+    proof = await _approve_proof(fixture)
+    fixture.now[0] += timedelta(seconds=1)
+    observation = _admit_replacement_observation(fixture)
+    return proof, observation
+
+
+async def _link_replacement(
+    fixture: _Fixture,
+    *,
+    observation: SiteObservation,
+    scheduler_job_id: int = 43,
+    candidate_sha256: str = CANDIDATE_SHA256,
+    manifest_sha256: str | None = None,
+    proof_record_id: str | None = None,
+    expected_state_version: int = 6,
+    idempotency_key: str = "replacement-link-1",
+    selected_role: str = "machine_operator",
+    note: str = "Human operator associates the observed external job only.",
+) -> object:
+    provenance = await fixture.workflow.resolve_candidate_provenance(incident_id=INCIDENT_ID)
+    timeline = await fixture.ledger.list_incident_timeline_events(INCIDENT_ID)
+    proof_event = next(event for event in timeline if event.kind.value == "PROOF_RECORD")
+    return await fixture.replacement.record_observation_link(
+        incident_id=INCIDENT_ID,
+        candidate_sha256=candidate_sha256,
+        candidate_manifest_sha256=manifest_sha256 or provenance.manifest_sha256,
+        proof_record_id=proof_record_id or proof_event.record_id,
+        scheduler_job_id=scheduler_job_id,
+        site_observation_id=observation.observation_id,
+        selected_role=selected_role,
+        expected_state_version=expected_state_version,
+        note=note,
+        idempotency_key=idempotency_key,
+        actor_principal="operator@example.test",
     )
 
 
@@ -772,20 +893,248 @@ async def test_proof_rejection_preserves_a_visible_block_and_candidate_change_in
     assert renewed.state.state is IncidentState.AWAITING_REPLACEMENT
 
 
-def test_containment_and_proof_workflow_has_no_cups_or_device_control_surface() -> None:
-    source = ROOT / "src" / (ContainmentProofWorkflow.__module__.replace(".", "/") + ".py")
-    rendered = source.read_text(encoding="utf-8").lower()
+@pytest.mark.asyncio
+async def test_current_candidate_download_is_proof_bound_rehashed_and_never_a_master() -> None:
+    before_proof = _fixture()
 
-    for forbidden in (
-        "import subprocess",
-        "import cups",
-        "cups.connection",
-        "print-job",
-        "create-job",
-        "send-document",
-        "hold-job",
-        "release-job",
-        "cancel-job",
-        "restart-job",
-    ):
-        assert forbidden not in rendered
+    with pytest.raises(ReplacementObservationRejected) as unavailable:
+        await before_proof.replacement.download_current_candidate(incident_id=INCIDENT_ID)
+
+    assert unavailable.value.reason is BlockingReason.REPLACEMENT_NOT_ELIGIBLE
+
+    fixture = _fixture()
+    proof, _ = await _ready_for_replacement(fixture)
+    download = await fixture.replacement.download_current_candidate(incident_id=INCIDENT_ID)
+
+    assert proof.state.state is IncidentState.AWAITING_REPLACEMENT
+    assert download.content == CANDIDATE_BRF_BYTES
+    assert download.candidate_sha256 == CANDIDATE_SHA256
+    assert (
+        download.manifest_sha256
+        == (
+            await fixture.workflow.resolve_candidate_provenance(incident_id=INCIDENT_ID)
+        ).manifest_sha256
+    )
+    assert download.proof_record_id != ""
+    assert (
+        download.filename == f"braille-errata-relay-{INCIDENT_ID[:12]}-{CANDIDATE_SHA256[:12]}.brf"
+    )
+
+    fixture.artifacts.values[CANDIDATE_SHA256] = b"tampered-after-proof"
+    with pytest.raises(ReplacementObservationRejected) as tampered:
+        await fixture.replacement.download_current_candidate(incident_id=INCIDENT_ID)
+
+    assert tampered.value.reason is BlockingReason.CANDIDATE_PROVENANCE_MISMATCH
+
+
+@pytest.mark.asyncio
+async def test_replacement_observation_is_append_only_idempotent_and_stops_before_verification() -> (
+    None
+):
+    fixture = _fixture()
+    proof, observation = await _ready_for_replacement(fixture)
+
+    first = await _link_replacement(fixture, observation=observation)
+    replay = await _link_replacement(fixture, observation=observation)
+
+    assert proof.state.state is IncidentState.AWAITING_REPLACEMENT
+    assert first.duplicate is False
+    assert replay.duplicate is True
+    assert first.state.state is IncidentState.REPLACEMENT_OBSERVED
+    assert first.state.state_version == 7
+    assert first.link.scheduler_job_id == 43
+    assert first.link.original_scheduler_job_id == 42
+    assert first.link.observed_job_state is JobState.PENDING_HELD
+    assert first.link.truth_basis == "HUMAN_SUBMITTED_EXTERNAL_JOB_PLUS_READ_ONLY_OBSERVATION"
+    assert first.link.candidate_label == "CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER"
+    assert first.link.observed_job_title == canonical_replacement_job_title(
+        incident_id=INCIDENT_ID,
+        candidate_sha256=CANDIDATE_SHA256,
+    )
+    assert (
+        sum(path.startswith("replacement_observation_links/") for path in fixture.client.store) == 1
+    )
+    assert not any(path.startswith("verification") for path in fixture.client.store)
+    timeline = await fixture.ledger.list_incident_timeline_events(INCIDENT_ID)
+    assert timeline[-1].kind.value == "REPLACEMENT_OBSERVATION_LINK"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("variant", "expected_reason"),
+    (
+        ("original", BlockingReason.REPLACEMENT_REUSES_ORIGINAL_JOB),
+        ("wrong-title", BlockingReason.REPLACEMENT_EVIDENCE_MISMATCH),
+        ("wrong-queue", BlockingReason.REPLACEMENT_EVIDENCE_MISMATCH),
+        ("wrong-site", BlockingReason.REPLACEMENT_EVIDENCE_MISMATCH),
+        ("wrong-bridge", BlockingReason.REPLACEMENT_EVIDENCE_MISMATCH),
+        ("stale", BlockingReason.REPLACEMENT_EVIDENCE_STALE),
+        ("missing", BlockingReason.REPLACEMENT_EVIDENCE_MISSING),
+        ("ambiguous", BlockingReason.REPLACEMENT_EVIDENCE_AMBIGUOUS),
+        ("superseded", BlockingReason.REPLACEMENT_EVIDENCE_MISSING),
+        ("wrong-hash", BlockingReason.CANDIDATE_PROVENANCE_MISMATCH),
+        ("wrong-proof", BlockingReason.CANDIDATE_PROVENANCE_MISMATCH),
+    ),
+)
+async def test_replacement_observation_fails_closed_for_lineage_and_freshness_variants(
+    variant: str,
+    expected_reason: BlockingReason,
+) -> None:
+    fixture = _fixture()
+    _, observation = await _ready_for_replacement(fixture)
+    kwargs: dict[str, object] = {"observation": observation}
+    if variant == "original":
+        kwargs["scheduler_job_id"] = 42
+    elif variant == "wrong-title":
+        observation = _admit_replacement_observation(
+            fixture,
+            title="BER|wrong|candidate|REPLACEMENT",
+        )
+        kwargs["observation"] = observation
+    elif variant == "wrong-queue":
+        observation = _admit_replacement_observation(
+            fixture,
+            destination="Wrong-Queue",
+        )
+        kwargs["observation"] = observation
+    elif variant == "wrong-site":
+        observation = _admit_replacement_observation(fixture, site_id="wrong-site")
+        kwargs["observation"] = observation
+    elif variant == "wrong-bridge":
+        observation = _admit_replacement_observation(fixture, bridge_id="wrong-bridge")
+        kwargs["observation"] = observation
+    elif variant == "stale":
+        fixture.now[0] += timedelta(seconds=16)
+    elif variant == "missing":
+        observation = _admit_replacement_observation(fixture, states=())
+        kwargs["observation"] = observation
+    elif variant == "ambiguous":
+        observation = _admit_replacement_observation(
+            fixture,
+            states=(JobState.PENDING, JobState.PENDING_HELD),
+        )
+        kwargs["observation"] = observation
+    elif variant == "superseded":
+        head_id = canonical_sha256(
+            {
+                "site_id": "demo-site",
+                "bridge_id": "single-pc-bridge",
+                "queue_name": "Braille-Embosser-Sim",
+            }
+        )
+        fixture.client.store[f"site_observation_heads/{head_id}"]["observation_id"] = "e" * 64
+    elif variant == "wrong-hash":
+        kwargs["candidate_sha256"] = "d" * 64
+    else:
+        kwargs["proof_record_id"] = "d" * 64
+
+    with pytest.raises(ReplacementObservationRejected) as rejected:
+        await _link_replacement(fixture, **kwargs)
+
+    assert rejected.value.reason is expected_reason
+    state = await fixture.ledger.get_incident_review_state(INCIDENT_ID)
+    assert state is not None
+    assert state.state is IncidentState.AWAITING_REPLACEMENT
+    assert not any(
+        path.startswith("replacement_observation_links/") for path in fixture.client.store
+    )
+
+
+@pytest.mark.asyncio
+async def test_replacement_observation_rejects_stale_forms_roles_and_conflicting_replays() -> None:
+    stale_fixture = _fixture()
+    _, stale_observation = await _ready_for_replacement(stale_fixture)
+    with pytest.raises(ReplacementObservationConflict):
+        await _link_replacement(
+            stale_fixture,
+            observation=stale_observation,
+            expected_state_version=5,
+        )
+    with pytest.raises(ReplacementObservationRejected) as wrong_role:
+        await _link_replacement(
+            stale_fixture,
+            observation=stale_observation,
+            selected_role="proofreader",
+        )
+    assert wrong_role.value.reason is BlockingReason.REPLACEMENT_NOT_ELIGIBLE
+
+    fixture = _fixture()
+    _, observation = await _ready_for_replacement(fixture)
+    first = await _link_replacement(fixture, observation=observation)
+    conflicting_proposal = ReplacementObservationLinkProposal(
+        incident_id=INCIDENT_ID,
+        candidate_sha256=CANDIDATE_SHA256,
+        candidate_manifest_sha256=first.link.candidate_manifest_sha256,
+        proof_record_id=first.link.proof_record_id,
+        scheduler_job_id=43,
+        site_observation_id=observation.observation_id,
+        selected_role="machine_operator",
+        expected_state_version=6,
+        idempotency_key="replacement-link-1",
+        note="This reuses the idempotency key with different content.",
+        actor_principal="operator@example.test",
+    )
+    with pytest.raises(IncidentReviewStateConflictError, match="idempotency key conflicts"):
+        await fixture.ledger.record_replacement_observation_link(proposal=conflicting_proposal)
+
+
+@pytest.mark.asyncio
+async def test_candidate_change_after_proof_invalidates_replacement_observation() -> None:
+    fixture = _fixture()
+    _, observation = await _ready_for_replacement(fixture)
+    checkpoint = await fixture.ledger.get_incident_checkpoint(INCIDENT_ID)
+    assert checkpoint is not None
+    replacement_bytes = b"candidate-changed-after-proof\r\n"
+    replacement_sha256 = hashlib.sha256(replacement_bytes).hexdigest()
+    _, manifest_bytes, manifest_ref = _manifest_for(
+        candidate_sha256=replacement_sha256,
+        checkpoint=checkpoint,
+        profile=fixture.profile,
+        created_at=fixture.now[0],
+    )
+    fixture.artifacts.values[replacement_sha256] = replacement_bytes
+    fixture.artifacts.values[manifest_ref.sha256] = manifest_bytes
+    fixture.client.store[f"incidents/{INCIDENT_ID}"] = {
+        "record": checkpoint.model_copy(
+            update={
+                "candidate_brf": ArtifactRef(
+                    sha256=replacement_sha256,
+                    kind=ArtifactKind.FULL_CANDIDATE_BRF,
+                    byte_length=len(replacement_bytes),
+                    uri=f"gs://relay-test/candidates/{replacement_sha256}.brf",
+                ),
+                "candidate_manifest": manifest_ref,
+                "updated_at": fixture.now[0],
+            }
+        ).model_dump(mode="json")
+    }
+
+    with pytest.raises(ReplacementObservationRejected) as rejected:
+        await _link_replacement(fixture, observation=observation)
+
+    assert rejected.value.reason is BlockingReason.CANDIDATE_APPROVAL_INVALIDATED
+    state = await fixture.ledger.get_incident_review_state(INCIDENT_ID)
+    assert state is not None
+    assert state.state is IncidentState.AWAITING_PROOF
+
+
+def test_containment_proof_and_replacement_workflows_have_no_cups_or_device_control_surface() -> (
+    None
+):
+    for workflow in (ContainmentProofWorkflow, ReplacementObservationWorkflow):
+        source = ROOT / "src" / (workflow.__module__.replace(".", "/") + ".py")
+        rendered = source.read_text(encoding="utf-8").lower()
+
+        for forbidden in (
+            "import subprocess",
+            "import cups",
+            "cups.connection",
+            "print-job",
+            "create-job",
+            "send-document",
+            "hold-job",
+            "release-job",
+            "cancel-job",
+            "restart-job",
+        ):
+            assert forbidden not in rendered

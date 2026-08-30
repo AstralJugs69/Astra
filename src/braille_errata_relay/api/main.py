@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -55,6 +55,11 @@ from braille_errata_relay.application.professional_review import (
     ProfessionalReviewRejected,
     ProfessionalReviewWorkflow,
 )
+from braille_errata_relay.application.replacement_observation import (
+    ReplacementObservationConflict,
+    ReplacementObservationRejected,
+    ReplacementObservationWorkflow,
+)
 from braille_errata_relay.application.semantic_workflow import (
     IdempotentSemanticWorkflow,
     SemanticExecutionInProgress,
@@ -87,6 +92,7 @@ from braille_errata_relay.domain.models import (
     ProfessionalDisposition,
     ProofDecision,
     ProofRecord,
+    ReplacementObservationLink,
     TruthBasis,
 )
 
@@ -227,6 +233,22 @@ class ProofRecordRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class ReplacementObservationLinkRequest(BaseModel):
+    """A machine operator's evidence link, never a production-control request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    candidate_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    proof_record_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scheduler_job_id: int = Field(gt=0)
+    site_observation_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selected_role: Literal["machine_operator"]
+    expected_state_version: int = Field(ge=0)
+    note: str = Field(default="", max_length=2_000)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 def _safe_candidate_manifest_evidence(
     manifest: dict[str, object] | None,
 ) -> dict[str, object] | None:
@@ -284,6 +306,7 @@ def create_app(
     incident_workflow: IncidentWorkflow | None = None,
     professional_review_workflow: ProfessionalReviewWorkflow | None = None,
     containment_proof_workflow: ContainmentProofWorkflow | None = None,
+    replacement_observation_workflow: ReplacementObservationWorkflow | None = None,
     outbox_workflow: OutboxDrainWorkflow | None = None,
     identity_verifier: IdentityVerifier | None = None,
 ) -> FastAPI:
@@ -764,6 +787,7 @@ def create_app(
                     | OperatorAttestation
                     | ProfessionalDisposition
                     | ProofRecord
+                    | ReplacementObservationLink
                     | None
                 )
                 truth_basis = "HUMAN_ATTESTATION"
@@ -780,6 +804,9 @@ def create_app(
                 elif event.kind is HumanTimelineEventKind.CANDIDATE_APPROVAL_INVALIDATED:
                     record = await ledger.get_candidate_approval_invalidation(event.record_id)
                     truth_basis = "DETERMINISTIC_CANDIDATE_LINEAGE"
+                elif event.kind is HumanTimelineEventKind.REPLACEMENT_OBSERVATION_LINK:
+                    record = await ledger.get_replacement_observation_link(event.record_id)
+                    truth_basis = "HUMAN_SUBMITTED_EXTERNAL_JOB_PLUS_READ_ONLY_OBSERVATION"
                 else:
                     raise ValueError("incident timeline contains an unsupported event kind")
                 if record is None:
@@ -871,7 +898,7 @@ def create_app(
         )
         baseline = await ledger.get_baseline(checkpoint.baseline_id)
         observation = None
-        if baseline is not None and incident_workflow is not None:
+        if ledger is not None and baseline is not None and incident_workflow is not None:
             observation = await ledger.get_latest_site_observation(
                 site_id=baseline.baseline.site_id,
                 bridge_id=incident_workflow.bridge_id,
@@ -898,6 +925,12 @@ def create_app(
                 "blocking_reason": "CONTAINMENT_CONFIRMATION_REQUIRED",
             },
             "proof": {"eligible": False, "blocking_reason": "PROOF_NOT_ELIGIBLE"},
+            "replacement_observation": {
+                "eligible": False,
+                "candidate_download_eligible": False,
+                "blocking_reason": "REPLACEMENT_NOT_ELIGIBLE",
+                "provenance": None,
+            },
         }
         if containment_proof_workflow is not None:
             containment, proof = await asyncio.gather(
@@ -909,7 +942,13 @@ def create_app(
             review_actions = {
                 "containment_confirmation": containment.sanitized_record(),
                 "proof": proof.sanitized_record(),
+                "replacement_observation": review_actions["replacement_observation"],
             }
+        if replacement_observation_workflow is not None:
+            replacement = await replacement_observation_workflow.eligibility(
+                incident_id=checkpoint.incident_id
+            )
+            review_actions["replacement_observation"] = replacement.sanitized_record()
         return {
             "checkpoint": checkpoint.model_dump(mode="json"),
             "review_state": (await _review_state_for_checkpoint(checkpoint)).model_dump(
@@ -939,6 +978,60 @@ def create_app(
             return JSONResponse(status_code=404, content={"detail": "incident not found"})
         return checkpoint
 
+    async def _incident_overview(
+        checkpoint: IncidentCheckpoint,
+        state: IncidentReviewState,
+    ) -> dict[str, object]:
+        """Build a compact evidence summary without granting any new authority."""
+
+        source_change_summary = "Open immutable incident detail for source-correction evidence."
+        page_impact_summary = "Deterministic page impact is available in incident detail."
+        observation_freshness = "No current read-only observation is available."
+        if checkpoint.report is not None:
+            try:
+                report = await _read_json_artifact(checkpoint.report)
+                semantic = report.get("semantic_assessment")
+                if isinstance(semantic, dict) and isinstance(semantic.get("summary"), str):
+                    source_change_summary = semantic["summary"]
+                impact = report.get("braille_impact")
+                if isinstance(impact, dict):
+                    changed = impact.get("pages_changed")
+                    old_range = impact.get("old_page_range")
+                    new_range = impact.get("new_page_range")
+                    page_impact_summary = f"Pages changed: {changed}; baseline range {old_range}; candidate range {new_range}."
+            except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+                pass
+        baseline = await ledger.get_baseline(checkpoint.baseline_id) if ledger is not None else None
+        if ledger is not None and baseline is not None and incident_workflow is not None:
+            try:
+                observation = await ledger.get_latest_site_observation(
+                    site_id=baseline.baseline.site_id,
+                    bridge_id=incident_workflow.bridge_id,
+                    queue_name=baseline.baseline.queue_name,
+                )
+                if observation is not None:
+                    observed_at = observation.observed_at
+                    if observed_at.tzinfo is None:
+                        observed_at = observed_at.replace(tzinfo=UTC)
+                    age = max(0.0, (datetime.now(UTC) - observed_at).total_seconds())
+                    observation_freshness = f"Read-only observation age: {age:.1f} seconds."
+            except (AttributeError, RuntimeError, ValueError):
+                pass
+        if state.state is IncidentState.AWAITING_REPLACEMENT:
+            next_safe_action = "Human operator uses the independent production surface, then links a fresh observation."
+        elif state.state is IncidentState.REPLACEMENT_OBSERVED:
+            next_safe_action = "Replacement is observed only; final verification remains separate."
+        elif state.blocking_reason is not None:
+            next_safe_action = "Resolve the visible review block through human judgment."
+        else:
+            next_safe_action = "Review the authoritative incident evidence before any human action."
+        return {
+            "source_change_summary": source_change_summary,
+            "page_impact_summary": page_impact_summary,
+            "observation_freshness": observation_freshness,
+            "next_safe_action": next_safe_action,
+        }
+
     @app.get("/api/v1/incidents")
     async def list_incidents() -> JSONResponse:
         if ledger is None or incident_workflow is None:
@@ -946,6 +1039,7 @@ def create_app(
         rows: list[dict[str, object]] = []
         for checkpoint in await ledger.list_incident_checkpoints():
             state = await _review_state_for_checkpoint(checkpoint)
+            overview = await _incident_overview(checkpoint, state)
             rows.append(
                 {
                     "incident_id": checkpoint.incident_id,
@@ -956,9 +1050,55 @@ def create_app(
                     if checkpoint.blocking_reason is not None
                     else None,
                     "updated_at": checkpoint.updated_at.isoformat(),
+                    **overview,
                 }
             )
         return JSONResponse(status_code=200, content={"incidents": rows})
+
+    @app.get("/api/v1/incidents/{incident_id}/approved-candidate")
+    async def download_approved_candidate(incident_id: str) -> Response:
+        """Return only the current proof-approved immutable candidate BRF.
+
+        The route has no artifact URI or filename parameter.  Authentication is
+        enforced by the private API middleware before this handler runs.
+        """
+
+        if replacement_observation_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "BLOCKED",
+                    "detail": "replacement observation is not configured",
+                },
+            )
+        try:
+            candidate = await replacement_observation_workflow.download_current_candidate(
+                incident_id=incident_id
+            )
+        except ReplacementObservationConflict:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": "STALE_STATE_VERSION"},
+            )
+        except (ReplacementObservationRejected, ValueError) as exc:
+            reason = (
+                exc.reason.value
+                if isinstance(exc, ReplacementObservationRejected)
+                else BlockingReason.REPLACEMENT_NOT_ELIGIBLE.value
+            )
+            return JSONResponse(
+                status_code=403,
+                content={"status": "BLOCKED", "blocking_reason": reason},
+            )
+        return Response(
+            content=candidate.content,
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": f'attachment; filename="{candidate.filename}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.get("/api/v1/incidents/{incident_id}")
     async def get_incident(incident_id: str) -> JSONResponse:
@@ -1179,6 +1319,65 @@ def create_app(
             },
         )
 
+    @app.post("/api/v1/incidents/{incident_id}/replacement-observation-links")
+    async def record_replacement_observation_link(
+        incident_id: str,
+        payload: ReplacementObservationLinkRequest,
+        request: Request,
+    ) -> JSONResponse:
+        """Append a human link to a fresh bridge observation; never operate a job."""
+
+        if replacement_observation_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "BLOCKED",
+                    "detail": "replacement observation is not configured",
+                },
+            )
+        principal = getattr(request.state, "authenticated_principal", None)
+        if not isinstance(principal, str) or not principal:
+            return JSONResponse(status_code=401, content={"detail": "verified principal required"})
+        try:
+            result = await replacement_observation_workflow.record_observation_link(
+                incident_id=incident_id,
+                candidate_sha256=payload.candidate_sha256,
+                candidate_manifest_sha256=payload.candidate_manifest_sha256,
+                proof_record_id=payload.proof_record_id,
+                scheduler_job_id=payload.scheduler_job_id,
+                site_observation_id=payload.site_observation_id,
+                selected_role=payload.selected_role,
+                expected_state_version=payload.expected_state_version,
+                note=payload.note,
+                idempotency_key=payload.idempotency_key,
+                actor_principal=principal,
+            )
+        except ReplacementObservationConflict:
+            return JSONResponse(
+                status_code=409,
+                content={"status": "CONFLICT", "blocking_reason": "STALE_STATE_VERSION"},
+            )
+        except (ReplacementObservationRejected, ValueError) as exc:
+            reason = (
+                exc.reason.value
+                if isinstance(exc, ReplacementObservationRejected)
+                else BlockingReason.REPLACEMENT_NOT_ELIGIBLE.value
+            )
+            return JSONResponse(
+                status_code=422,
+                content={"status": "NEEDS_REVIEW", "blocking_reason": reason},
+            )
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "status": result.state.state.value,
+                "duplicate": result.duplicate,
+                "review_state": result.state.model_dump(mode="json"),
+                "replacement_observation_link": result.link.model_dump(mode="json"),
+                "next_human_stage": "OBSERVED_REPLACEMENT_REQUIRES_SEPARATE_VERIFICATION",
+            },
+        )
+
     return app
 
 
@@ -1196,6 +1395,7 @@ app = create_app(
     incident_workflow=_runtime.incident_workflow,
     professional_review_workflow=_runtime.professional_review_workflow,
     containment_proof_workflow=_runtime.containment_proof_workflow,
+    replacement_observation_workflow=_runtime.replacement_observation_workflow,
     outbox_workflow=_runtime.outbox_workflow,
     identity_verifier=_runtime.identity_verifier,
 )
