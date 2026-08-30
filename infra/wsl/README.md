@@ -17,7 +17,8 @@ Unicode six-dot translation smoke test:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo bash infra/wsl/setup_liblouis_3_38.sh
 source infra/wsl/liblouis_env.sh
 ~~~
@@ -32,7 +33,8 @@ repository root inside WSL, validate the policy before installing it:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 bash infra/wsl/validate_cups_policy.sh
 bash infra/wsl/setup_cups_gate0.sh --inspect
 ~~~
@@ -52,7 +54,8 @@ adding duplicate policies.
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo bash infra/wsl/setup_cups_gate0.sh
 ~~~
 
@@ -102,7 +105,8 @@ them as the ordinary WSL account, Relay observer, bridge, or cloud application.
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo -u relay-operator -- id -un
 sudo -u relay-operator -- lp -d Braille-Embosser-Sim -o raw -t 'BER|INCIDENT|demo|BASELINE' candidate.brf
 sudo -u relay-operator -- lpstat -W not-completed -o Braille-Embosser-Sim
@@ -133,7 +137,8 @@ only prints operation status:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo -u relay-observer -- python3 infra/wsl/verify_cups_gate0.py \
   --queue Braille-Embosser-Sim \
   --job-id HELD_JOB_ID \
@@ -152,7 +157,8 @@ raw BRF job for `HELD_JOB_ID`, a completed or cancelled job for
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo -u relay-operator -- lp -d Braille-Embosser-Sim -o raw -H hold -t 'BER|GATE0|held-auth-probe' candidate.brf
 sudo -u relay-operator -- python3 infra/wsl/create_open_cups_job.py --queue Braille-Embosser-Sim
 ~~~
@@ -168,7 +174,8 @@ test actions in one WSL session:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 bash infra/wsl/run_gate0_local_floor.sh
 ~~~
 
@@ -179,7 +186,8 @@ IDs:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 bash infra/wsl/run_gate0_local_floor.sh \
   --resume-captures COMPLETED_JOB_ID TERMINATED_JOB_ID \
   --resume-auth-probes HELD_JOB_ID OPEN_JOB_ID
@@ -203,7 +211,8 @@ manifests:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo bash infra/wsl/verify_observer_filesystem_access.sh --job-id JOB_ID
 ~~~
 
@@ -220,7 +229,8 @@ fixed simulator root:
 **WSL Ubuntu-24.04:**
 
 ~~~text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 sudo -u relay-endpoint-auditor -- python3 infra/wsl/verify_capture_evidence.py --job-id JOB_ID --candidate candidate.brf --expected-state COMPLETED
 
 sudo -u relay-endpoint-auditor -- python3 infra/wsl/audit_endpoint_receipt.py \

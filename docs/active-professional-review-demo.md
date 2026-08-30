@@ -9,7 +9,8 @@ attestation remain separate facts.
 **WSL Ubuntu-24.04:**
 
 ```text
-cd /mnt/c/dev/Astra
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
 bash infra/wsl/run_active_professional_review_demo.sh --help
 ```
 
@@ -43,7 +44,8 @@ a restore that did not occur.
 **Windows PowerShell 5.1 or 7:**
 
 ```powershell
-Set-Location -LiteralPath 'C:\dev\Astra'
+$RepoRoot = (git rev-parse --show-toplevel).Trim()
+Set-Location -LiteralPath $RepoRoot
 ```
 
 Prefer PowerShell 7 when it is installed, but the already-open Windows

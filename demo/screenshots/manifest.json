@@ -5,6 +5,26 @@
   "fixture_data_as_of": "2026-08-30T18:00:00+00:00",
   "screenshots": [
     {
+      "filename": "watch-floor-quiet-desktop.png",
+      "route": "/watch/quiet",
+      "viewport": {
+        "width": 1440,
+        "height": 1100,
+        "device_scale_factor": 1
+      },
+      "sha256": "e40928ac79039a7d3e10e0f9c4e5655da9b26c6baf65af8a9e3f5042c998f107"
+    },
+    {
+      "filename": "watch-floor-mismatch-desktop.png",
+      "route": "/watch",
+      "viewport": {
+        "width": 1440,
+        "height": 1100,
+        "device_scale_factor": 1
+      },
+      "sha256": "10fb8978630fc213e03f5b6d6b5b6a8653ad460417a0d79fefec453cd4ca093f"
+    },
+    {
       "filename": "incident-overview-desktop.png",
       "route": "/",
       "viewport": {
@@ -12,7 +32,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "95f3c582bdfef610a8046a39de7788f3923a1b128e1cf5c29844e331c858cb57"
+      "sha256": "c44a2520a0ba2e9411c33ac23de8b6993755eb9de0f82debddf97002a1f54a06"
     },
     {
       "filename": "incident-detail-desktop.png",
@@ -22,7 +42,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "72442952e77500e58480ef81bc35ca25501c66fe1e7c683175c3aed2cd699e0a"
+      "sha256": "1d18a3fe8cef4953de5ab5d435d65da09672b5040cf4b78a0849dd2c4cbdf8b2"
     },
     {
       "filename": "incident-detail-mobile.png",
@@ -32,7 +52,7 @@
         "height": 844,
         "device_scale_factor": 1
       },
-      "sha256": "e5470000844ef81547752f809c4f299a75afd1fc5cff0bc94a56a819d037623c"
+      "sha256": "e30fa13935bc0956bad2e566c2612ee1f748a1cd49718f0ca8be635bea1d06a5"
     },
     {
       "filename": "evidence-timeline-desktop.png",
@@ -42,12 +62,13 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "bb342a15b20ed4971ecdcb7588274af2a2509225c94d1eaf4c7adce7b58fb016"
+      "sha256": "f70c7e308bf9bd7c644d78f5a68563aefa898e93dee4b9ebf252dcf9ba3b1179"
     }
   ],
   "sanitization_assertions": [
     "Rendered only by the dedicated offline fixture; it has synthetic IDs and no Cloud, Drive, CUPS, or device client.",
     "The fixture visibly labels every view SANITIZED DEMO FIXTURE and exposes GET routes only.",
-    "Browser verification found no external requests, email address, project identifier, bucket URI, Drive identifier, token marker, or local credential path."
+    "Browser verification found no external requests, email address, project identifier, bucket URI, Drive identifier, token marker, or local credential path.",
+    "Desktop and mobile captures had no horizontal viewport overflow."
   ]
 }

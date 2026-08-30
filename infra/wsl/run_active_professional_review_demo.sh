@@ -7,8 +7,13 @@
 # who owns each separate authority.
 set -euo pipefail
 
-WSL_REPO_ROOT="/mnt/c/dev/Astra"
-WINDOWS_REPO_ROOT='C:\dev\Astra'
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+WSL_REPO_ROOT="$ROOT"
+if command -v wslpath >/dev/null 2>&1; then
+  WINDOWS_REPO_ROOT="$(wslpath -w "$ROOT")"
+else
+  WINDOWS_REPO_ROOT='<Windows path to this checkout>'
+fi
 QUEUE="Braille-Embosser-Sim"
 SITE_ID="demo-site"
 BRIDGE_ID="single-pc-bridge"
@@ -106,9 +111,7 @@ require_email "$TELEMETRY_IDENTITY" "telemetry identity"
 require_email "$DEMONSTRATOR_IDENTITY" "demonstrator identity"
 require_email "$HUMAN_PRINCIPAL" "human principal"
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-[[ "$ROOT" == "$WSL_REPO_ROOT" ]] || fail "run this harness from $WSL_REPO_ROOT in WSL Ubuntu-24.04"
-V1_BRF="$WSL_REPO_ROOT/demo/expected/v1.brf"
+V1_BRF="$ROOT/demo/expected/v1.brf"
 [[ -f "$V1_BRF" ]] || fail "committed V1 BRF fixture is missing"
 V1_SHA256="$(sha256sum "$V1_BRF" | awk '{print $1}')"
 TITLE="BER|WO-DEMO-001|${V1_SHA256:0:12}|BASELINE"
@@ -353,7 +356,8 @@ scheduler run. Pause the Scheduler again after the bounded run.
 Windows PowerShell (5.1 or 7):
   # Prefer PowerShell 7 when it is installed; the current Windows PowerShell
   # terminal is also supported.
-  Set-Location -LiteralPath 'C:\dev\Astra'
+  $RepoRoot = (git rev-parse --show-toplevel).Trim()
+  Set-Location -LiteralPath $RepoRoot
   & .\infra\gcp\reconcile_live_drive.ps1 -Operation RECONCILE -ExecuteDriveRead
   & .\infra\gcp\run_single_scheduler_closure.ps1 -ExecuteSingleRun
 
@@ -564,7 +568,8 @@ Windows PowerShell (5.1 or 7):
   # Prefer PowerShell 7 when it is installed; the current Windows PowerShell
   # terminal is also supported.
   $ErrorActionPreference = 'Stop'
-  Set-Location -LiteralPath 'C:\dev\Astra'
+  $RepoRoot = (git rev-parse --show-toplevel).Trim()
+  Set-Location -LiteralPath $RepoRoot
   $project = (gcloud config get-value project).Trim()
   $scheduler = gcloud scheduler jobs describe relay-outbox-drain --location europe-west3 --project $project --format=json | ConvertFrom-Json
   if ($scheduler.state -ne 'PAUSED') { throw 'Outbox Scheduler is not paused.' }

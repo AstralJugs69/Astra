@@ -15,7 +15,7 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, cast
@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 import google.auth
 import httpx
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from google.auth import exceptions as google_auth_exceptions
 from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
@@ -36,9 +36,19 @@ from starlette.responses import Response
 
 from braille_errata_relay.domain.models import (
     AttestationType,
+    IncidentWorkflowStage,
     ProfessionalDecision,
     ProofDecision,
     TruthBasis,
+)
+from braille_errata_relay.presentation.assets import WATCH_JAVASCRIPT
+from braille_errata_relay.presentation.watch import (
+    WatchEventTracker,
+    heartbeat_event,
+    sanitize_watch_snapshot,
+    sse_frame,
+    upstream_unavailable_event,
+    watch_summary,
 )
 
 
@@ -450,7 +460,7 @@ _TEMPLATES["index.html"] = """<!doctype html>
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:3;background:#fff;padding:.6rem 1rem;border:3px solid var(--blue)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #2ca5b5}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.site-header .shell{display:flex;gap:1rem;align-items:center;justify-content:space-between;padding:1rem 0}.brand{font-weight:800;letter-spacing:.015em}.eyebrow{margin:0;color:#bce7ee;font-size:.78rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.hero{padding:2.5rem 0 1.25rem}.hero h1{margin:.25rem 0 .6rem;font-size:clamp(2rem,5vw,3.5rem);line-height:1.08}.lede{max-width:75ch;margin:0;color:var(--muted);font-size:1.1rem}.notice,.empty{background:#fff9df;border-left:5px solid var(--amber);padding:1rem 1.1rem;margin:1rem 0}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1rem 0 2rem}.summary-card,.incident-card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.summary-card{padding:1rem}.summary-card strong{display:block;font-size:1.7rem}.summary-card span{color:var(--muted);font-size:.9rem}.section-heading{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin:1rem 0}.section-heading h2{margin:0;font-size:1.35rem}.section-heading p{margin:0;color:var(--muted)}.incident-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;padding-bottom:3rem}.incident-card{display:block;color:inherit;text-decoration:none;padding:1.1rem;transition:transform .15s ease,box-shadow .15s ease}.incident-card:hover{transform:translateY(-2px)}.incident-card:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}.card-top{display:flex;justify-content:space-between;gap:.75rem;align-items:flex-start}.incident-card h3{margin:0;font-size:1.05rem;overflow-wrap:anywhere}.state{font-weight:800;margin:.75rem 0 .3rem}.meta{color:var(--muted);font-size:.9rem;margin:.25rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.real{color:var(--teal);background:#e8faf8}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.simulated{color:var(--red);background:#fff0f2}.blocked{color:var(--red);font-weight:800}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}@media(max-width:640px){.summary-grid{grid-template-columns:1fr}.site-header .shell{align-items:flex-start;flex-direction:column}.hero{padding-top:1.5rem}}
 </style></head>
 <body><a class="skip" href="#incidents">Skip to incidents</a>
-<header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div></div><div class="badges">{% if fixture_mode %}<span class="badge simulated">SANITIZED DEMO FIXTURE</span>{% endif %}<span class="badge real">READ-ONLY REVIEW</span><span class="badge human">HUMAN AUTHORITY</span></div></div></header>
+<header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div></div><div class="badges"><a class="badge real" href="/watch">OPEN LIVE WATCH FLOOR</a>{% if fixture_mode %}<span class="badge simulated">SANITIZED DEMO FIXTURE</span>{% endif %}<span class="badge real">READ-ONLY REVIEW</span><span class="badge human">HUMAN AUTHORITY</span></div></div></header>
 <main class="shell"><section class="hero"><p class="eyebrow">Professional review dashboard</p><h1>Evidence before action.</h1><p class="lede">Relay detects and explains a correction, preserves immutable Braille lineage, and records professional evidence. It does not control CUPS, an embosser, or a production device.</p></section>
 {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
 <section class="summary-grid" aria-label="Incident summary"><article class="summary-card"><strong>{{ summary.total|default(incidents|length) }}</strong><span>Report-bearing incidents</span></article><article class="summary-card"><strong>{{ summary.blocked|default(0) }}</strong><span>Visible blocked/review outcomes</span></article><article class="summary-card"><strong>Human</strong><span>Disposition, proof, and resubmission remain external</span></article></section>
@@ -463,10 +473,13 @@ _TEMPLATES["incident.html"] = """<!doctype html>
 <title>Braille Errata Relay | Incident review</title>
 <style>
 :root{color-scheme:light;--ink:#15233b;--muted:#52627a;--paper:#f5f7fb;--card:#fff;--line:#d7dfeb;--navy:#173f75;--blue:#1769aa;--teal:#027b7b;--amber:#8a5b00;--red:#a02638;--violet:#604da3;--shadow:0 12px 28px rgba(20,42,74,.09)}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:3;background:#fff;padding:.6rem 1rem;border:3px solid var(--blue)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #2ca5b5}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.site-header .shell{padding:1rem 0}.brand{font-weight:800}.eyebrow{margin:0;color:#bce7ee;font-size:.78rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}main{padding:1.5rem 0 3rem}.back{color:var(--navy);font-weight:700}.status-card,.card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.status-card{padding:1.25rem;margin:1rem 0 1.25rem;border-left:7px solid var(--navy)}.status-card h1{margin:.2rem 0 .5rem;font-size:clamp(1.7rem,4vw,2.8rem);line-height:1.1}.grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.8fr);gap:1rem}.card{padding:1.15rem;margin-bottom:1rem}.card h2{margin:0 0 .65rem;font-size:1.2rem}.card h3{margin:1rem 0 .45rem;font-size:1rem}.card p{margin:.45rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.real{color:var(--teal);background:#e8faf8}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.simulated{color:var(--red);background:#fff0f2}.block{color:var(--red);font-weight:800}.notice{background:#fff9df;border-left:5px solid var(--amber);padding:1rem 1.1rem;margin:1rem 0}.role{border:1px solid #e5c66b;background:#fffbeb;padding:.75rem;border-radius:8px;font-size:.92rem}.action{background:#173f75;color:#fff;border:0;border-radius:7px;padding:.65rem .9rem;font:inherit;font-weight:800;cursor:pointer}.action:hover{background:#0f315f}.action[disabled]{background:#9ba8b8;cursor:not-allowed}.download{display:inline-block;background:#0e6576;color:#fff;padding:.65rem .9rem;border-radius:7px;font-weight:800;text-decoration:none}.download:hover{background:#064d5b}dl{display:grid;grid-template-columns:minmax(130px,.42fr) 1fr;gap:.45rem .8rem;margin:0}dt{font-weight:800}dd{margin:0;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f9;border:1px solid var(--line);padding:.75rem;border-radius:7px;font-size:.84rem}details{margin-top:.75rem}summary{cursor:pointer;font-weight:800}ol{padding-left:1.35rem}li{margin:.55rem 0}.timeline-kind{font-weight:800;overflow-wrap:anywhere;word-break:break-word}.boundary{background:#fff0f2;border:1px solid #efb7c1;border-radius:10px;padding:1rem}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}label{display:block;font-weight:700;margin:.75rem 0}select,textarea,input[type=number]{display:block;width:100%;margin-top:.25rem;border:1px solid #8797ad;border-radius:6px;padding:.55rem;font:inherit;background:#fff}textarea{min-height:5rem}input[type=hidden]{display:none}a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}@media(max-width:800px){.grid{grid-template-columns:1fr}main{padding-top:1rem}}@media(max-width:500px){.shell{width:min(100% - 1rem,1180px)}.status-card,.card{padding:1rem}dl{grid-template-columns:1fr}dt{margin-top:.35rem}}
-</style><style>@media(max-width:800px){.grid{grid-template-columns:minmax(0,1fr)}.grid>*,.card{min-width:0}.card p,.card h2,.card h3,.badge{overflow-wrap:anywhere}}</style></head>
+</style><style>.decision-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin:1rem 0}.decision-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:1rem;box-shadow:var(--shadow)}.decision-card h2{margin:0 0 .3rem;font-size:1rem}.decision-card p{margin:.35rem 0;overflow-wrap:anywhere}.compare{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.compare div{border-left:4px solid var(--navy);background:#f1f5fb;padding:.65rem}.compare div:last-child{border-left-color:var(--teal)}.progress{display:flex;flex-wrap:wrap;gap:.45rem;margin:.85rem 0}.progress span{border:1px solid var(--line);border-radius:999px;padding:.24rem .52rem;font-size:.75rem;font-weight:800}.progress .current{border-color:var(--navy);background:#eaf2ff;color:var(--navy)}.boundary-strip{background:#edf7f8;border:1px solid #a7d8da;border-radius:10px;padding:.8rem;margin:1rem 0;font-size:.9rem}.boundary-strip strong{color:var(--teal)}@media(max-width:800px){.decision-strip{grid-template-columns:1fr}}@media(max-width:520px){.compare{grid-template-columns:1fr}}</style><style>@media(max-width:800px){.grid{grid-template-columns:minmax(0,1fr)}.grid>*,.card{min-width:0}.card p,.card h2,.card h3,.badge{overflow-wrap:anywhere}}</style></head>
 <body><a class="skip" href="#incident-content">Skip to incident</a><header class="site-header"><div class="shell"><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div>{% if fixture_mode %}<div class="badges"><span class="badge simulated">SANITIZED DEMO FIXTURE</span></div>{% endif %}</div></header>
 <main id="incident-content" class="shell"><p><a class="back" href="/">&larr; All incidents</a></p>{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
 <section class="status-card" aria-labelledby="incident-title"><div class="badges"><span class="badge deterministic">[DETERMINISTIC]</span>{% if review_state.blocking_reason %}<span class="badge human">REVIEW BLOCK</span>{% endif %}</div><h1 id="incident-title">Professional incident review</h1><p><strong>Current state:</strong> {{ review_state.state }}{% if review_state.blocking_reason %} <span class="block">- {{ review_state.blocking_reason }}</span>{% endif %}</p><p><strong>Next safe action:</strong> {{ next_safe_action|default("Review the authoritative evidence below before any independent production action.") }}</p><p>Relay does not control CUPS or the embosser. Candidate approval does not submit a job.</p></section>
+<section class="card" aria-labelledby="what-changed"><div class="badges"><span class="badge deterministic">[AUTHORITATIVE STORED SOURCE]</span></div><h2 id="what-changed">What changed?</h2><div class="compare"><div><strong>Old source</strong><p>{{ source_comparison.old }}</p></div><div><strong>New source</strong><p>{{ source_comparison.new }}</p></div></div><div class="progress" aria-label="Durable workflow progress">{% for stage in workflow_stages %}<span{% if stage == workflow_stage %} class="current"{% endif %}>{{ stage }}</span>{% endfor %}</div><p><strong>Persisted activity:</strong> {{ semantic_activity }}</p></section>
+<section class="decision-strip" aria-label="Review summary"><article class="decision-card"><h2>Materiality</h2><p>{{ semantic_materiality }}</p></article><article class="decision-card"><h2>Uncertainty</h2><p>{{ uncertainty_summary }}</p></article><article class="decision-card"><h2>Impacted Braille pages</h2><p>{{ impact_summary }}</p></article></section>
+<section class="boundary-strip"><strong>Visible boundary:</strong> deterministic source/diff/BRF/page-impact computation; Gemini semantic assessment; real read-only CUPS observation; human records; and the simulated physical endpoint are distinct facts. Nothing here operates a production device.</section>
 <div class="grid"><div>
 <section class="card" aria-labelledby="source-correction"><div class="badges"><span class="badge deterministic">[DETERMINISTIC]</span></div><h2 id="source-correction">1. Source correction</h2><p>Immutable source-diff evidence is retained for professional review.</p><details><summary>View source correction evidence</summary><pre>{{ source_correction }}</pre></details></section>
 <section class="card" aria-labelledby="semantic-summary"><div class="badges"><span class="badge gemini">[GEMINI ASSESSMENT]</span></div><h2 id="semantic-summary">2. Semantic assessment and uncertainty</h2><p>{{ semantic_summary }}</p><h3>Uncertainties requiring human judgment</h3><ul>{% for uncertainty in uncertainties %}<li>{{ uncertainty }}</li>{% else %}<li>No uncertainty was recorded in this assessment.</li>{% endfor %}</ul></section>
@@ -482,6 +495,23 @@ _TEMPLATES["incident.html"] = """<!doctype html>
 <section class="card" aria-labelledby="timeline"><div class="badges"><span class="badge human">ATTRIBUTABLE TIMELINE</span></div><h2 id="timeline">11. Evidence timeline</h2><ol>{% for event in timeline %}<li><span class="timeline-kind">[{{ event.truth_basis }}] {{ event.kind }}</span><br><span class="meta">{{ event.recorded_at }}</span>{% if event.device_stop_confirmed is defined %}<br><span class="meta">Device stop: {{ event.device_stop_confirmed }}; physical output isolated: {{ event.physical_output_isolated }}</span>{% endif %}</li>{% else %}<li>No attributable events are available.</li>{% endfor %}</ol></section>
 <section class="boundary"><div class="badges"><span class="badge simulated">[SIMULATED ENDPOINT]</span><span class="badge simulated">[SIMULATED PHYSICAL ENDPOINT]</span></div><h2>12. System boundary</h2><p>Only the physical endpoint is simulated. CUPS observation is read-only, and all disposition, proof, submission, containment, and final verification authority stays with human professionals.</p><p>Historical blocked incidents are valid fail-closed outcomes.</p></section>
 </aside></div></main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. Relay does not run the production queue or device.</div></footer></body></html>"""
+
+
+_TEMPLATES["watch.html"] = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Braille Errata Relay | Live watch floor</title>
+<style>
+:root{color-scheme:light;--ink:#15233b;--muted:#52627a;--paper:#f4f7fb;--card:#fff;--line:#cfd9e7;--navy:#173f75;--teal:#087878;--amber:#745000;--red:#991d35;--red-bg:#fff0f3;--shadow:0 12px 28px rgba(20,42,74,.09)}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1160px,calc(100% - 2rem));margin:auto}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:5;background:#fff;padding:.6rem 1rem;border:3px solid var(--navy)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #28aab9}.site-header .shell{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1rem 0}.eyebrow{margin:0;color:#bdebf1;font-size:.76rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.brand{font-weight:900;letter-spacing:.015em}.nav-link{color:#fff;font-weight:800}.hero{padding:2.4rem 0 1.25rem}.hero h1{margin:.25rem 0 .55rem;font-size:clamp(2rem,5vw,3.6rem);line-height:1.06}.lede{max-width:72ch;margin:0;color:var(--muted);font-size:1.08rem}.status-grid,.pipeline,.watch-grid{display:grid;gap:1rem}.status-grid{grid-template-columns:repeat(4,1fr);margin:1.1rem 0}.status-card,.panel,.pipeline-step{background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow)}.status-card{padding:1rem}.status-card strong{display:block;font-size:1.05rem}.status-card span{color:var(--muted);font-size:.88rem}.connection{font-weight:900}.connection[data-state=connected]{color:var(--teal)}.connection[data-state=disconnected]{color:var(--red)}.pipeline{grid-template-columns:repeat(6,minmax(0,1fr));margin:1rem 0 1.4rem}.pipeline-step{padding:.8rem;font-size:.87rem}.pipeline-step strong{display:block;color:var(--navy);font-size:.74rem;letter-spacing:.04em}.watch-grid{grid-template-columns:minmax(0,1fr) minmax(280px,.72fr);padding-bottom:2rem}.panel{padding:1.1rem}.panel h2{margin:0 0 .6rem;font-size:1.2rem}.notice,.empty{background:#fff9df;border-left:5px solid #b98400;padding:1rem;margin:1rem 0}.mismatch{background:var(--red-bg);border:3px solid var(--red);border-radius:13px;padding:1rem 1.1rem;margin:1rem 0}.mismatch h2{margin:0;color:var(--red);font-size:clamp(1.2rem,3.5vw,1.8rem);letter-spacing:.02em}.mismatch p{margin:.35rem 0}.controls{display:flex;flex-wrap:wrap;gap:.55rem;margin-top:.8rem}.controls button{appearance:none;background:var(--navy);border:0;border-radius:7px;color:#fff;cursor:pointer;font:inherit;font-weight:800;padding:.58rem .75rem}.controls button.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.controls button:focus-visible,a:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}.watch-list{list-style:none;padding:0;margin:0}.watch-incident{border-top:1px solid var(--line);padding:.8rem 0}.watch-incident:first-child{border-top:0}.watch-incident a{display:block;color:var(--navy);font-weight:900;overflow-wrap:anywhere}.watch-incident span{color:var(--muted);display:block;font-size:.9rem}.boundary{background:#edf7f8;border:1px solid #a7d8da;border-radius:10px;padding:1rem}.boundary strong{color:var(--teal)}.footer{border-top:1px solid var(--line);padding:1.4rem 0 2.5rem;color:var(--muted);font-size:.9rem}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}@media(max-width:860px){.status-grid{grid-template-columns:repeat(2,1fr)}.pipeline{grid-template-columns:repeat(3,1fr)}.watch-grid{grid-template-columns:1fr}}@media(max-width:520px){.shell{width:min(100% - 1rem,1160px)}.site-header .shell{align-items:flex-start;flex-direction:column}.status-grid{grid-template-columns:1fr}.pipeline{grid-template-columns:1fr}.hero{padding-top:1.5rem}}
+</style><script src="/assets/watch.js" defer></script></head>
+<body><a class="skip" href="#watch-floor">Skip to watch floor</a><header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay {% if fixture_mode %}— SANITIZED DEMO FIXTURE{% endif %}</div></div><a class="nav-link" href="/">Review dashboard</a></div></header>
+<main id="watch-floor" class="shell"><section class="hero"><p class="eyebrow">Live production-floor monitor</p><h1>Watching authoritative source</h1><p class="lede">This local monitor reads the existing private review API through the loopback presentation server. It does not submit, hold, cancel, release, restart, or operate CUPS or a production device.</p></section>
+{% if error %}<p class="notice" role="status">{{ error }}</p>{% endif %}
+<section id="mismatch-alert" class="mismatch" {% if not fixture_alert %}hidden{% endif %} aria-labelledby="mismatch-title"><h2 id="mismatch-title">SOURCE / PRODUCTION MISMATCH — HUMAN REVIEW REQUIRED</h2><p id="mismatch-alert-text">A newly observed durable transition requires human review.</p><div class="controls"><button id="enable-audible-alerts" type="button">Enable audible alerts</button><button id="mute-audible-alerts" class="secondary" type="button">Mute</button><button id="acknowledge-alert-locally" class="secondary" type="button">Acknowledge alert locally</button></div><p><small>Local acknowledgement does not record professional disposition, containment, proof, cancellation, resubmission, or any production action.</small></p></section><p id="watch-alert-live" class="skip" role="alert" aria-live="assertive"></p>
+<section class="status-grid" aria-label="Watch monitor status"><article class="status-card"><strong id="watch-connection" class="connection" data-state="connected">{% if fixture_mode %}Connected{% else %}Connecting{% endif %}</strong><span>Loopback event connection</span></article><article class="status-card"><strong id="watch-last-check">{{ watch.last_successful_check }}</strong><span>Last successful check</span></article><article class="status-card"><strong>{{ watch.source_label }}</strong><span>Sanitized source display label</span></article><article class="status-card"><strong id="watch-stage">{{ watch.durable_stage }}</strong><span>Current durable stage</span></article></section>
+<section class="panel"><h2>Current safe next action</h2><p id="watch-next-action">{{ watch.next_safe_action }}</p></section>
+<section class="pipeline" aria-label="Durable incident pipeline"><div class="pipeline-step"><strong>1</strong>Drive revision</div><div class="pipeline-step"><strong>2</strong>Deterministic diff</div><div class="pipeline-step"><strong>3</strong>Liblouis candidate</div><div class="pipeline-step"><strong>4</strong>Page impact</div><div class="pipeline-step"><strong>5</strong>Gemini semantic assessment</div><div class="pipeline-step"><strong>6</strong>Professional report</div></section>
+<section class="watch-grid"><section class="panel" aria-labelledby="live-incidents"><h2 id="live-incidents">Durable watch events</h2><ul id="watch-incidents" class="watch-list">{% for incident in snapshot.incidents %}<li class="watch-incident"><a href="/incidents/{{ incident.incident_id }}">Incident {{ incident.incident_id[:12] }}…</a><span>{{ incident.workflow_stage }} — {{ incident.next_safe_action }}</span></li>{% endfor %}</ul><p id="watch-empty" class="empty" {% if snapshot.incidents %}hidden{% endif %}>No incident is currently awaiting review. A quiet queue is not evidence of a completed production action.</p></section><aside class="panel"><h2>Truthful activity</h2><p>Only persisted durable stages are shown. An impact-ready incident says “Next step: semantic assessment”; the monitor never claims Gemini is thinking without a persisted fact.</p><div class="boundary"><strong>Boundary:</strong> deterministic computation, Gemini semantic assessment, real read-only CUPS evidence, human records, and the simulated physical endpoint remain visibly distinct.</div></aside></section>
+</main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. This is a local read-only monitor, not a production control surface.</div></footer></body></html>"""
 
 
 def _templates() -> Environment:
@@ -516,6 +546,64 @@ def _next_safe_action(review_state: Mapping[str, object]) -> str:
     return "Review the authoritative evidence and select the next human-owned action."
 
 
+def _source_comparison(source_correction: Mapping[str, object]) -> dict[str, str]:
+    """Summarize stored source-diff blocks without deriving new source facts."""
+
+    def side(name: str) -> str:
+        raw_blocks = source_correction.get(name)
+        if not isinstance(raw_blocks, list) or not raw_blocks:
+            return "No stored block is available for this side of the correction."
+        block = raw_blocks[0]
+        if not isinstance(block, Mapping):
+            return "Stored source evidence is malformed."
+        raw_kind = block.get("kind")
+        raw_text = block.get("text")
+        kind = raw_kind if isinstance(raw_kind, str) else "block"
+        text = raw_text if isinstance(raw_text, str) else ""
+        compact = " ".join(text.split())
+        if len(compact) > 260:
+            compact = f"{compact[:257]}..."
+        return f"{kind}: {compact}" if compact else f"{kind}: no text stored"
+
+    return {"old": side("old_blocks"), "new": side("new_blocks")}
+
+
+def _impact_summary(impact: Mapping[str, object]) -> str:
+    """Summarize persisted deterministic impact fields for the top-level cards."""
+
+    old_range = _mapping(impact.get("old_page_range"))
+    new_range = _mapping(impact.get("new_page_range"))
+
+    def display(page_range: Mapping[str, object]) -> str:
+        start = page_range.get("start")
+        end = page_range.get("end")
+        if isinstance(start, int) and isinstance(end, int):
+            return f"{start}" if start == end else f"{start}–{end}"
+        return "none recorded"
+
+    changed = impact.get("pages_changed")
+    changed_label = "Changed" if changed is True else "No page-byte change recorded"
+    return f"{changed_label}; baseline pages {display(old_range)}, candidate pages {display(new_range)}."
+
+
+def _semantic_activity(workflow_stage: object) -> str:
+    """Describe only persisted state; never infer active model work."""
+
+    if workflow_stage == "SEMANTIC_READY":
+        return "Gemini semantic assessment complete."
+    if workflow_stage == "IMPACT_READY":
+        return "Next step: semantic assessment."
+    if workflow_stage == "CANDIDATE_READY":
+        return "Next step: deterministic page-impact calculation."
+    if workflow_stage == "DIFF_READY":
+        return "Next step: deterministic candidate generation."
+    if workflow_stage == "REPORT_READY":
+        return "Professional report is ready for human review."
+    if workflow_stage == "NEEDS_REVIEW":
+        return "Human review is required before the workflow can proceed."
+    return "Watching for the next persisted workflow stage."
+
+
 def _form_error(status_code: int, message: str) -> HTMLResponse:
     return HTMLResponse(f'<!doctype html><p role="alert">{message}</p>', status_code=status_code)
 
@@ -524,8 +612,17 @@ def create_presentation_app(
     settings: PresentationSettings,
     *,
     api_client: PrivateReviewApi | None = None,
+    watch_poll_seconds: float = 2.0,
+    watch_heartbeat_seconds: float = 12.0,
+    watch_monotonic_clock: Callable[[], float] = time.monotonic,
+    watch_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> FastAPI:
     """Create the local review server; the launcher always binds 127.0.0.1."""
+
+    if watch_poll_seconds <= 0:
+        raise ValueError("watch polling interval must be positive")
+    if not 10.0 <= watch_heartbeat_seconds <= 15.0:
+        raise ValueError("watch heartbeat interval must remain between 10 and 15 seconds")
 
     api = api_client or CloudRunPrivateReviewApi(
         base_url=settings.api_base_url,
@@ -554,8 +651,9 @@ def create_presentation_app(
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
-            "base-uri 'none'; frame-ancestors 'none'"
+            "default-src 'none'; script-src 'self'; connect-src 'self'; "
+            "style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; "
+            "frame-ancestors 'none'"
         )
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -633,6 +731,89 @@ def create_presentation_app(
         if not isinstance(expected, str) or not hmac.compare_digest(expected, csrf):
             return _form_error(403, "The local review form token was not accepted.")
         return None
+
+    @app.get("/assets/watch.js")
+    async def watch_javascript() -> Response:
+        """Serve the watch logic from this same loopback origin only."""
+
+        return Response(WATCH_JAVASCRIPT, media_type="application/javascript")
+
+    @app.get("/watch", response_class=HTMLResponse)
+    async def watch_floor() -> HTMLResponse:
+        try:
+            snapshot = sanitize_watch_snapshot(await api.get_json("/api/v1/incidents"))
+            error: str | None = None
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+            ValueError,
+        ):
+            snapshot = sanitize_watch_snapshot({"incidents": []})
+            error = "Private review data is temporarily unavailable; retrying locally."
+        return render(
+            "watch.html",
+            snapshot=snapshot,
+            watch=watch_summary(snapshot),
+            error=error,
+            fixture_mode=False,
+            fixture_alert=False,
+        )
+
+    @app.get("/events")
+    async def watch_events(request: Request, max_events: int | None = None) -> Response:
+        """Stream sanitized durable transitions to a loopback browser via SSE."""
+
+        if request.headers.get("host") != f"127.0.0.1:{settings.port}":
+            return PlainTextResponse("Loopback watch requests only.", status_code=403)
+        if max_events is not None and not 1 <= max_events <= 3:
+            return PlainTextResponse("Invalid watch event bound.", status_code=400)
+
+        async def event_stream() -> AsyncIterator[str]:
+            tracker = WatchEventTracker()
+            emitted = 0
+            last_heartbeat = watch_monotonic_clock()
+            upstream_unavailable = False
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    snapshot = sanitize_watch_snapshot(await api.get_json("/api/v1/incidents"))
+                    transitions = tracker.observe(snapshot)
+                    upstream_unavailable = False
+                except (
+                    httpx.HTTPError,
+                    PrivateReviewApiError,
+                    PresentationAuthenticationError,
+                    TypeError,
+                    ValueError,
+                ):
+                    transitions = () if upstream_unavailable else (upstream_unavailable_event(),)
+                    upstream_unavailable = True
+                for event in transitions:
+                    yield sse_frame(event, retry_milliseconds=2000 if emitted == 0 else None)
+                    emitted += 1
+                    if max_events is not None and emitted >= max_events:
+                        return
+                now = watch_monotonic_clock()
+                if now - last_heartbeat >= watch_heartbeat_seconds:
+                    yield sse_frame(heartbeat_event())
+                    emitted += 1
+                    last_heartbeat = now
+                    if max_events is not None and emitted >= max_events:
+                        return
+                await watch_sleep(watch_poll_seconds)
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -732,6 +913,16 @@ def create_presentation_app(
                 replacement_idempotency_key=secrets.token_urlsafe(24),
                 fixture_mode=False,
                 next_safe_action="Private review data is unavailable; no action form is enabled.",
+                source_comparison={
+                    "old": "Private review data is unavailable.",
+                    "new": "Private review data is unavailable.",
+                },
+                workflow_stage="DETECTED",
+                workflow_stages=tuple(stage.value for stage in IncidentWorkflowStage),
+                semantic_activity="Private review data is unavailable.",
+                semantic_materiality="Unavailable",
+                uncertainty_summary="Unavailable",
+                impact_summary="Unavailable",
                 error="Private review data is unavailable.",
             )
         report = _mapping(detail.get("report"))
@@ -772,6 +963,15 @@ def create_presentation_app(
             "text": "Candidate BRF preview is unavailable.",
         }
         candidate_evidence_preview.update(_mapping(detail.get("candidate_evidence_preview")))
+        checkpoint = _mapping(detail.get("checkpoint"))
+        workflow_stage = checkpoint.get("stage")
+        if not isinstance(workflow_stage, str):
+            workflow_stage = "DETECTED"
+        braille_impact = _mapping(report.get("braille_impact"))
+        uncertainties_value = semantic.get("uncertainties", ())
+        uncertainty_count = (
+            len(uncertainties_value) if isinstance(uncertainties_value, (list, tuple)) else 0
+        )
         return render(
             "incident.html",
             incident_id=incident_id,
@@ -779,7 +979,7 @@ def create_presentation_app(
             source_correction=_pretty(detail.get("source_correction")),
             semantic_summary=semantic.get("summary", "No semantic summary is available."),
             uncertainties=semantic.get("uncertainties", ()),
-            braille_impact=_pretty(report.get("braille_impact")),
+            braille_impact=_pretty(braille_impact),
             baseline_brf_sha256=packet.get("baseline_brf_sha256", "Unavailable"),
             candidate_brf_sha256=_mapping(packet.get("candidate_brf")).get("sha256", "Unavailable"),
             candidate_manifest=_pretty(detail.get("candidate_manifest")),
@@ -805,6 +1005,17 @@ def create_presentation_app(
             replacement_idempotency_key=secrets.token_urlsafe(24),
             fixture_mode=False,
             next_safe_action=_next_safe_action(_mapping(detail.get("review_state"))),
+            source_comparison=_source_comparison(_mapping(detail.get("source_correction"))),
+            workflow_stage=workflow_stage,
+            workflow_stages=tuple(stage.value for stage in IncidentWorkflowStage),
+            semantic_activity=_semantic_activity(workflow_stage),
+            semantic_materiality=semantic.get("materiality", "Not recorded"),
+            uncertainty_summary=(
+                "No uncertainty was recorded."
+                if uncertainty_count == 0
+                else f"{uncertainty_count} persisted uncertainty item(s) require human judgment."
+            ),
+            impact_summary=_impact_summary(braille_impact),
             error=None,
         )
 

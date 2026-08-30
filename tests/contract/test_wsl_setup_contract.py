@@ -99,7 +99,11 @@ def test_liblouis_wsl_installer_is_pinned_and_verifies_real_translation() -> Non
     assert "UEB_TABLE_SHA256=" in installer
     assert "BRF_TABLE_SHA256=" in installer
     assert "louis.translateString" in installer
-    assert "PYTHONPATH=" in environment
+    assert 'PYTHONPATH="/opt/liblouis-python-3.38.0${PYTHONPATH:+:$PYTHONPATH}"' in environment
+    assert (
+        'LD_LIBRARY_PATH="/opt/liblouis-3.38.0/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"'
+        in environment
+    )
     assert "LIBLOUIS_TABLEPATH=" in environment
 
 

@@ -49,12 +49,13 @@ def test_active_review_runbook_labels_host_paths_and_uses_repository_runtimes() 
         encoding="utf-8"
     )
 
-    assert 'WSL_REPO_ROOT="/mnt/c/dev/Astra"' in runner
-    assert r"WINDOWS_REPO_ROOT='C:\dev\Astra'" in runner
+    assert 'ROOT="$(cd "$(dirname "$0")/../.." && pwd)"' in runner
+    assert 'WSL_REPO_ROOT="$ROOT"' in runner
+    assert 'WINDOWS_REPO_ROOT="$(wslpath -w "$ROOT")"' in runner
     assert runner.count("WSL Ubuntu-24.04:") >= 5
     assert runner.count("Windows PowerShell (5.1 or 7):") >= 5
     assert "Set-Location -LiteralPath '$WINDOWS_REPO_ROOT'" in runner
-    assert "Set-Location -LiteralPath '/mnt/c/dev/Astra'" not in runner
+    assert "/mnt/c/dev/Astra" not in runner
     assert "cd $WSL_REPO_ROOT" in runner
     assert "cd $ROOT" not in runner
     assert "Prefer PowerShell 7 when it is installed" in runner

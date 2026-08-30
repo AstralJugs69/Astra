@@ -1,0 +1,61 @@
+{
+  "schema_version": "final-demo-readiness-evidence.v1",
+  "release": {
+    "branch": "codex/final-demo-readiness",
+    "base_commit": "063a797a806ac38edacc918a670f3cf89d132d9c",
+    "timebox": "FOUR_HOURS_OR_LESS"
+  },
+  "watch_floor": {
+    "loopback_only": true,
+    "server_side_poll_seconds": 2,
+    "heartbeat_seconds": 12,
+    "initial_snapshot_alert_free": true,
+    "browser_credentials_excluded": true,
+    "device_control_routes_added": false
+  },
+  "setup": {
+    "local_config_only": true,
+    "doctor_non_mutating": true,
+    "service_account_keys_accepted": false
+  },
+  "offline_fixture": {
+    "rendered": true,
+    "truth_basis": "SANITIZED_OFFLINE_DEMO_FIXTURE",
+    "screenshot_count": 6,
+    "external_requests": false
+  },
+  "verification": {
+    "uv_lock_check": "PASS",
+    "frozen_pytest": "PASS",
+    "ruff_lint": "PASS",
+    "ruff_format": "PASS",
+    "strict_mypy": "PASS",
+    "git_diff_check": "PASS",
+    "secret_scan": "PASS",
+    "powershell_launcher_static_check": "PASS",
+    "docker_frozen_build": "PASS",
+    "installed_container_readiness": "PASS",
+    "repeated_container_liblouis_golden": "PASS",
+    "wsl_liblouis_smoke": "PASS",
+    "wsl_full_application_golden": "PASS",
+    "responsive_fixture_visual_inspection": "PASS"
+  },
+  "live_execution": {
+    "drive_edit": "NOT_RUN",
+    "human_cups_lifecycle": "NOT_RUN",
+    "professional_disposition": "NOT_RUN",
+    "replacement_submission": "NOT_RUN"
+  },
+  "deployment": {
+    "status": "NOT_RUN",
+    "private": "NOT_RUN",
+    "scheduler_paused": "NOT_RUN",
+    "read_only_smoke": "NOT_RUN"
+  },
+  "sanitization_assertions": [
+    "No secret auth material, OAuth token, service-account key, private principal, Drive file identifier, private Cloud Run origin, or machine-specific path is recorded.",
+    "The watch floor streams only sanitized durable state through the loopback presentation server and exposes no CUPS or device-control route.",
+    "Offline fixture rendering is explicitly distinct from live Drive, CUPS, human-review, replacement-submission, and closure execution.",
+    "The WSL full application golden passed twice after the deterministic derived profile was bound to the installed Liblouis table hashes; no mock or substitute translator was used."
+  ]
+}

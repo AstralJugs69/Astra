@@ -18,7 +18,7 @@
     "fixture_data_as_of": {"type": "string", "format": "date-time"},
     "screenshots": {
       "type": "array",
-      "minItems": 4,
+      "minItems": 6,
       "items": {
         "type": "object",
         "additionalProperties": false,

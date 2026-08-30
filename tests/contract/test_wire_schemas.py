@@ -34,6 +34,7 @@ CONTAINMENT_PROOF_EVIDENCE = ROOT / "demo" / "evidence" / "slice-2-3-containment
 RELEASE_CANDIDATE_EVIDENCE = ROOT / "demo" / "evidence" / "release-candidate-1.json"
 SCREENSHOT_MANIFEST = ROOT / "demo" / "screenshots" / "manifest.json"
 FINAL_STORY5_EVIDENCE = ROOT / "demo" / "evidence" / "final-story5-dashboard.json"
+FINAL_DEMO_READINESS_EVIDENCE = ROOT / "demo" / "evidence" / "final-demo-readiness.json"
 
 
 def _load_module(name: str, path: Path):
@@ -661,7 +662,9 @@ def test_screenshot_manifest_validates_and_hashes_the_sanitized_offline_fixture(
     payload = json.loads(SCREENSHOT_MANIFEST.read_text(encoding="utf-8"))
 
     assert sorted(_validator("screenshot-manifest.v1.json").iter_errors(payload), key=str) == []
-    assert len(payload["screenshots"]) == 4
+    assert len(payload["screenshots"]) == 6
+    routes = {screenshot["route"] for screenshot in payload["screenshots"]}
+    assert {"/watch", "/watch/quiet", "/"}.issubset(routes)
     for screenshot in payload["screenshots"]:
         image = ROOT / "demo" / "screenshots" / screenshot["filename"]
         assert image.is_file()
@@ -714,6 +717,40 @@ def test_final_story5_evidence_is_sanitized_and_preserves_the_authority_boundary
         "password",
         "project-",
         "@",
+    ):
+        assert forbidden not in rendered
+
+
+def test_final_demo_readiness_evidence_is_schema_valid_and_honest() -> None:
+    payload = json.loads(FINAL_DEMO_READINESS_EVIDENCE.read_text(encoding="utf-8"))
+
+    assert (
+        sorted(_validator("final-demo-readiness-evidence.v1.json").iter_errors(payload), key=str)
+        == []
+    )
+    assert payload["watch_floor"]["loopback_only"] is True
+    assert payload["watch_floor"]["initial_snapshot_alert_free"] is True
+    assert payload["watch_floor"]["browser_credentials_excluded"] is True
+    assert payload["watch_floor"]["device_control_routes_added"] is False
+    assert payload["offline_fixture"]["truth_basis"] == "SANITIZED_OFFLINE_DEMO_FIXTURE"
+    assert payload["offline_fixture"]["external_requests"] is False
+    assert payload["verification"]["wsl_full_application_golden"] == "PASS"
+    assert all(value == "NOT_RUN" for value in payload["live_execution"].values())
+    assert payload["deployment"]["status"] == "NOT_RUN"
+
+    rendered = "\n".join(_string_values(payload)).casefold()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "private_key",
+        "client_email",
+        "drive.google.com",
+        "gs://",
+        "password",
+        "project-",
+        "@",
+        "c:\\\\",
     ):
         assert forbidden not in rendered
 

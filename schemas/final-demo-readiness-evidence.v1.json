@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "final-demo-readiness-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release",
+    "watch_floor",
+    "setup",
+    "offline_fixture",
+    "verification",
+    "live_execution",
+    "deployment",
+    "sanitization_assertions"
+  ],
+  "properties": {
+    "schema_version": {"const": "final-demo-readiness-evidence.v1"},
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "base_commit", "timebox"],
+      "properties": {
+        "branch": {"const": "codex/final-demo-readiness"},
+        "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "timebox": {"const": "FOUR_HOURS_OR_LESS"}
+      }
+    },
+    "watch_floor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "loopback_only",
+        "server_side_poll_seconds",
+        "heartbeat_seconds",
+        "initial_snapshot_alert_free",
+        "browser_credentials_excluded",
+        "device_control_routes_added"
+      ],
+      "properties": {
+        "loopback_only": {"const": true},
+        "server_side_poll_seconds": {"const": 2},
+        "heartbeat_seconds": {"const": 12},
+        "initial_snapshot_alert_free": {"const": true},
+        "browser_credentials_excluded": {"const": true},
+        "device_control_routes_added": {"const": false}
+      }
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local_config_only", "doctor_non_mutating", "service_account_keys_accepted"],
+      "properties": {
+        "local_config_only": {"const": true},
+        "doctor_non_mutating": {"const": true},
+        "service_account_keys_accepted": {"const": false}
+      }
+    },
+    "offline_fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rendered", "truth_basis", "screenshot_count", "external_requests"],
+      "properties": {
+        "rendered": {"const": true},
+        "truth_basis": {"const": "SANITIZED_OFFLINE_DEMO_FIXTURE"},
+        "screenshot_count": {"const": 6},
+        "external_requests": {"const": false}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "enum": ["PASS", "BLOCKED", "SKIPPED", "NOT_RUN"]},
+      "minProperties": 8
+    },
+    "live_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["drive_edit", "human_cups_lifecycle", "professional_disposition", "replacement_submission"],
+      "properties": {
+        "drive_edit": {"type": "string", "enum": ["NOT_RUN", "HUMAN_ONLY"]},
+        "human_cups_lifecycle": {"type": "string", "enum": ["NOT_RUN", "HUMAN_ONLY"]},
+        "professional_disposition": {"type": "string", "enum": ["NOT_RUN", "HUMAN_ONLY"]},
+        "replacement_submission": {"type": "string", "enum": ["NOT_RUN", "HUMAN_ONLY"]}
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "private", "scheduler_paused", "read_only_smoke"],
+      "properties": {
+        "status": {"type": "string", "enum": ["PASS", "BLOCKED", "NOT_RUN"]},
+        "private": {"type": "string", "enum": ["PASS", "BLOCKED", "NOT_RUN"]},
+        "scheduler_paused": {"type": "string", "enum": ["PASS", "BLOCKED", "NOT_RUN"]},
+        "read_only_smoke": {"type": "string", "enum": ["PASS", "BLOCKED", "NOT_RUN"]}
+      }
+    },
+    "sanitization_assertions": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    }
+  }
+}

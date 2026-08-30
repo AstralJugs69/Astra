@@ -15,6 +15,7 @@ from google.auth import exceptions as google_auth_exceptions
 from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token
+from pydantic import ValidationError
 
 from braille_errata_relay.application.baseline_registration import (
     baseline_registration_idempotency_key,
@@ -22,6 +23,12 @@ from braille_errata_relay.application.baseline_registration import (
 from braille_errata_relay.application.production_link import (
     production_link_idempotency_key,
     production_link_supersession_idempotency_key,
+)
+from braille_errata_relay.local_setup import (
+    LocalRelayConfig,
+    doctor_json,
+    run_doctor,
+    write_local_config,
 )
 
 
@@ -94,6 +101,31 @@ def _parser() -> argparse.ArgumentParser:
     )
     _add_auth_arguments(telemetry)
     telemetry.add_argument("--observation", required=True, type=Path)
+    init_local = commands.add_parser(
+        "init-local-config",
+        help="Write non-secret local presentation configuration; never provisions cloud or devices.",
+    )
+    init_local.add_argument("--project-id")
+    init_local.add_argument("--region", default="europe-west3")
+    init_local.add_argument("--drive-source")
+    init_local.add_argument("--source-mime-type", default="text/markdown")
+    init_local.add_argument("--site-id")
+    init_local.add_argument("--queue-name")
+    init_local.add_argument("--bridge-id")
+    init_local.add_argument("--demonstrator-principal")
+    init_local.add_argument("--telemetry-principal")
+    init_local.add_argument("--relay-api-url")
+    init_local.add_argument("--relay-audience")
+    init_local.add_argument("--output", type=Path, default=Path(".env"))
+    init_local.add_argument("--force", action="store_true")
+    init_local.add_argument("--interactive", action="store_true")
+    doctor = commands.add_parser(
+        "doctor",
+        help="Report non-mutating local prerequisites without exposing configuration values.",
+    )
+    doctor.add_argument("--config", type=Path, default=Path(".env"))
+    doctor.add_argument("--check-drive", action="store_true")
+    doctor.add_argument("--check-wsl-cups", action="store_true")
     return parser
 
 
@@ -364,9 +396,113 @@ def _publish_site_observation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _interactive_value(*, prompt: str, existing: str | None, default: str | None = None) -> str:
+    if existing:
+        return existing
+    suffix = f" [{default}]" if default else ""
+    answer = input(f"{prompt}{suffix}: ").strip()
+    return answer or default or ""
+
+
+def _init_local_config(args: argparse.Namespace) -> int:
+    """Collect non-secret settings and write the ignored local file only once."""
+
+    interactive = bool(args.interactive)
+    values = {
+        "google_cloud_project": _interactive_value(
+            prompt="Google Cloud project ID",
+            existing=args.project_id,
+        )
+        if interactive
+        else args.project_id,
+        "cloud_run_region": _interactive_value(
+            prompt="Cloud Run region",
+            existing=args.region,
+            default="europe-west3",
+        )
+        if interactive
+        else args.region,
+        "drive_file_id": _interactive_value(
+            prompt="Authoritative Drive file URL or file ID",
+            existing=args.drive_source,
+        )
+        if interactive
+        else args.drive_source,
+        "drive_source_mime_type": args.source_mime_type,
+        "site_id": _interactive_value(prompt="Site ID", existing=args.site_id)
+        if interactive
+        else args.site_id,
+        "queue_name": _interactive_value(prompt="CUPS queue name", existing=args.queue_name)
+        if interactive
+        else args.queue_name,
+        "local_bridge_id": _interactive_value(prompt="Local bridge ID", existing=args.bridge_id)
+        if interactive
+        else args.bridge_id,
+        "demonstrator_principal_email": args.demonstrator_principal,
+        "telemetry_principal_email": args.telemetry_principal,
+        "relay_api_url": args.relay_api_url,
+        "relay_audience": args.relay_audience,
+    }
+    try:
+        config = LocalRelayConfig.model_validate(values)
+        preview = {
+            key: "configured" if value else "not configured"
+            for key, value in {
+                "google_cloud_project": config.google_cloud_project,
+                "cloud_run_region": config.cloud_run_region,
+                "drive_source": config.drive_file_id,
+                "site_id": config.site_id,
+                "queue_name": config.queue_name,
+                "local_bridge_id": config.local_bridge_id,
+                "demonstrator_principal": config.demonstrator_principal_email,
+                "telemetry_principal": config.telemetry_principal_email,
+                "relay_api_url": config.relay_api_url,
+                "relay_audience": config.relay_audience,
+            }.items()
+        }
+        print(json.dumps({"status": "PREVIEW", "configuration": preview}, sort_keys=True))
+        write_local_config(path=args.output, config=config, force=bool(args.force))
+    except (FileExistsError, OSError, ValidationError, ValueError):
+        print(
+            json.dumps(
+                {
+                    "status": "BLOCKED",
+                    "detail": "local configuration was not written; correct non-secret values or use --force",
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        json.dumps(
+            {
+                "status": "PASS",
+                "detail": "non-secret local configuration written; use browser-based gcloud login for authentication",
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    checks = run_doctor(
+        config_path=args.config,
+        check_drive=bool(args.check_drive),
+        check_wsl_cups=bool(args.check_wsl_cups),
+    )
+    print(doctor_json(checks))
+    return 1 if any(check.status == "BLOCKED" for check in checks) else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "init-local-config":
+            return _init_local_config(args)
+        if args.command == "doctor":
+            return _doctor(args)
         if args.command == "register-demo-baseline":
             return _register_demo_baseline(args)
         if args.command == "link-baseline-production":

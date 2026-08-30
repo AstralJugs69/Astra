@@ -14,15 +14,21 @@ def test_screenshot_fixture_is_offline_sanitized_get_only_and_not_mounted_by_clo
     client = TestClient(app, base_url="http://127.0.0.1:8877")
 
     overview = client.get("/")
+    quiet_watch = client.get("/watch/quiet")
+    alert_watch = client.get("/watch")
     proof_ready = client.get(f"/incidents/{screenshot_fixture.PROOF_READY_ID}")
     observed = client.get(f"/incidents/{screenshot_fixture.REPLACEMENT_OBSERVED_ID}")
     mutation = client.post(f"/incidents/{screenshot_fixture.PROOF_READY_ID}/proof-records")
     candidate = client.get(f"/incidents/{screenshot_fixture.PROOF_READY_ID}/approved-candidate")
 
     assert overview.status_code == 200
+    assert quiet_watch.status_code == 200
+    assert alert_watch.status_code == 200
     assert proof_ready.status_code == 200
     assert observed.status_code == 200
     assert "SANITIZED DEMO FIXTURE" in overview.text
+    assert "No incident is currently awaiting review" in quiet_watch.text
+    assert "SOURCE / PRODUCTION MISMATCH" in alert_watch.text
     assert "SANITIZED DEMO FIXTURE" in proof_ready.text
     for state in ("REPORT_READY", "NEEDS_REVIEW", "AWAITING_REPLACEMENT", "REPLACEMENT_OBSERVED"):
         assert state in overview.text

@@ -17,6 +17,12 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from braille_errata_relay.presentation.app import _next_safe_action, _pretty, _templates
+from braille_errata_relay.presentation.watch import (
+    WatchEvent,
+    sanitize_watch_snapshot,
+    sse_frame,
+    watch_summary,
+)
 
 FIXTURE_TRUTH_BASIS = "SANITIZED_OFFLINE_DEMO_FIXTURE"
 REPORT_READY_ID = "1" * 64
@@ -37,9 +43,11 @@ def _row(
     blocking_reason: str | None,
     summary: str,
     next_safe_action: str,
+    workflow_stage: str,
 ) -> dict[str, object]:
     return {
         "incident_id": incident_id,
+        "workflow_stage": workflow_stage,
         "review_state": {"state": state, "state_version": 7},
         "blocking_reason": blocking_reason,
         "source_change_summary": summary,
@@ -56,6 +64,7 @@ def _overview_rows() -> tuple[dict[str, object], ...]:
             blocking_reason=None,
             summary="Synthetic source correction is ready for coordinator review.",
             next_safe_action="Record a professional disposition after reviewing the report.",
+            workflow_stage="REPORT_READY",
         ),
         _row(
             incident_id=BLOCKED_ID,
@@ -63,6 +72,7 @@ def _overview_rows() -> tuple[dict[str, object], ...]:
             blocking_reason="SEMANTIC_REVIEW_REQUIRED",
             summary="Synthetic ambiguity deliberately remains visible and blocked.",
             next_safe_action="Resolve semantic uncertainty with a qualified human review.",
+            workflow_stage="NEEDS_REVIEW",
         ),
         _row(
             incident_id=PROOF_READY_ID,
@@ -70,6 +80,7 @@ def _overview_rows() -> tuple[dict[str, object], ...]:
             blocking_reason=None,
             summary="Exact synthetic candidate has a demo-fixture proof approval.",
             next_safe_action="Use an independent production surface, then observe the job.",
+            workflow_stage="REPORT_READY",
         ),
         _row(
             incident_id=REPLACEMENT_OBSERVED_ID,
@@ -77,6 +88,7 @@ def _overview_rows() -> tuple[dict[str, object], ...]:
             blocking_reason=None,
             summary="A synthetic external-job observation is recorded without closure.",
             next_safe_action="Separate final verification remains outside this fixture.",
+            workflow_stage="REPORT_READY",
         ),
     )
 
@@ -208,6 +220,24 @@ def _detail(incident_id: str) -> dict[str, object]:
         "replacement_idempotency_key": "fixture-replacement",
         "fixture_mode": True,
         "next_safe_action": _next_safe_action(review_state),
+        "source_comparison": {
+            "old": "paragraph: Synthetic wording before correction.",
+            "new": "paragraph: Synthetic wording after correction.",
+        },
+        "workflow_stage": str(selected["workflow_stage"]),
+        "workflow_stages": (
+            "DETECTED",
+            "DIFF_READY",
+            "CANDIDATE_READY",
+            "IMPACT_READY",
+            "SEMANTIC_READY",
+            "REPORT_READY",
+            "NEEDS_REVIEW",
+        ),
+        "semantic_activity": "Gemini semantic assessment complete.",
+        "semantic_materiality": "MATERIAL (synthetic fixture)",
+        "uncertainty_summary": "1 persisted synthetic uncertainty item requires human judgment.",
+        "impact_summary": "Changed; baseline pages 1, candidate pages 1.",
         "error": None,
     }
 
@@ -231,7 +261,8 @@ def create_screenshot_fixture_app() -> FastAPI:
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
+            "default-src 'none'; script-src 'self'; connect-src 'self'; "
+            "style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
         )
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -248,6 +279,52 @@ def create_screenshot_fixture_app() -> FastAPI:
                 fixture_mode=True,
             )
         )
+
+    @app.get("/watch", response_class=HTMLResponse)
+    async def watch() -> HTMLResponse:
+        snapshot = sanitize_watch_snapshot({"incidents": list(_overview_rows())}, observed_at=NOW)
+        return HTMLResponse(
+            templates.get_template("watch.html").render(
+                snapshot=snapshot,
+                watch=watch_summary(snapshot),
+                error=None,
+                fixture_mode=True,
+                fixture_alert=True,
+            )
+        )
+
+    @app.get("/watch/quiet", response_class=HTMLResponse)
+    async def quiet_watch() -> HTMLResponse:
+        snapshot = sanitize_watch_snapshot({"incidents": []}, observed_at=NOW)
+        return HTMLResponse(
+            templates.get_template("watch.html").render(
+                snapshot=snapshot,
+                watch=watch_summary(snapshot),
+                error=None,
+                fixture_mode=True,
+                fixture_alert=False,
+            )
+        )
+
+    @app.get("/events")
+    async def events() -> Response:
+        """A fixed GET-only event sample for the sanitized watch screenshot."""
+
+        snapshot = sanitize_watch_snapshot({"incidents": list(_overview_rows())}, observed_at=NOW)
+        payload: dict[str, object] = {
+            "incident": {
+                "incident_id": BLOCKED_ID,
+                "workflow_stage": "NEEDS_REVIEW",
+                "review_state": "NEEDS_REVIEW",
+                "blocking_reason": "SEMANTIC_REVIEW_REQUIRED",
+                "next_safe_action": "Resolve the visible review block through qualified human judgment.",
+            }
+        }
+        body = sse_frame(
+            WatchEvent("snapshot", {"initial": True, "snapshot": snapshot}),
+            retry_milliseconds=2000,
+        ) + sse_frame(WatchEvent("review_required", payload))
+        return Response(body, media_type="text/event-stream")
 
     @app.get("/incidents/{incident_id}", response_class=HTMLResponse)
     async def incident(incident_id: str) -> HTMLResponse:
