@@ -1,0 +1,5 @@
+# Keep a Cloud Build source upload reproducible and free of local-only state.
+.gcloudignore
+.git
+.gitignore
+#!include:.gitignore
