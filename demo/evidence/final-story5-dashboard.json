@@ -1,0 +1,79 @@
+{
+  "schema_version": "final-story5-dashboard-evidence.v1",
+  "recorded_at": "2026-08-30T17:16:53Z",
+  "branch": "codex/final-story5-dashboard",
+  "implementation_commit": "512b5535c21503e541f133f93e60c0fa288b66ed",
+  "governing_documents": {
+    "instruction.md": "8beb45e43d2b3c0d8a7b34f0b950ecd2f8a9ceb30f805c3b8903c134142febbb",
+    "architecture.md": "342a366480a0d3c2182484a338684f17a42c8d69e49abd89abfa079c96b1a93e"
+  },
+  "story5": {
+    "status": "IMPLEMENTED_BOUNDED",
+    "candidate_download": "PRIVATE_REHASHED_READ_ONLY",
+    "human_submission_owner": "INDEPENDENT_HUMAN_OPERATOR",
+    "accepted_transition": "AWAITING_REPLACEMENT_TO_REPLACEMENT_OBSERVED_ONLY",
+    "no_production_control": true,
+    "final_verification_or_closure": "NOT_IMPLEMENTED",
+    "historical_live_execution": "NOT_RUN"
+  },
+  "presentation": {
+    "architecture": "SERVER_RENDERED_FASTAPI_JINJA",
+    "external_browser_credentials": false,
+    "offline_fixture_mounted_in_cloud": false,
+    "responsive_visual_check": "PASS"
+  },
+  "screenshots": {
+    "manifest_schema": "screenshot-manifest.v1",
+    "manifest_sha256": "74be2586bd5cb1ccbac1661c4afe7328dcea98e7ef4685d6f2212759f19f0d4a",
+    "count": 4,
+    "truth_basis": "SANITIZED_OFFLINE_DEMO_FIXTURE",
+    "private_identifier_scan": "PASS"
+  },
+  "verification": {
+    "frozen_lock": "PASS",
+    "full_test_suite": {
+      "status": "PASS",
+      "passed": 335,
+      "skipped": 3
+    },
+    "ruff_lint": "PASS",
+    "scoped_format": "PASS",
+    "strict_mypy": "PASS",
+    "docker_build": "PASS",
+    "installed_container_readiness": "PASS",
+    "container_golden_repeat": "PASS",
+    "wsl_liblouis_smoke": "PASS",
+    "wsl_full_application_golden": "BLOCKED_MISSING_ISOLATED_PROJECT_DEPENDENCIES",
+    "git_diff_check": "PASS",
+    "tracked_file_secret_scan": "PASS_EXPECTED_REFERENCES_ONLY"
+  },
+  "deployment": {
+    "status": "PASS",
+    "region": "europe-west3",
+    "revision": "braille-errata-relay-00013-mzh",
+    "image_digest": "sha256:16098cafb089f0492e26c0dcc92c8c5b0145b00caace8529c76634acecb82384",
+    "private": true,
+    "public_invoker_member_count": 0,
+    "scheduler_state": "PAUSED",
+    "temporary_token_creator_grant_count": 0,
+    "authenticated_read_only_smoke": {
+      "health_status": 200,
+      "readyz_status": 200,
+      "incident_list_status": 200,
+      "incident_detail_status": 200,
+      "mutating_routes_invoked": false
+    }
+  },
+  "historical_snapshot": {
+    "read_only": true,
+    "incident_count": 2,
+    "review_states": ["CONTAINMENT_IN_PROGRESS", "NEEDS_REVIEW"],
+    "workflow_stages": ["NEEDS_REVIEW"],
+    "blocking_reasons": ["SITE_OBSERVATION_STALE"],
+    "mutating_routes_invoked": false
+  },
+  "remaining_blockers": [
+    "The current WSL environment has the real pinned Liblouis binding and passed its repeated Unicode/table smoke test, but lacks the isolated project runtime dependencies required for the full application golden test.",
+    "No historical incident was used to exercise Story 5; replacement submission, physical endpoint completion, final verification, notification, and closure remain human-owned and unimplemented."
+  ]
+}

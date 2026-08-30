@@ -33,6 +33,7 @@ ACTIVE_REVIEW_EVIDENCE = ROOT / "demo" / "evidence" / "active-professional-revie
 CONTAINMENT_PROOF_EVIDENCE = ROOT / "demo" / "evidence" / "slice-2-3-containment-proof-gate.json"
 RELEASE_CANDIDATE_EVIDENCE = ROOT / "demo" / "evidence" / "release-candidate-1.json"
 SCREENSHOT_MANIFEST = ROOT / "demo" / "screenshots" / "manifest.json"
+FINAL_STORY5_EVIDENCE = ROOT / "demo" / "evidence" / "final-story5-dashboard.json"
 
 
 def _load_module(name: str, path: Path):
@@ -46,6 +47,16 @@ def _load_module(name: str, path: Path):
 def _validator(name: str) -> Draft202012Validator:
     schema = json.loads((ROOT / "schemas" / name).read_text(encoding="utf-8"))
     return Draft202012Validator(schema, format_checker=FormatChecker())
+
+
+def _string_values(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, dict):
+        return tuple(item for child in value.values() for item in _string_values(child))
+    if isinstance(value, list):
+        return tuple(item for child in value for item in _string_values(child))
+    return ()
 
 
 def _normalized_snapshot() -> dict[str, object]:
@@ -664,6 +675,45 @@ def test_screenshot_manifest_validates_and_hashes_the_sanitized_offline_fixture(
         "drive.google.com",
         "access_token",
         "c:\\\\",
+    ):
+        assert forbidden not in rendered
+
+
+def test_final_story5_evidence_is_sanitized_and_preserves_the_authority_boundary() -> None:
+    payload = json.loads(FINAL_STORY5_EVIDENCE.read_text(encoding="utf-8"))
+
+    assert (
+        sorted(
+            _validator("final-story5-dashboard-evidence.v1.json").iter_errors(payload),
+            key=str,
+        )
+        == []
+    )
+    assert payload["story5"]["no_production_control"] is True
+    assert payload["story5"]["historical_live_execution"] == "NOT_RUN"
+    assert payload["story5"]["final_verification_or_closure"] == "NOT_IMPLEMENTED"
+    assert payload["deployment"]["private"] is True
+    assert payload["deployment"]["public_invoker_member_count"] == 0
+    assert payload["deployment"]["scheduler_state"] == "PAUSED"
+    assert payload["deployment"]["temporary_token_creator_grant_count"] == 0
+    assert (
+        payload["deployment"]["authenticated_read_only_smoke"]["mutating_routes_invoked"] is False
+    )
+    assert payload["historical_snapshot"]["mutating_routes_invoked"] is False
+
+    rendered = "\n".join(_string_values(payload)).casefold()
+    for forbidden in (
+        "access_token",
+        "id_token",
+        "api_key",
+        "credentials",
+        "private_key",
+        "client_email",
+        "drive.google.com",
+        "gs://",
+        "password",
+        "project-",
+        "@",
     ):
         assert forbidden not in rendered
 

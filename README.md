@@ -71,9 +71,12 @@ labels the preceding state **awaiting human submission**.
 - The Story 5 seam was deliberately not executed against the historical live
   incident. It provides no capability to submit, release, cancel, restart, or
   otherwise control a production job.
-- Current container golden renders pass. An isolated frozen-lock WSL environment
-  ran the real application golden test twice; V1/V2 rendered BRF bytes, profile
-  hash, Liblouis version, and table hashes match the current container exactly.
+- The final-slice container golden ran twice with exact V1/V2 rendered-BRF,
+  profile, and table identity. The current WSL installation has the real pinned
+  Liblouis binding and passed its repeated Unicode/table smoke test. Its full
+  application golden is honestly blocked until an isolated Linux environment
+  with the frozen project runtime dependencies is available; earlier isolated
+  WSL/container parity evidence remains preserved separately.
 
 ### Deferred by design
 
@@ -128,9 +131,9 @@ uv run --frozen pytest -q -p no:cacheprovider
 uv run --frozen ruff check src tests infra/scripts
 uv run --frozen ruff format --check src tests infra/scripts
 uv run --frozen mypy src/braille_errata_relay
-docker build --tag braille-errata-relay:release-candidate-1 .
+docker build --tag braille-errata-relay:final-story5-dashboard .
 docker run --rm --network none --read-only --cap-drop ALL \
-  --entrypoint python braille-errata-relay:release-candidate-1 \
+  --entrypoint python braille-errata-relay:final-story5-dashboard \
   -m braille_errata_relay.container_smoke
 ```
 

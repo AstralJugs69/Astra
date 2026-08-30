@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "final-story5-dashboard-evidence.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorded_at",
+    "branch",
+    "implementation_commit",
+    "governing_documents",
+    "story5",
+    "presentation",
+    "screenshots",
+    "verification",
+    "deployment",
+    "historical_snapshot",
+    "remaining_blockers"
+  ],
+  "properties": {
+    "schema_version": {"const": "final-story5-dashboard-evidence.v1"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "branch": {"const": "codex/final-story5-dashboard"},
+    "implementation_commit": {"$ref": "#/$defs/sha1"},
+    "governing_documents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction.md", "architecture.md"],
+      "properties": {
+        "instruction.md": {"$ref": "#/$defs/sha256"},
+        "architecture.md": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "story5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "candidate_download",
+        "human_submission_owner",
+        "accepted_transition",
+        "no_production_control",
+        "final_verification_or_closure",
+        "historical_live_execution"
+      ],
+      "properties": {
+        "status": {"const": "IMPLEMENTED_BOUNDED"},
+        "candidate_download": {"const": "PRIVATE_REHASHED_READ_ONLY"},
+        "human_submission_owner": {"const": "INDEPENDENT_HUMAN_OPERATOR"},
+        "accepted_transition": {"const": "AWAITING_REPLACEMENT_TO_REPLACEMENT_OBSERVED_ONLY"},
+        "no_production_control": {"const": true},
+        "final_verification_or_closure": {"const": "NOT_IMPLEMENTED"},
+        "historical_live_execution": {"const": "NOT_RUN"}
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture",
+        "external_browser_credentials",
+        "offline_fixture_mounted_in_cloud",
+        "responsive_visual_check"
+      ],
+      "properties": {
+        "architecture": {"const": "SERVER_RENDERED_FASTAPI_JINJA"},
+        "external_browser_credentials": {"const": false},
+        "offline_fixture_mounted_in_cloud": {"const": false},
+        "responsive_visual_check": {"const": "PASS"}
+      }
+    },
+    "screenshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_schema", "manifest_sha256", "count", "truth_basis", "private_identifier_scan"],
+      "properties": {
+        "manifest_schema": {"const": "screenshot-manifest.v1"},
+        "manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "count": {"const": 4},
+        "truth_basis": {"const": "SANITIZED_OFFLINE_DEMO_FIXTURE"},
+        "private_identifier_scan": {"const": "PASS"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frozen_lock",
+        "full_test_suite",
+        "ruff_lint",
+        "scoped_format",
+        "strict_mypy",
+        "docker_build",
+        "installed_container_readiness",
+        "container_golden_repeat",
+        "wsl_liblouis_smoke",
+        "wsl_full_application_golden",
+        "git_diff_check",
+        "tracked_file_secret_scan"
+      ],
+      "properties": {
+        "frozen_lock": {"const": "PASS"},
+        "full_test_suite": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "passed", "skipped"],
+          "properties": {
+            "status": {"const": "PASS"},
+            "passed": {"type": "integer", "minimum": 1},
+            "skipped": {"type": "integer", "minimum": 0}
+          }
+        },
+        "ruff_lint": {"const": "PASS"},
+        "scoped_format": {"const": "PASS"},
+        "strict_mypy": {"const": "PASS"},
+        "docker_build": {"const": "PASS"},
+        "installed_container_readiness": {"const": "PASS"},
+        "container_golden_repeat": {"const": "PASS"},
+        "wsl_liblouis_smoke": {"const": "PASS"},
+        "wsl_full_application_golden": {"const": "BLOCKED_MISSING_ISOLATED_PROJECT_DEPENDENCIES"},
+        "git_diff_check": {"const": "PASS"},
+        "tracked_file_secret_scan": {"const": "PASS_EXPECTED_REFERENCES_ONLY"}
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "region",
+        "revision",
+        "image_digest",
+        "private",
+        "public_invoker_member_count",
+        "scheduler_state",
+        "temporary_token_creator_grant_count",
+        "authenticated_read_only_smoke"
+      ],
+      "properties": {
+        "status": {"const": "PASS"},
+        "region": {"const": "europe-west3"},
+        "revision": {"type": "string", "pattern": "^braille-errata-relay-[0-9]{5}-[a-z0-9]+$"},
+        "image_digest": {"$ref": "#/$defs/image_digest"},
+        "private": {"const": true},
+        "public_invoker_member_count": {"const": 0},
+        "scheduler_state": {"const": "PAUSED"},
+        "temporary_token_creator_grant_count": {"const": 0},
+        "authenticated_read_only_smoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["health_status", "readyz_status", "incident_list_status", "incident_detail_status", "mutating_routes_invoked"],
+          "properties": {
+            "health_status": {"const": 200},
+            "readyz_status": {"const": 200},
+            "incident_list_status": {"const": 200},
+            "incident_detail_status": {"const": 200},
+            "mutating_routes_invoked": {"const": false}
+          }
+        }
+      }
+    },
+    "historical_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_only", "incident_count", "review_states", "workflow_stages", "blocking_reasons", "mutating_routes_invoked"],
+      "properties": {
+        "read_only": {"const": true},
+        "incident_count": {"type": "integer", "minimum": 1},
+        "review_states": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "workflow_stages": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "blocking_reasons": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "mutating_routes_invoked": {"const": false}
+      }
+    },
+    "remaining_blockers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512}
+    }
+  },
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}
