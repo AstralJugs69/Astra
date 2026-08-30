@@ -38,7 +38,11 @@
     "repeated_container_liblouis_golden": "PASS",
     "wsl_liblouis_smoke": "PASS",
     "wsl_full_application_golden": "PASS",
-    "responsive_fixture_visual_inspection": "PASS"
+    "responsive_fixture_visual_inspection": "PASS",
+    "cloud_build_from_committed_source": "PASS",
+    "private_cloud_run_deployment": "PASS",
+    "authenticated_read_only_smoke": "PASS",
+    "temporary_token_creator_cleanup": "PASS"
   },
   "live_execution": {
     "drive_edit": "NOT_RUN",
@@ -47,15 +51,16 @@
     "replacement_submission": "NOT_RUN"
   },
   "deployment": {
-    "status": "NOT_RUN",
-    "private": "NOT_RUN",
-    "scheduler_paused": "NOT_RUN",
-    "read_only_smoke": "NOT_RUN"
+    "status": "PASS",
+    "private": "PASS",
+    "scheduler_paused": "PASS",
+    "read_only_smoke": "PASS"
   },
   "sanitization_assertions": [
     "No secret auth material, OAuth token, service-account key, private principal, Drive file identifier, private Cloud Run origin, or machine-specific path is recorded.",
     "The watch floor streams only sanitized durable state through the loopback presentation server and exposes no CUPS or device-control route.",
     "Offline fixture rendering is explicitly distinct from live Drive, CUPS, human-review, replacement-submission, and closure execution.",
-    "The WSL full application golden passed twice after the deterministic derived profile was bound to the installed Liblouis table hashes; no mock or substitute translator was used."
+    "The WSL full application golden passed twice after the deterministic derived profile was bound to the installed Liblouis table hashes; no mock or substitute translator was used.",
+    "The final image was built from the committed guarded source upload and deployed to the existing private service; the authenticated smoke used only read-only GET requests and temporary impersonation authority was removed afterward."
   ]
 }

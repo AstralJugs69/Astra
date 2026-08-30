@@ -736,7 +736,12 @@ def test_final_demo_readiness_evidence_is_schema_valid_and_honest() -> None:
     assert payload["offline_fixture"]["external_requests"] is False
     assert payload["verification"]["wsl_full_application_golden"] == "PASS"
     assert all(value == "NOT_RUN" for value in payload["live_execution"].values())
-    assert payload["deployment"]["status"] == "NOT_RUN"
+    assert payload["deployment"] == {
+        "status": "PASS",
+        "private": "PASS",
+        "scheduler_paused": "PASS",
+        "read_only_smoke": "PASS",
+    }
 
     rendered = "\n".join(_string_values(payload)).casefold()
     for forbidden in (
