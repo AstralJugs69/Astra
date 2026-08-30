@@ -433,7 +433,7 @@ def create_presentation_app(
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
         )
-        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         return response
@@ -468,11 +468,43 @@ def create_presentation_app(
             and not parsed.fragment
         )
 
+    def is_local_incident_referer(value: str | None) -> bool:
+        if value is None:
+            return False
+        parsed = urlsplit(value.strip())
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        path_parts = parsed.path.rstrip("/").split("/")
+        return (
+            parsed.scheme.casefold() == "http"
+            and parsed.hostname == "127.0.0.1"
+            and port == settings.port
+            and parsed.username is None
+            and parsed.password is None
+            and len(path_parts) == 3
+            and path_parts[:2] == ["", "incidents"]
+            and re.fullmatch(r"[0-9a-f]{64}", path_parts[2]) is not None
+            and parsed.path
+            in {
+                f"/incidents/{path_parts[2]}",
+                f"/incidents/{path_parts[2]}/",
+            }
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     def require_local_form(request: Request, csrf: str) -> HTMLResponse | None:
         if request.headers.get("host") != f"127.0.0.1:{settings.port}":
             return _form_error(403, "Local review requests must use the loopback host.")
-        if not is_local_form_origin(request.headers.get("origin")):
-            return _form_error(403, "The local review form origin was not accepted.")
+        origin = request.headers.get("origin")
+        if not is_local_form_origin(origin):
+            opaque_or_absent_origin = origin is None or origin.strip().casefold() == "null"
+            same_origin_metadata = request.headers.get("sec-fetch-site") == "same-origin"
+            local_referer = is_local_incident_referer(request.headers.get("referer"))
+            if not (opaque_or_absent_origin and same_origin_metadata and local_referer):
+                return _form_error(403, "The local review form origin was not accepted.")
         expected = request.session.get("csrf_token")
         if not isinstance(expected, str) or not hmac.compare_digest(expected, csrf):
             return _form_error(403, "The local review form token was not accepted.")

@@ -146,7 +146,7 @@ def test_presentation_is_server_rendered_escaped_and_uses_strict_http_only_sessi
     assert response.headers["cache-control"] == "no-store"
     assert "default-src 'none'" in response.headers["content-security-policy"]
     assert "form-action 'self'" in response.headers["content-security-policy"]
-    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["referrer-policy"] == "same-origin"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
 
@@ -215,6 +215,30 @@ def test_presentation_accepts_normalized_exact_loopback_form_origin() -> None:
     assert len(api.posts) == 1
 
 
+@pytest.mark.parametrize("origin", (None, "null"))
+def test_presentation_accepts_browser_privacy_origin_only_with_same_origin_proof(
+    origin: str | None,
+) -> None:
+    client, api = _client()
+    csrf = _csrf(client)
+    headers = {
+        "Referer": f"http://127.0.0.1:8765/incidents/{INCIDENT_ID}/",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    if origin is not None:
+        headers["Origin"] = origin
+
+    response = client.post(
+        f"/incidents/{INCIDENT_ID}/professional-dispositions",
+        data=_disposition_form(csrf),
+        headers=headers,
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert len(api.posts) == 1
+
+
 @pytest.mark.parametrize(
     "origin",
     (
@@ -234,6 +258,43 @@ def test_presentation_rejects_loopback_origin_lookalikes(origin: str) -> None:
         f"/incidents/{INCIDENT_ID}/professional-dispositions",
         data=_disposition_form(csrf),
         headers={"Origin": origin},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 403
+    assert api.posts == []
+
+
+@pytest.mark.parametrize(
+    "headers",
+    (
+        {"Sec-Fetch-Site": "same-origin"},
+        {"Referer": f"http://127.0.0.1:8765/incidents/{INCIDENT_ID}/"},
+        {
+            "Referer": f"http://127.0.0.1:8765/incidents/{INCIDENT_ID}/",
+            "Sec-Fetch-Site": "cross-site",
+        },
+        {
+            "Referer": "http://127.0.0.1:8765/not-an-incident/",
+            "Sec-Fetch-Site": "same-origin",
+        },
+        {
+            "Origin": "http://attacker.example.test",
+            "Referer": f"http://127.0.0.1:8765/incidents/{INCIDENT_ID}/",
+            "Sec-Fetch-Site": "same-origin",
+        },
+    ),
+)
+def test_presentation_rejects_incomplete_or_cross_site_origin_fallback(
+    headers: dict[str, str],
+) -> None:
+    client, api = _client()
+    csrf = _csrf(client)
+
+    response = client.post(
+        f"/incidents/{INCIDENT_ID}/professional-dispositions",
+        data=_disposition_form(csrf),
+        headers=headers,
         follow_redirects=False,
     )
 
