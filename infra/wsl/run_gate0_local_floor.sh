@@ -77,11 +77,11 @@ confirm() {
 }
 
 operator() {
-  sudo -iu "$OPERATOR" -- "$@"
+  sudo -u "$OPERATOR" -- "$@"
 }
 
 endpoint_auditor() {
-  sudo -iu "$ENDPOINT_AUDITOR" -- "$@"
+  sudo -u "$ENDPOINT_AUDITOR" -- "$@"
 }
 
 cleanup_probe_job() {
@@ -360,12 +360,13 @@ else
 fi
 
 echo "HUMAN OBSERVER ACTION: enter the observer CUPS password only at the local prompt"
-python3 "$ROOT/infra/wsl/verify_cups_gate0.py" \
+sudo -u "$OBSERVER" -- python3 "$ROOT/infra/wsl/verify_cups_gate0.py" \
   --queue "$QUEUE" \
   --job-id "$held_job_id" \
   --send-document-job-id "$open_job_id" \
   --restart-job-id "$terminal_job_id" \
   --brf "$CANDIDATE" \
+  --user "$OBSERVER" \
   --probe-admin-mutation
 
 confirm "CLEANUP-LOCAL-AUTH-PROBES" "cancel the two local-only authorization probe jobs"

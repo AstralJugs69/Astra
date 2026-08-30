@@ -17,10 +17,10 @@
     "pages_completed": 1,
     "pages_total": 1,
     "state": "COMPLETED",
-    "terminal_event_sha256": "178498f4a6c45ffce462fa2438cfe2b7b9a50dbfd0a717fe79477892d179fce5"
+    "terminal_event_sha256": "7a4a4c456a58f83d9990a2a9c02790e98632ffc1eb4715fb7979e0cdec96b434"
   },
   "queue": "Braille-Embosser-Sim",
-  "recorded_at": "2026-08-29T04:21:57.9232028Z",
+  "recorded_at": "2026-08-29T23:45:31.438487+00:00",
   "schema_version": "gate0-local-floor-evidence.v1",
   "simulated_endpoint": true,
   "terminated_capture": {
@@ -32,6 +32,6 @@
     "pages_completed": 1,
     "pages_total": 12,
     "state": "TERMINATED",
-    "terminal_event_sha256": "5f9bdc9c4776e8fd120cba766fce234e35cf74b20b1cf9fbea7877019b103d46"
+    "terminal_event_sha256": "7a4cf6c0cc50bdcd20b86d09cea39a85cbd368520c1959f0134d75a922b9987c"
   }
 }

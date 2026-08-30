@@ -14,7 +14,10 @@ installs build prerequisites, builds the pinned commit, installs its upstream
 Python binding outside the repository, validates both table hashes, and runs a
 Unicode six-dot translation smoke test:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
+cd /mnt/c/dev/Astra
 sudo bash infra/wsl/setup_liblouis_3_38.sh
 source infra/wsl/liblouis_env.sh
 ~~~
@@ -26,7 +29,10 @@ replace it with an unpinned distro package. It never contacts CUPS.
 Use Ubuntu 24.04 under WSL2 with CUPS 2.x and systemd enabled. From the
 repository root inside WSL, validate the policy before installing it:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
+cd /mnt/c/dev/Astra
 bash infra/wsl/validate_cups_policy.sh
 bash infra/wsl/setup_cups_gate0.sh --inspect
 ~~~
@@ -43,7 +49,10 @@ rolls back CUPS configuration, policy, backend, and queue data if installation
 or post-install checks fail. Repeated runs repair the fixed queue rather than
 adding duplicate policies.
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
+cd /mnt/c/dev/Astra
 sudo bash infra/wsl/setup_cups_gate0.sh
 ~~~
 
@@ -76,6 +85,8 @@ one supplied by a Relay process.
 The script never sets or records a password. If Basic authentication is
 enabled, set the two local CUPS passwords only in an interactive terminal:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
 sudo passwd relay-operator
 sudo passwd relay-observer
@@ -85,19 +96,19 @@ Keep passwords out of shell history, repository files, evidence, and chat.
 
 ## Independent human/operator CUPS actions
 
-All job mutations use an explicit, independent operator shell. Do not run them
-as the ordinary WSL account, Relay observer, bridge, or cloud application.
+All job mutations use the explicit, independent operator identity. Do not run
+them as the ordinary WSL account, Relay observer, bridge, or cloud application.
+
+**WSL Ubuntu-24.04:**
 
 ~~~text
-sudo -iu relay-operator
-id -un
-cd /path/to/Astra
-lp -d Braille-Embosser-Sim -o raw -t 'BER|INCIDENT|demo|BASELINE' candidate.brf
-lpstat -W not-completed -o Braille-Embosser-Sim
-lp -i BRAILLE_EMBOSSER_SIM-JOB_ID -H hold
-lp -i BRAILLE_EMBOSSER_SIM-JOB_ID -H resume
-cancel BRAILLE_EMBOSSER_SIM-JOB_ID
-exit
+cd /mnt/c/dev/Astra
+sudo -u relay-operator -- id -un
+sudo -u relay-operator -- lp -d Braille-Embosser-Sim -o raw -t 'BER|INCIDENT|demo|BASELINE' candidate.brf
+sudo -u relay-operator -- lpstat -W not-completed -o Braille-Embosser-Sim
+sudo -u relay-operator -- lp -i BRAILLE_EMBOSSER_SIM-JOB_ID -H hold
+sudo -u relay-operator -- lp -i BRAILLE_EMBOSSER_SIM-JOB_ID -H resume
+sudo -u relay-operator -- cancel BRAILLE_EMBOSSER_SIM-JOB_ID
 ~~~
 
 Replace the job identifier with the actual identifier returned by CUPS. Hold,
@@ -109,6 +120,8 @@ separate facts.
 
 The bridge must use the installed pycups host/port form:
 
+**WSL Ubuntu-24.04 (Python binding):**
+
 ~~~python
 cups.Connection(host="localhost", port=631)
 ~~~
@@ -117,13 +130,17 @@ The authorization harness is a human-run verification tool, not a Relay or
 bridge endpoint. It prompts for the observer password without storing it and
 only prints operation status:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
-python3 infra/wsl/verify_cups_gate0.py \
+cd /mnt/c/dev/Astra
+sudo -u relay-observer -- python3 infra/wsl/verify_cups_gate0.py \
   --queue Braille-Embosser-Sim \
   --job-id HELD_JOB_ID \
   --send-document-job-id OPEN_JOB_ID \
   --restart-job-id TERMINAL_JOB_ID \
   --brf candidate.brf \
+  --user relay-observer \
   --probe-admin-mutation
 ~~~
 
@@ -132,9 +149,12 @@ raw BRF job for `HELD_JOB_ID`, a completed or cancelled job for
 `TERMINAL_JOB_ID`, and the empty `OPEN_JOB_ID` used only for the
 `Send-Document` denial probe:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
-lp -d Braille-Embosser-Sim -o raw -H hold -t 'BER|GATE0|held-auth-probe' candidate.brf
-python3 infra/wsl/create_open_cups_job.py --queue Braille-Embosser-Sim
+cd /mnt/c/dev/Astra
+sudo -u relay-operator -- lp -d Braille-Embosser-Sim -o raw -H hold -t 'BER|GATE0|held-auth-probe' candidate.brf
+sudo -u relay-operator -- python3 infra/wsl/create_open_cups_job.py --queue Braille-Embosser-Sim
 ~~~
 
 The operator cancels the held and empty probe jobs after the verifier finishes.
@@ -145,7 +165,10 @@ The Relay, bridge, and verifier expose no production-control endpoint.
 After the simulator setup has passed, a human can execute all required local
 test actions in one WSL session:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
+cd /mnt/c/dev/Astra
 bash infra/wsl/run_gate0_local_floor.sh
 ~~~
 
@@ -153,7 +176,10 @@ If capture verification already passed and the authorization verifier stopped
 before sending an IPP request, resume with the explicit capture and probe job
 IDs:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
+cd /mnt/c/dev/Astra
 bash infra/wsl/run_gate0_local_floor.sh \
   --resume-captures COMPLETED_JOB_ID TERMINATED_JOB_ID \
   --resume-auth-probes HELD_JOB_ID OPEN_JOB_ID
@@ -174,7 +200,10 @@ After a completed capture, root verifies that `relay-observer` cannot traverse
 the CUPS spool or capture tree and cannot read input/output BRF, journals, or
 manifests:
 
+**WSL Ubuntu-24.04:**
+
 ~~~text
+cd /mnt/c/dev/Astra
 sudo bash infra/wsl/verify_observer_filesystem_access.sh --job-id JOB_ID
 ~~~
 
@@ -188,10 +217,13 @@ the dedicated endpoint auditor. The newer production-lineage receipt utility
 accepts no capture path and reads only the numeric job directory under the
 fixed simulator root:
 
-~~~text
-sudo -u relay-endpoint-auditor python3 infra/wsl/verify_capture_evidence.py --job-id JOB_ID --candidate candidate.brf --expected-state COMPLETED
+**WSL Ubuntu-24.04:**
 
-python3 infra/wsl/audit_endpoint_receipt.py \
+~~~text
+cd /mnt/c/dev/Astra
+sudo -u relay-endpoint-auditor -- python3 infra/wsl/verify_capture_evidence.py --job-id JOB_ID --candidate candidate.brf --expected-state COMPLETED
+
+sudo -u relay-endpoint-auditor -- python3 infra/wsl/audit_endpoint_receipt.py \
   --baseline-id BASELINE_SHA256 \
   --production-link-id LINK_SHA256 \
   --job-id JOB_ID \

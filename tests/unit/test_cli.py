@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
+from google.auth.exceptions import RefreshError
+
 from braille_errata_relay import cli
 
 
@@ -222,3 +224,89 @@ def test_telemetry_cli_publishes_completed_json_without_command_surface(
     assert isinstance(payload, dict)
     assert set(payload).isdisjoint({"command", "submit", "cancel", "hold", "release"})
     assert "secret" not in capsys.readouterr().out
+
+
+def test_telemetry_cli_reports_a_sanitized_cloud_rejection(
+    tmp_path: Path,
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    observation = tmp_path / "observation.json"
+    observation.write_text(
+        json.dumps({"schema_version": "site-observation.v1", "observation_id": "a" * 64}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "_identity_token", lambda **_values: "secret")
+
+    class RejectedTelemetryResponse:
+        status_code = 422
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {
+                "status": "REJECTED",
+                "blocking_reason": "SITE_OBSERVATION_BLOCKING",
+                "sanitized_detail": "site observation replay or chain validation failed",
+            }
+
+    monkeypatch.setattr(cli.httpx, "post", lambda *_args, **_values: RejectedTelemetryResponse())
+
+    exit_code = cli.main(
+        [
+            "publish-site-observation",
+            "--service-url",
+            "https://relay.example.run.app",
+            "--audience",
+            "https://relay.example.run.app",
+            "--observation",
+            str(observation),
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().err) == {
+        "blocking_reason": "SITE_OBSERVATION_BLOCKING",
+        "detail": "site observation replay or chain validation failed",
+        "http_status": 422,
+        "status": "BLOCKED",
+    }
+
+
+def test_cli_reports_identity_token_failure_without_a_traceback(
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    def fail_token(**_values: object) -> str:
+        raise RefreshError("permission denied")
+
+    monkeypatch.setattr(cli, "_identity_token", fail_token)
+
+    exit_code = cli.main(
+        [
+            "supersede-baseline-production",
+            "--service-url",
+            "https://relay.example.run.app",
+            "--audience",
+            "https://relay.example.run.app",
+            "--baseline-id",
+            "a" * 64,
+            "--supersedes-production-link-id",
+            "b" * 64,
+            "--scheduler-job-id",
+            "43",
+            "--expected-state-version",
+            "2",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert json.loads(captured.err) == {
+        "detail": (
+            "identity token issuance failed; verify the temporary "
+            "service-account-scoped Token Creator grant"
+        ),
+        "status": "BLOCKED",
+    }
+    assert "traceback" not in captured.err.lower()
+    assert "permission denied" not in captured.err

@@ -11,6 +11,7 @@ from typing import cast
 
 import google.auth
 import httpx
+from google.auth import exceptions as google_auth_exceptions
 from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token
@@ -329,11 +330,23 @@ def _publish_site_observation(args: argparse.Namespace) -> int:
         timeout=60.0,
     )
     if response.status_code != 200:
+        try:
+            rejected_body = response.json()
+        except ValueError:
+            rejected_body = {}
+        body = rejected_body if isinstance(rejected_body, dict) else {}
+        result: dict[str, object] = {
+            "status": "BLOCKED",
+            "http_status": response.status_code,
+        }
+        blocking_reason = body.get("blocking_reason")
+        if isinstance(blocking_reason, str):
+            result["blocking_reason"] = blocking_reason
+        sanitized_detail = body.get("sanitized_detail")
+        if isinstance(sanitized_detail, str):
+            result["detail"] = sanitized_detail
         print(
-            json.dumps(
-                {"status": "BLOCKED", "http_status": response.status_code},
-                sort_keys=True,
-            ),
+            json.dumps(result, sort_keys=True),
             file=sys.stderr,
         )
         return 1
@@ -353,15 +366,31 @@ def _publish_site_observation(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command == "register-demo-baseline":
-        return _register_demo_baseline(args)
-    if args.command == "link-baseline-production":
-        return _link_baseline_production(args)
-    if args.command == "supersede-baseline-production":
-        return _supersede_baseline_production(args)
-    if args.command == "publish-site-observation":
-        return _publish_site_observation(args)
-    raise AssertionError("unreachable command")
+    try:
+        if args.command == "register-demo-baseline":
+            return _register_demo_baseline(args)
+        if args.command == "link-baseline-production":
+            return _link_baseline_production(args)
+        if args.command == "supersede-baseline-production":
+            return _supersede_baseline_production(args)
+        if args.command == "publish-site-observation":
+            return _publish_site_observation(args)
+        raise AssertionError("unreachable command")
+    except google_auth_exceptions.GoogleAuthError:
+        print(
+            json.dumps(
+                {
+                    "status": "BLOCKED",
+                    "detail": (
+                        "identity token issuance failed; verify the temporary "
+                        "service-account-scoped Token Creator grant"
+                    ),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":

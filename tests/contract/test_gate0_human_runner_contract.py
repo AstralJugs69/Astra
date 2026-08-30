@@ -15,7 +15,11 @@ def test_human_gate0_runner_is_scoped_to_the_fixed_local_simulator() -> None:
     assert 'DEVICE_URI="relay-capture://demo-embosser"' in runner
     assert 'CANDIDATE="$ROOT/demo/expected/v1.brf"' in runner
     assert 'INSTALLED_BACKEND="/usr/lib/cups/backend/relay-capture"' in runner
-    assert 'sudo -iu "$OPERATOR"' in runner
+    assert 'sudo -u "$OPERATOR"' in runner
+    assert 'sudo -u "$ENDPOINT_AUDITOR"' in runner
+    assert 'sudo -u "$OBSERVER" -- python3' in runner
+    assert "sudo -iu" not in runner
+    assert '--user "$OBSERVER"' in runner
     assert "verify_capture_evidence.py" in runner
     assert "verify_cups_gate0.py" in runner
     assert "verify_observer_filesystem_access.sh" in runner

@@ -12,17 +12,23 @@ import asyncio
 import hmac
 import json
 import os
+import re
 import secrets
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol, cast
+from urllib.parse import urlsplit
 
+import google.auth
 import httpx
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from google.auth import exceptions as google_auth_exceptions
+from google.auth import impersonated_credentials
 from google.auth.transport.requests import Request as GoogleAuthRequest
-from google.oauth2 import id_token
+from google.oauth2.credentials import Credentials as UserAdcCredentials
 from jinja2 import DictLoader, Environment, select_autoescape
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response
@@ -42,6 +48,35 @@ class PrivateReviewApiError(RuntimeError):
         self.status_code = status_code
 
 
+class PresentationAuthenticationError(RuntimeError):
+    """The local presentation shell could not mint a private API credential."""
+
+
+_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_MAX_TOKEN_CACHE_SECONDS = 270.0
+_TOKEN_EXPIRY_SKEW_SECONDS = 30.0
+_SERVICE_ACCOUNT_PRINCIPAL = re.compile(
+    r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@"
+    r"[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"
+)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _is_private_https_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return (
+        parsed.scheme == "https"
+        and bool(parsed.netloc)
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
 class AudienceTokenProvider(Protocol):
     async def token_for(self, audience: str) -> str: ...
 
@@ -53,25 +88,93 @@ class PrivateReviewApi(Protocol):
 
 
 class GoogleAudienceTokenProvider:
-    """Cache a local ADC ID token briefly without exposing it to the browser."""
+    """Mint short-lived Cloud Run tokens from ordinary user ADC by impersonation.
 
-    def __init__(self) -> None:
+    This deliberately rejects service-account key credentials and metadata-based
+    credentials. The only accepted source is the developer's ordinary local
+    user ADC, which receives a narrowly scoped, removable IAM Credentials grant
+    for the configured demonstrator service account.
+    """
+
+    def __init__(
+        self,
+        *,
+        target_principal: str,
+        audience: str,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+        utc_clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
+        if _SERVICE_ACCOUNT_PRINCIPAL.fullmatch(target_principal) is None:
+            raise ValueError(
+                "presentation impersonation target must be a service-account principal"
+            )
+        if not _is_private_https_url(audience):
+            raise ValueError("presentation audience must be a private HTTPS URL")
+        self._target_principal = target_principal
+        self._audience = audience
+        self._monotonic_clock = monotonic_clock
+        self._utc_clock = utc_clock
         self._cache: dict[str, tuple[str, float]] = {}
         self._lock = asyncio.Lock()
 
     async def token_for(self, audience: str) -> str:
+        if audience != self._audience:
+            raise ValueError("presentation token provider rejected an unexpected audience")
         async with self._lock:
             cached = self._cache.get(audience)
-            if cached is not None and cached[1] > time.monotonic():
+            if cached is not None and cached[1] > self._monotonic_clock():
                 return cached[0]
-            token = await asyncio.to_thread(
-                id_token.fetch_id_token,
-                GoogleAuthRequest(),
-                audience,
-            )
-            value = cast(str, token)
-            self._cache[audience] = (value, time.monotonic() + 270)
+            value, cache_for_seconds = await asyncio.to_thread(self._mint_token)
+            self._cache[audience] = (value, self._monotonic_clock() + cache_for_seconds)
             return value
+
+    def _mint_token(self) -> tuple[str, float]:
+        try:
+            source, _ = google.auth.default(scopes=(_CLOUD_PLATFORM_SCOPE,))
+        except google_auth_exceptions.DefaultCredentialsError as exc:
+            raise PresentationAuthenticationError(
+                "ordinary local user ADC is required for presentation authentication"
+            ) from exc
+        if not isinstance(source, UserAdcCredentials):
+            raise PresentationAuthenticationError(
+                "presentation authentication accepts only ordinary local user ADC"
+            )
+        try:
+            target = impersonated_credentials.Credentials(  # type: ignore[no-untyped-call]
+                source_credentials=source,
+                target_principal=self._target_principal,
+                target_scopes=(_CLOUD_PLATFORM_SCOPE,),
+                lifetime=300,
+            )
+            token_credentials = impersonated_credentials.IDTokenCredentials(  # type: ignore[no-untyped-call]
+                target_credentials=target,
+                target_audience=self._audience,
+                include_email=True,
+            )
+            token_credentials.refresh(GoogleAuthRequest())
+        except google_auth_exceptions.GoogleAuthError as exc:
+            raise PresentationAuthenticationError(
+                "impersonated presentation authentication was not authorized"
+            ) from exc
+        token = cast(str | None, token_credentials.token)
+        expiry = token_credentials.expiry
+        if not token or expiry is None:
+            raise PresentationAuthenticationError(
+                "impersonated presentation authentication returned an incomplete token"
+            )
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+        else:
+            expiry = expiry.astimezone(UTC)
+        remaining_seconds = (expiry - self._utc_clock()).total_seconds()
+        cache_for_seconds = min(
+            _MAX_TOKEN_CACHE_SECONDS, remaining_seconds - _TOKEN_EXPIRY_SKEW_SECONDS
+        )
+        if cache_for_seconds <= 0:
+            raise PresentationAuthenticationError(
+                "impersonated presentation authentication returned an expired token"
+            )
+        return token, cache_for_seconds
 
 
 class CloudRunPrivateReviewApi:
@@ -82,7 +185,7 @@ class CloudRunPrivateReviewApi:
         *,
         base_url: str,
         audience: str,
-        token_provider: AudienceTokenProvider | None = None,
+        token_provider: AudienceTokenProvider,
     ) -> None:
         if not base_url.rstrip("/"):
             raise ValueError("private Relay API base URL is required")
@@ -90,7 +193,7 @@ class CloudRunPrivateReviewApi:
             raise ValueError("private Relay API audience is required")
         self.base_url = base_url.rstrip("/")
         self.audience = audience
-        self.token_provider = token_provider or GoogleAudienceTokenProvider()
+        self.token_provider = token_provider
 
     @staticmethod
     def _path(path: str) -> str:
@@ -131,13 +234,20 @@ class PresentationSettings:
     api_base_url: str
     audience: str
     session_secret: str
+    impersonate_service_account: str
     port: int = 8765
 
     def __post_init__(self) -> None:
-        if not self.api_base_url.rstrip("/") or not self.audience:
-            raise ValueError("private Relay API URL and audience are required")
+        if not _is_private_https_url(self.api_base_url.rstrip("/")):
+            raise ValueError("private Relay API URL must be an HTTPS URL")
+        if not _is_private_https_url(self.audience):
+            raise ValueError("private Relay API audience must be an HTTPS URL")
         if len(self.session_secret) < 32:
             raise ValueError("presentation session secret must contain at least 32 characters")
+        if _SERVICE_ACCOUNT_PRINCIPAL.fullmatch(self.impersonate_service_account) is None:
+            raise ValueError(
+                "presentation impersonation target must be a service-account principal"
+            )
         if not 1 <= self.port <= 65535:
             raise ValueError("presentation port is outside the valid TCP range")
 
@@ -268,6 +378,10 @@ def create_presentation_app(
     api = api_client or CloudRunPrivateReviewApi(
         base_url=settings.api_base_url,
         audience=settings.audience,
+        token_provider=GoogleAudienceTokenProvider(
+            target_principal=settings.impersonate_service_account,
+            audience=settings.audience,
+        ),
     )
     templates = _templates()
     app = FastAPI(
@@ -305,7 +419,12 @@ def create_presentation_app(
     async def index(request: Request) -> HTMLResponse:
         try:
             payload = await api.get_json("/api/v1/incidents")
-        except (httpx.HTTPError, PrivateReviewApiError, ValueError):
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
             return render("index.html", incidents=(), error="Private review data is unavailable.")
         incidents = payload.get("incidents")
         return render(
@@ -322,7 +441,12 @@ def create_presentation_app(
                 api.get_json(f"/api/v1/incidents/{incident_id}"),
                 api.get_json(f"/api/v1/incidents/{incident_id}/timeline"),
             )
-        except (httpx.HTTPError, PrivateReviewApiError, ValueError):
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
             return render(
                 "incident.html",
                 incident_id=incident_id,
@@ -398,7 +522,12 @@ def create_presentation_app(
                     "idempotency_key": idempotency_key,
                 },
             )
-        except (httpx.HTTPError, PrivateReviewApiError, ValueError):
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
             return _form_error(
                 409, "The disposition was not recorded. Reload the incident before retrying."
             )
@@ -437,7 +566,12 @@ def create_presentation_app(
                     "idempotency_key": idempotency_key,
                 },
             )
-        except (httpx.HTTPError, PrivateReviewApiError, ValueError):
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
             return _form_error(
                 409, "The attestation was not recorded. Reload the incident before retrying."
             )
@@ -454,12 +588,17 @@ def _settings_from_args(argv: Sequence[str] | None = None) -> PresentationSettin
         "--session-secret",
         default=os.environ.get("RELAY_PRESENTATION_SESSION_SECRET"),
     )
+    parser.add_argument(
+        "--impersonate-service-account",
+        default=os.environ.get("RELAY_PRESENTATION_IMPERSONATE_SERVICE_ACCOUNT"),
+    )
     parser.add_argument("--port", default=8765, type=int)
     args = parser.parse_args(argv)
     return PresentationSettings(
         api_base_url=args.api_base_url or "",
         audience=args.audience or "",
         session_secret=args.session_secret or "",
+        impersonate_service_account=args.impersonate_service_account or "",
         port=args.port,
     )
 

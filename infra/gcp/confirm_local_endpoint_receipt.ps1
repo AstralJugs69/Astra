@@ -175,11 +175,11 @@ try {
         }
     }
 
-    $wslRepoRoot = [string](wsl.exe wslpath -a ($repoRoot -replace '\\', '/'))
+    $wslRepoRoot = [string](wsl.exe -d Ubuntu-24.04 --exec wslpath -a ($repoRoot -replace '\\', '/'))
     if (-not $wslRepoRoot) {
         throw 'Could not resolve the repository inside WSL.'
     }
-    $auditOutput = wsl.exe --user relay-endpoint-auditor --exec `
+    $auditOutput = wsl.exe -d Ubuntu-24.04 --user relay-endpoint-auditor --exec `
         python3 "$wslRepoRoot/infra/wsl/audit_endpoint_receipt.py" `
         --baseline-id $BaselineId `
         --production-link-id $ProductionLinkId `
