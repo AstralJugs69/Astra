@@ -24,7 +24,11 @@
     ],
     "v1_brf_sha256": "9b13336e1833b9491207f26720eae9a8c9132b75a232acdac1a9f76834baa736",
     "v2_brf_sha256": "50ace14f16d7bdeba6a8b6e267a3ab2c9659e157ffe72ff4f25b886f6404aa7d",
-    "wsl_container_translation_identity_equal": true
+    "wsl_container_toolchain_identity_equal": true,
+    "wsl_container_rendered_brf_parity": {
+      "status": "BLOCKED",
+      "blocking_reason": "The current-commit WSL application golden run and direct WSL-to-container rendered BRF comparison were not executed in this Slice 2.3 session."
+    }
   },
   "implementation": {
     "containment_confirmation": "PASS",
@@ -53,8 +57,7 @@
     "container_real_liblouis_golden_twice": "PASS",
     "wsl_liblouis_binding_api": "PASS",
     "wsl_cupsd_config_validation": "PASS",
-    "wsl_full_golden": "BLOCKED",
-    "local_container_brf_identity": "BLOCKED"
+    "wsl_full_golden": "BLOCKED"
   },
   "remaining_blockers": [
     "The WSL system Python has the real pinned Liblouis binding but lacks Pydantic and pytest, so a full WSL application golden run was not exercised in this session.",

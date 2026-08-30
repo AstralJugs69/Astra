@@ -642,6 +642,19 @@ def test_containment_proof_evidence_is_sanitized_and_preserves_human_authority()
     )
     assert payload["live_story"]["status"] == "NOT_TOUCHED"
     assert payload["live_story"]["candidate_approved"] == "NOT_CLAIMED"
+    assert payload["liblouis_identity"]["wsl_container_toolchain_identity_equal"] is True
+    assert payload["liblouis_identity"]["wsl_container_rendered_brf_parity"]["status"] == "BLOCKED"
+    invalid_parity_claim = json.loads(json.dumps(payload))
+    invalid_parity_claim["liblouis_identity"]["wsl_container_rendered_brf_parity"] = {
+        "status": "PASS",
+        "v1_brf_sha256": payload["liblouis_identity"]["v1_brf_sha256"],
+        "v2_brf_sha256": payload["liblouis_identity"]["v2_brf_sha256"],
+    }
+    assert list(
+        _validator("slice-2-3-containment-proof-gate-evidence.v1.json").iter_errors(
+            invalid_parity_claim
+        )
+    )
     rendered = json.dumps(payload).casefold()
     for forbidden in (
         "access_token",

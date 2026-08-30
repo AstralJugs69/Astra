@@ -27,7 +27,8 @@
       "additionalProperties": false,
       "required": [
         "version", "profile_id", "profile_sha256", "translation_smoke_sha256", "tables",
-        "v1_brf_sha256", "v2_brf_sha256", "wsl_container_translation_identity_equal"
+        "v1_brf_sha256", "v2_brf_sha256", "wsl_container_toolchain_identity_equal",
+        "wsl_container_rendered_brf_parity"
       ],
       "properties": {
         "version": {"const": "3.38.0"},
@@ -50,7 +51,30 @@
         },
         "v1_brf_sha256": {"$ref": "#/$defs/sha256"},
         "v2_brf_sha256": {"$ref": "#/$defs/sha256"},
-        "wsl_container_translation_identity_equal": {"const": true}
+        "wsl_container_toolchain_identity_equal": {"const": true},
+        "wsl_container_rendered_brf_parity": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "blocking_reason"],
+              "properties": {
+                "status": {"const": "BLOCKED"},
+                "blocking_reason": {"type": "string", "minLength": 1, "maxLength": 512}
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "v1_brf_sha256", "v2_brf_sha256"],
+              "properties": {
+                "status": {"const": "PASS"},
+                "v1_brf_sha256": {"$ref": "#/$defs/sha256"},
+                "v2_brf_sha256": {"$ref": "#/$defs/sha256"}
+              }
+            }
+          ]
+        }
       }
     },
     "implementation": {
@@ -91,7 +115,7 @@
         "focused_containment_proof_tests", "full_windows_suite", "frozen_lock", "ruff_lint",
         "scoped_format", "strict_mypy", "docker_build", "installed_container_readiness",
         "container_real_liblouis_golden_twice", "wsl_liblouis_binding_api",
-        "wsl_cupsd_config_validation", "wsl_full_golden", "local_container_brf_identity"
+        "wsl_cupsd_config_validation", "wsl_full_golden"
       ],
       "properties": {
         "focused_containment_proof_tests": {"enum": ["PASS", "BLOCKED"]},
@@ -105,8 +129,7 @@
         "container_real_liblouis_golden_twice": {"enum": ["PASS", "BLOCKED"]},
         "wsl_liblouis_binding_api": {"enum": ["PASS", "BLOCKED"]},
         "wsl_cupsd_config_validation": {"enum": ["PASS", "BLOCKED"]},
-        "wsl_full_golden": {"enum": ["PASS", "BLOCKED"]},
-        "local_container_brf_identity": {"enum": ["PASS", "BLOCKED"]}
+        "wsl_full_golden": {"enum": ["PASS", "BLOCKED"]}
       }
     },
     "remaining_blockers": {
@@ -118,6 +141,58 @@
       "items": {"type": "string", "minLength": 1, "maxLength": 512}
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verification": {
+            "required": ["wsl_full_golden"],
+            "properties": {"wsl_full_golden": {"const": "BLOCKED"}}
+          }
+        },
+        "required": ["verification"]
+      },
+      "then": {
+        "properties": {
+          "liblouis_identity": {
+            "required": ["wsl_container_rendered_brf_parity"],
+            "properties": {
+              "wsl_container_rendered_brf_parity": {
+                "required": ["status"],
+                "properties": {"status": {"const": "BLOCKED"}}
+              }
+            }
+          }
+        },
+        "required": ["liblouis_identity"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "liblouis_identity": {
+            "required": ["wsl_container_rendered_brf_parity"],
+            "properties": {
+              "wsl_container_rendered_brf_parity": {
+                "required": ["status"],
+                "properties": {"status": {"const": "PASS"}}
+              }
+            }
+          }
+        },
+        "required": ["liblouis_identity"]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "required": ["wsl_full_golden"],
+            "properties": {"wsl_full_golden": {"const": "PASS"}}
+          }
+        },
+        "required": ["verification"]
+      }
+    }
+  ],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }
