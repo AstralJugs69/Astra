@@ -314,6 +314,28 @@ separately guarded incident-detail forms for explicit human records; the
 launcher never invokes them. Its temporary authentication prerequisite is
 explained in the Google Cloud setup guide.
 
+For a repeated rehearsal or an evaluator walkthrough, the bounded wrapper
+reduces this to one command:
+
+~~~powershell
+# Fastest judge path: offline, visibly labeled, no Google account required.
+.\infra\demo\rehearse.ps1 -Mode Fixture
+
+# Private read-only dashboard over existing durable cloud evidence.
+.\infra\demo\rehearse.ps1 -Mode Live
+
+# Intentional source-edit take: enable the existing automatic watch only for
+# this session and restore its previous Scheduler state afterward.
+.\infra\demo\rehearse.ps1 -Mode Live -EnableAutomaticWatch
+~~~
+
+Press Enter in the rehearsal terminal when finished. The wrapper stops the
+exact presentation process, removes the temporary demonstrator permission, and
+restores any Scheduler state it changed. `-Mode Status` is read-only;
+`-Mode Cleanup` recovers an interrupted session from its ignored state record.
+No mode edits or manually reconciles Drive, records a professional decision,
+or controls CUPS.
+
 ## Configuration and security
 
 The non-destructive initializer writes an ignored local environment file that

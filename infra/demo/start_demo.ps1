@@ -53,7 +53,12 @@ if ($Port -lt 1 -or $Port -gt 65535) {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location -LiteralPath $repoRoot
-$config = Join-Path $repoRoot $ConfigPath
+$config = if ([IO.Path]::IsPathRooted($ConfigPath)) {
+    $ConfigPath
+}
+else {
+    Join-Path $repoRoot $ConfigPath
+}
 $uvCommand = Get-Command uv -ErrorAction Stop
 
 if (-not $ApiBaseUrl) {

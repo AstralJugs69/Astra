@@ -24,3 +24,10 @@ def test_demo_launcher_starts_only_loopback_presentation_and_has_no_control_plan
         "professional-dispositions",
     ):
         assert forbidden not in launcher
+
+
+def test_demo_launcher_accepts_relative_or_absolute_config_paths() -> None:
+    launcher = (ROOT / "infra" / "demo" / "start_demo.ps1").read_text(encoding="utf-8")
+
+    assert "[IO.Path]::IsPathRooted($ConfigPath)" in launcher
+    assert "Join-Path $repoRoot $ConfigPath" in launcher

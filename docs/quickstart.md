@@ -85,6 +85,27 @@ forms remain available only when a human deliberately opens and submits them.
 If `doctor` is blocked, resolve the documented prerequisite before claiming
 live data is ready.
 
+### One-command rehearsal wrapper
+
+~~~powershell
+# No cloud access; all pages are marked SANITIZED DEMO FIXTURE.
+.\infra\demo\rehearse.ps1 -Mode Fixture
+
+# Private read-only dashboard over existing durable evidence.
+.\infra\demo\rehearse.ps1 -Mode Live
+
+# Live source-edit take with the existing automatic watch enabled only for the
+# lifetime of this terminal session.
+.\infra\demo\rehearse.ps1 -Mode Live -EnableAutomaticWatch
+~~~
+
+The command opens the relevant loopback page and waits. Press Enter to end the
+session and restore temporary access. Use `-Mode Status` to inspect the exact
+recorded session, or `-Mode Cleanup` after a forcibly closed terminal. Cleanup
+is restricted to the recorded presentation PID, IAM member, service account,
+and Scheduler job. It never edits or manually reconciles Drive, records human
+disposition, or controls CUPS.
+
 ## 5. Verify the code
 
 ~~~text
