@@ -99,14 +99,16 @@ authentication libraries for Drive read-only scope. Before enabling the live
 automatic watch:
 
 1. enable the Drive API in the Cloud project;
-2. use exactly one supported **text/markdown** Drive file;
+2. use exactly one supported native Google Doc or **text/markdown** Drive file;
 3. share that file or approved Shared Drive content with the runtime service
    account as a viewer;
 4. configure the same file ID as **DRIVE_FILE_ID** in the Cloud Run runtime
    environment.
 
-Register the matching accepted baseline, then run the one-time `INITIALIZE`
-source setup, retain its receipt ID, and use the explicit enablement in
+Use the guided dashboard to initialize and register the baseline in one bounded
+operation, or run the one-time `INITIALIZE` first and then register that exact
+revision through the authenticated CLI/API. Retain the initialization receipt
+ID and use the explicit enablement in
 [fresh-project deployment](fresh-project-deployment.md#11-automatic-drive-watch-configure-paused-then-enable-explicitly).
 The dedicated scheduler identity invokes the private automation route every
 minute. The source adapter drains the Drive change feed and then re-fetches

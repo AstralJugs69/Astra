@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import hmac
 import json
 import os
@@ -41,6 +42,7 @@ from braille_errata_relay.domain.models import (
     ProofDecision,
     TruthBasis,
 )
+from braille_errata_relay.local_setup import extract_drive_file_id
 from braille_errata_relay.presentation.assets import REPORT_JAVASCRIPT, WATCH_JAVASCRIPT
 from braille_errata_relay.presentation.view_models import report_view
 from braille_errata_relay.presentation.watch import (
@@ -461,7 +463,7 @@ _TEMPLATES["index.html"] = """<!doctype html>
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:3;background:#fff;padding:.6rem 1rem;border:3px solid var(--blue)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #2ca5b5}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.site-header .shell{display:flex;gap:1rem;align-items:center;justify-content:space-between;padding:1rem 0}.brand{font-weight:800;letter-spacing:.015em}.eyebrow{margin:0;color:#bce7ee;font-size:.78rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.hero{padding:2.5rem 0 1.25rem}.hero h1{margin:.25rem 0 .6rem;font-size:clamp(2rem,5vw,3.5rem);line-height:1.08}.lede{max-width:75ch;margin:0;color:var(--muted);font-size:1.1rem}.notice,.empty{background:#fff9df;border-left:5px solid var(--amber);padding:1rem 1.1rem;margin:1rem 0}.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1rem 0 2rem}.summary-card,.incident-card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.summary-card{padding:1rem}.summary-card strong{display:block;font-size:1.7rem}.summary-card span{color:var(--muted);font-size:.9rem}.section-heading{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin:1rem 0}.section-heading h2{margin:0;font-size:1.35rem}.section-heading p{margin:0;color:var(--muted)}.incident-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;padding-bottom:3rem}.incident-card{display:block;color:inherit;text-decoration:none;padding:1.1rem;transition:transform .15s ease,box-shadow .15s ease}.incident-card:hover{transform:translateY(-2px)}.incident-card:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}.card-top{display:flex;justify-content:space-between;gap:.75rem;align-items:flex-start}.incident-card h3{margin:0;font-size:1.05rem;overflow-wrap:anywhere}.state{font-weight:800;margin:.75rem 0 .3rem}.meta{color:var(--muted);font-size:.9rem;margin:.25rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.real{color:var(--teal);background:#e8faf8}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.simulated{color:var(--red);background:#fff0f2}.blocked{color:var(--red);font-weight:800}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}@media(max-width:640px){.summary-grid{grid-template-columns:1fr}.site-header .shell{align-items:flex-start;flex-direction:column}.hero{padding-top:1.5rem}}
 </style></head>
 <body><a class="skip" href="#incidents">Skip to incidents</a>
-<header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div></div><div class="badges"><a class="badge real" href="/watch">OPEN LIVE WATCH FLOOR</a>{% if fixture_mode %}<span class="badge simulated">SANITIZED DEMO FIXTURE</span>{% endif %}<span class="badge real">READ-ONLY REVIEW</span><span class="badge human">HUMAN AUTHORITY</span></div></div></header>
+<header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay</div></div><div class="badges"><a class="badge deterministic" href="/setup/source">REGISTER BASELINE</a><a class="badge real" href="/watch">OPEN LIVE WATCH FLOOR</a>{% if fixture_mode %}<span class="badge simulated">SANITIZED DEMO FIXTURE</span>{% endif %}<span class="badge real">READ-ONLY REVIEW</span><span class="badge human">HUMAN AUTHORITY</span></div></div></header>
 <main class="shell"><section class="hero"><p class="eyebrow">Professional review dashboard</p><h1>Evidence before action.</h1><p class="lede">Relay detects and explains a correction, preserves immutable Braille lineage, and records professional evidence. It does not control CUPS, an embosser, or a production device.</p></section>
 {% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
 <section class="summary-grid" aria-label="Incident summary"><article class="summary-card"><strong>{{ summary.total|default(incidents|length) }}</strong><span>Report-bearing incidents</span></article><article class="summary-card"><strong>{{ summary.blocked|default(0) }}</strong><span>Visible blocked/review outcomes</span></article><article class="summary-card"><strong>Human</strong><span>Disposition, proof, and resubmission remain external</span></article></section>
@@ -586,6 +588,29 @@ _TEMPLATES["report.html"] = """<!doctype html>
 <section class="card"><h2>Recommended human response</h2><ol>{% for step in recommended_human_steps %}<li>{{ step }}</li>{% else %}<li>Review the evidence with the qualified human role shown above.</li>{% endfor %}</ol></section>
 <section class="boundary"><strong>Authority boundary:</strong> Relay presents source evidence, deterministic Braille analysis, Gemini’s persisted structured assessment, read-only production context, and human records. Candidate BRF is not an approved production master. Relay does not certify Braille, submit a replacement, or control a device.</section>
 <details><summary>Audit appendix</summary><h2>Stored source correction</h2><pre>{{ source_correction }}</pre><h2>Page-impact evidence</h2><pre>{{ braille_impact }}</pre><h2>Candidate manifest and profile identity</h2><pre>{{ candidate_manifest }}</pre><pre>{{ profile_identity }}</pre><h2>Attributable timeline</h2><ol>{% for event in timeline %}<li><strong>[{{ event.truth_basis }}] {{ event.kind }}</strong> — {{ event.recorded_at }}</li>{% else %}<li>No attributable events are available.</li>{% endfor %}</ol></details>{% endif %}</main></body></html>"""
+
+
+_SETUP_STYLE = """
+:root{--ink:#15233b;--muted:#52627a;--paper:#f5f7fb;--card:#fff;--line:#d7dfeb;--navy:#173f75;--teal:#027b7b;--amber:#8a5b00;--red:#a02638}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}.head{background:var(--ink);color:#fff;border-bottom:5px solid #2ca5b5}.shell{width:min(960px,calc(100% - 2rem));margin:auto}.head .shell{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:1rem 0}.head a{color:#fff}.brand{font-weight:850}.eyebrow{color:#097579;font-size:.78rem;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.head .eyebrow{color:#bce7ee;margin:0}.hero{padding:2rem 0 1rem}.hero h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.05;margin:.25rem 0}.lede{color:var(--muted);max-width:72ch}.steps{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}.step{border:1px solid var(--line);border-radius:999px;padding:.3rem .7rem;font-weight:750;background:#fff}.step.current{background:#e7f5f5;border-color:var(--teal);color:#056466}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1.2rem;margin:1rem 0;box-shadow:0 12px 28px rgba(20,42,74,.08)}.card h2{margin-top:0}.notice{background:#fff9df;border-left:5px solid var(--amber);padding:1rem}.success{background:#e9f8f5;border-left:5px solid var(--teal);padding:1rem}.error{background:#fff0f2;border-left:5px solid var(--red);padding:1rem}label{display:block;font-weight:750;margin:.9rem 0}input,select{display:block;width:100%;margin-top:.3rem;padding:.65rem;border:1px solid #8496ae;border-radius:7px;font:inherit}.choice{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.choice a{display:block;border:1px solid var(--line);border-radius:10px;padding:1rem;color:var(--ink);text-decoration:none;background:#fff}.button,button{display:inline-block;border:0;border-radius:7px;padding:.7rem 1rem;background:var(--navy);color:#fff;font:inherit;font-weight:850;text-decoration:none;cursor:pointer}.secondary{background:#edf3fb;color:var(--navy);border:1px solid var(--navy)}code,pre{background:#eef2f7;border:1px solid var(--line);border-radius:6px;padding:.2rem .4rem;overflow-wrap:anywhere}pre{padding:.8rem;white-space:pre-wrap}.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.fact{background:#f3f6fa;padding:.75rem;border-radius:8px}.fact strong{display:block}.boundary{border:1px solid #a7d8da;background:#edf7f8;padding:1rem;border-radius:10px;margin:1.5rem 0}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}@media(max-width:650px){.choice,.facts{grid-template-columns:1fr}.head .shell{align-items:flex-start;flex-direction:column}}
+"""
+
+_TEMPLATES["setup_source.html"] = (
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Astra | Register authoritative source</title><style>"""
+    + _SETUP_STYLE
+    + """</style></head><body><header class="head"><div class="shell"><div><p class="eyebrow">Guided baseline onboarding</p><div class="brand">Braille Errata Relay</div></div><a href="/">Review dashboard</a></div></header><main class="shell"><section class="hero"><p class="eyebrow">Step 1 of 3</p><h1>Choose and verify the authoritative source</h1><p class="lede">Astra reads one explicitly configured Drive file. It never creates the file, changes sharing, or edits its contents.</p></section><div class="steps"><span class="step current">1 Source</span><span class="step">2 Baseline</span><span class="step">3 Monitor</span></div>{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}{% if result %}<section class="card"><h2>{% if result.matches_configured_source %}Source verified and configured{% else %}Source verified; configuration update required{% endif %}</h2><div class="facts"><div class="fact"><strong>Type</strong>{{ result.source_mime_type }}</div><div class="fact"><strong>Parsed blocks</strong>{{ result.block_count }}</div><div class="fact"><strong>Bytes</strong>{{ result.byte_length }}</div><div class="fact"><strong>Source SHA-256</strong><code>{{ result.source_sha256[:16] }}...</code></div></div>{% if result.matches_configured_source %}<p class="success">The private runtime can read this exact configured file. Continue to deterministic baseline registration.</p><a class="button" href="/setup/baseline">Continue to baseline</a>{% else %}<p class="notice"><strong>Human configuration step required.</strong> The runtime can read this file, but Cloud Run is configured for another source. Run the generated command in your own authenticated terminal, wait for the private revision, then verify again. Astra will not modify cloud configuration from this page.</p><pre>{{ update_command }}</pre>{% endif %}</section>{% endif %}<section class="card"><h2>1. Create or upload the source</h2><div class="choice"><a href="https://docs.new" target="_blank" rel="noopener"><strong>Native Google Doc</strong><br>Create a document in Google Docs. Astra exports it read-only as Markdown for the strict parser.</a><div><strong>Markdown file</strong><br>Create a UTF-8 <code>.md</code> file and upload it to Google Drive. Keep it under the configured byte limit.</div></div></section><section class="card"><h2>2. Share read-only</h2><p>In Drive, share the file with this runtime identity as <strong>Viewer</strong>:</p><pre>{{ setup.runtime_service_account_email }}</pre><p>Do not make the file public. Viewer access is sufficient.</p></section><section class="card"><h2>3. Verify access and format</h2><form method="post" action="/setup/source/verify"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Google Drive or Docs URL<input name="source_reference" required maxlength="2048" placeholder="https://docs.google.com/document/d/.../edit"></label><label>Source type<select name="mime_type"><option value="application/vnd.google-apps.document">Native Google Doc</option><option value="text/markdown">Drive-hosted Markdown (.md)</option></select></label><button type="submit">Verify read-only source</button></form></section><section class="boundary"><strong>Authority boundary:</strong> verification performs metadata and byte reads only. It does not create Docs, grant permissions, alter Cloud Run, start the scheduler, register a production job, or touch CUPS.</section></main></body></html>"""
+)
+
+_TEMPLATES["setup_baseline.html"] = (
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Astra | Register baseline</title><style>"""
+    + _SETUP_STYLE
+    + """</style></head><body><header class="head"><div class="shell"><div><p class="eyebrow">Guided baseline onboarding</p><div class="brand">Braille Errata Relay</div></div><a href="/setup/source">Back to source</a></div></header><main class="shell"><section class="hero"><p class="eyebrow">Step 2 of 3</p><h1>Generate and register the deterministic baseline</h1><p class="lede">Astra will authoritatively refetch the configured source, normalize it, translate with the pinned Liblouis profile, store immutable evidence, and register a demo-fixture baseline.</p></section><div class="steps"><span class="step">1 Source</span><span class="step current">2 Baseline</span><span class="step">3 Monitor</span></div>{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}{% if not verified %}<p class="notice">Verify the currently configured source before registration. <a href="/setup/source">Return to source setup.</a></p>{% else %}<section class="card"><h2>Baseline identity</h2><form method="post" action="/setup/baseline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>External production reference<input name="production_id" required maxlength="512" placeholder="BIOLOGY-VOLUME-2-DEMO"></label><label>Production site<input name="site_id" required maxlength="512" value="{{ setup.site_id or '' }}"></label><label>Observed queue name<input name="queue_name" required maxlength="512" value="{{ setup.queue_name or '' }}"></label><button type="submit">Initialize source and register baseline</button></form><p>This may take a few seconds. Retrying the same form is safe and idempotent for this browser session.</p></section>{% endif %}<section class="notice"><strong>What this does not do:</strong> it does not approve a real production master, submit a CUPS job, link an existing production job, enable automatic reconciliation, or operate an embosser.</section></main></body></html>"""
+)
+
+_TEMPLATES["baseline_monitor.html"] = (
+    """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="15"><title>Astra | Baseline monitor</title><style>"""
+    + _SETUP_STYLE
+    + """</style></head><body><header class="head"><div class="shell"><div><p class="eyebrow">Guided baseline onboarding</p><div class="brand">Braille Errata Relay</div></div><a href="/">Review dashboard</a></div></header><main class="shell"><section class="hero"><p class="eyebrow">Step 3 of 3</p><h1>Baseline registered</h1><p class="lede">This page refreshes every 15 seconds and shows only durable, monitor-safe baseline facts.</p></section><div class="steps"><span class="step">1 Source</span><span class="step">2 Baseline</span><span class="step current">3 Monitor</span></div>{% if error %}<p class="error" role="alert">{{ error }}</p>{% else %}<p class="success"><strong>Registration successful.</strong> Astra generated deterministic BRF evidence and registered the baseline without performing a production action.</p><section class="card"><h2>{{ baseline.production_id }}</h2><div class="facts"><div class="fact"><strong>Status</strong>{{ baseline.status }}</div><div class="fact"><strong>State version</strong>{{ baseline.state_version }}</div><div class="fact"><strong>Site / queue</strong>{{ baseline.site_id }} / {{ baseline.queue_name }}</div><div class="fact"><strong>Created</strong>{{ baseline.created_at }}</div><div class="fact"><strong>Baseline ID</strong><code>{{ baseline.baseline_id[:16] }}...</code></div><div class="fact"><strong>BRF SHA-256</strong><code>{{ baseline.approved_brf_sha256[:16] }}...</code></div></div></section><section class="card"><h2>What happens next</h2><ol><li>A qualified human uses the existing production surface if they choose to submit this baseline.</li><li>Astra accepts only fresh, unambiguous read-only observation evidence to link that human-submitted job.</li><li>Source edits are detected through the configured Drive change feed when the authorized automation cycle runs.</li></ol><p><a class="button" href="/watch">Open live watch floor</a> <a class="button secondary" href="/setup/source">Register another source</a></p></section>{% endif %}<section class="boundary"><strong>Authority boundary:</strong> the baseline is a demo-generated fixture, not a certified production master. No CUPS/device action, endpoint completion, or physical output is claimed.</section></main></body></html>"""
+)
 
 
 def _templates() -> Environment:
@@ -822,6 +847,25 @@ def create_presentation_app(
             and not parsed.fragment
         )
 
+    def is_local_setup_referer(value: str | None) -> bool:
+        if value is None:
+            return False
+        parsed = urlsplit(value.strip())
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        return (
+            parsed.scheme.casefold() == "http"
+            and parsed.hostname == "127.0.0.1"
+            and port == settings.port
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path.rstrip("/") in {"/setup/source", "/setup/baseline"}
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     def require_local_form(request: Request, csrf: str) -> HTMLResponse | None:
         if request.headers.get("host") != f"127.0.0.1:{settings.port}":
             return _form_error(403, "Local review requests must use the loopback host.")
@@ -829,13 +873,207 @@ def create_presentation_app(
         if not is_local_form_origin(origin):
             opaque_or_absent_origin = origin is None or origin.strip().casefold() == "null"
             same_origin_metadata = request.headers.get("sec-fetch-site") == "same-origin"
-            local_referer = is_local_incident_referer(request.headers.get("referer"))
+            local_referer = is_local_incident_referer(
+                request.headers.get("referer")
+            ) or is_local_setup_referer(request.headers.get("referer"))
             if not (opaque_or_absent_origin and same_origin_metadata and local_referer):
                 return _form_error(403, "The local review form origin was not accepted.")
         expected = request.session.get("csrf_token")
         if not isinstance(expected, str) or not hmac.compare_digest(expected, csrf):
             return _form_error(403, "The local review form token was not accepted.")
         return None
+
+    async def setup_status() -> dict[str, object]:
+        return await api.get_json("/api/v1/setup/source")
+
+    @app.get("/setup/source", response_class=HTMLResponse)
+    async def setup_source(request: Request) -> HTMLResponse:
+        try:
+            setup = await setup_status()
+            error = None
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+            ValueError,
+        ):
+            setup = {"runtime_service_account_email": "Unavailable"}
+            error = "Private source setup data is unavailable. Check authentication and retry."
+        request.session.pop("source_verified_configured", None)
+        request.session.pop("source_verification_sha256", None)
+        request.session.pop("baseline_setup_idempotency_key", None)
+        request.session.pop("baseline_setup_fingerprint", None)
+        return render(
+            "setup_source.html",
+            setup=setup,
+            result=None,
+            update_command=None,
+            error=error,
+            csrf_token=csrf_token(request),
+        )
+
+    @app.post("/setup/source/verify", response_class=HTMLResponse)
+    async def setup_source_verify(
+        request: Request,
+        csrf_token: str = Form(...),
+        source_reference: str = Form(..., min_length=1, max_length=2048),
+        mime_type: str = Form(...),
+    ) -> HTMLResponse:
+        rejection = require_local_form(request, csrf_token)
+        if rejection is not None:
+            return rejection
+        if mime_type not in {
+            "text/markdown",
+            "application/vnd.google-apps.document",
+        }:
+            return _form_error(422, "Choose one of the supported source types.")
+        try:
+            file_id = extract_drive_file_id(source_reference)
+            setup, result = await asyncio.gather(
+                setup_status(),
+                api.post_json(
+                    "/api/v1/setup/source-verifications",
+                    {"file_id": file_id, "mime_type": mime_type},
+                ),
+            )
+        except ValueError:
+            return _form_error(422, "Enter a valid Google Drive or Google Docs URL.")
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+        ):
+            return _form_error(
+                422,
+                "The private runtime could not read and parse that source. Confirm Viewer sharing and the selected source type.",
+            )
+        matches = result.get("matches_configured_source") is True
+        request.session["source_verified_configured"] = matches
+        source_hash = result.get("source_file_id_sha256")
+        if matches and isinstance(source_hash, str):
+            request.session["source_verification_sha256"] = source_hash
+        else:
+            request.session.pop("source_verification_sha256", None)
+        update_command = None
+        if not matches:
+            project = str(setup.get("project_id") or "YOUR_PROJECT_ID")
+            region = str(setup.get("cloud_run_region") or "YOUR_REGION")
+            update_command = (
+                "gcloud run services update braille-errata-relay "
+                f'--project="{project}" --region="{region}" '
+                f'--update-env-vars="DRIVE_FILE_ID={file_id},DRIVE_SOURCE_MIME_TYPE={mime_type}"'
+            )
+        return render(
+            "setup_source.html",
+            setup=setup,
+            result=result,
+            update_command=update_command,
+            error=None,
+            csrf_token=csrf_token,
+        )
+
+    @app.get("/setup/baseline", response_class=HTMLResponse)
+    async def setup_baseline(request: Request) -> HTMLResponse:
+        try:
+            setup = await setup_status()
+            error = None
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+            ValueError,
+        ):
+            setup = {}
+            error = "Private baseline setup data is unavailable."
+        return render(
+            "setup_baseline.html",
+            setup=setup,
+            verified=request.session.get("source_verified_configured") is True,
+            error=error,
+            csrf_token=csrf_token(request),
+        )
+
+    @app.post("/setup/baseline")
+    async def setup_baseline_register(
+        request: Request,
+        csrf_token: str = Form(...),
+        production_id: str = Form(..., min_length=1, max_length=512),
+        site_id: str = Form(..., min_length=1, max_length=512),
+        queue_name: str = Form(..., min_length=1, max_length=512),
+    ) -> Response:
+        rejection = require_local_form(request, csrf_token)
+        if rejection is not None:
+            return rejection
+        if request.session.get("source_verified_configured") is not True:
+            return _form_error(409, "Verify the configured source before registration.")
+        registration_fingerprint = hashlib.sha256(
+            json.dumps(
+                [
+                    request.session.get("source_verification_sha256"),
+                    production_id.strip(),
+                    site_id.strip(),
+                    queue_name.strip(),
+                ],
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        idempotency_key = request.session.get("baseline_setup_idempotency_key")
+        if (
+            not isinstance(idempotency_key, str)
+            or request.session.get("baseline_setup_fingerprint") != registration_fingerprint
+        ):
+            idempotency_key = secrets.token_urlsafe(32)
+            request.session["baseline_setup_idempotency_key"] = idempotency_key
+            request.session["baseline_setup_fingerprint"] = registration_fingerprint
+        try:
+            result = await api.post_json(
+                "/api/v1/setup/baselines",
+                {
+                    "production_id": production_id.strip(),
+                    "site_id": site_id.strip(),
+                    "queue_name": queue_name.strip(),
+                    "idempotency_key": idempotency_key,
+                },
+            )
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+            ValueError,
+        ):
+            return _form_error(
+                422,
+                "Baseline registration did not complete. No production action was performed; verify the source and retry.",
+            )
+        baseline = _mapping(result.get("baseline"))
+        baseline_id = baseline.get("baseline_id")
+        if not isinstance(baseline_id, str) or re.fullmatch(r"[0-9a-f]{64}", baseline_id) is None:
+            return _form_error(502, "Baseline registration returned an invalid monitor identity.")
+        request.session.pop("baseline_setup_idempotency_key", None)
+        request.session.pop("baseline_setup_fingerprint", None)
+        return RedirectResponse(f"/baselines/{baseline_id}", status_code=303)
+
+    @app.get("/baselines/{baseline_id}", response_class=HTMLResponse)
+    async def baseline_monitor(baseline_id: str) -> HTMLResponse:
+        if re.fullmatch(r"[0-9a-f]{64}", baseline_id) is None:
+            return _form_error(404, "Baseline not found.")
+        try:
+            baseline = await api.get_json(f"/api/v1/setup/baselines/{baseline_id}")
+            error = None
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            TypeError,
+            ValueError,
+        ):
+            baseline = {}
+            error = "Baseline monitor data is temporarily unavailable."
+        return render("baseline_monitor.html", baseline=baseline, error=error)
 
     @app.get("/assets/watch.js")
     async def watch_javascript() -> Response:

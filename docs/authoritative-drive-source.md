@@ -7,9 +7,10 @@ Drive is the universal intake system for braille facilities.
 
 ## Correctness path
 
-1. A human registers a matching accepted baseline, then runs `INITIALIZE`
-   once and retains its receipt ID before explicitly enabling the private
-   automatic watch.
+1. A human initializes the configured source and registers that accepted
+   revision as the matching baseline (the guided dashboard performs both in
+   order), then retains the initialization receipt ID before explicitly
+   enabling the private automatic watch.
 2. Cloud Scheduler invokes Astra's private automation route every minute. The
    route drains the Drive change feed from its durable cursor.
 3. A matching change causes an authoritative metadata-and-byte refetch.

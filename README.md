@@ -103,6 +103,7 @@ The intended live hero path is:
 - [Quick start](#quick-start-choose-the-truthful-path)
 - [Live demo preparation](docs/demo-preparation.md)
 - [Fresh-project deployment](docs/fresh-project-deployment.md)
+- [Guided source and baseline onboarding](docs/guided-baseline-onboarding.md)
 - [Security and authority](docs/security-and-authority.md)
 - [Scope and limits](#scope-and-unclaimed-behavior)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from datetime import UTC, datetime
@@ -19,6 +20,10 @@ from braille_errata_relay.adapters.adk_assessor import (
     AdkSemanticAssessor,
     SemanticAssessmentBlocked,
     SemanticAssessmentUnavailable,
+)
+from braille_errata_relay.adapters.drive import (
+    DriveBlobProvider,
+    DriveSourceError,
 )
 from braille_errata_relay.adapters.firestore_ledger import FirestoreGate0Ledger
 from braille_errata_relay.api.dependencies import build_runtime_dependencies
@@ -71,6 +76,8 @@ from braille_errata_relay.application.telemetry_ingestion import (
     TelemetryIngestionWorkflow,
     TelemetryRejected,
 )
+from braille_errata_relay.braille.errors import UnsupportedContentError
+from braille_errata_relay.braille.normalize import normalize_source_bytes
 from braille_errata_relay.braille.profile import load_translation_profile
 from braille_errata_relay.braille.readiness import check_liblouis_readiness
 from braille_errata_relay.cloud_settings import CloudSettings
@@ -96,6 +103,8 @@ from braille_errata_relay.domain.models import (
     ProofDecision,
     ProofRecord,
     ReplacementObservationLink,
+    SourceLocator,
+    SourceProvider,
     TruthBasis,
 )
 
@@ -140,6 +149,29 @@ class BaselineRegistrationRequest(BaseModel):
     approved_brf_sha256: None = None
     approval_label: Literal["DEMO_FIXTURE_APPROVED"]
     translation_profile_id: Literal["demo-ueb-40x25-v1"]
+    site_id: str = Field(min_length=1, max_length=512)
+    queue_name: str = Field(min_length=1, max_length=512)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SourceSetupVerificationRequest(BaseModel):
+    """Read-only candidate verification; the candidate identity is never echoed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str = Field(pattern=r"^[A-Za-z0-9_-]{10,256}$")
+    mime_type: Literal[
+        "text/markdown",
+        "application/vnd.google-apps.document",
+    ]
+
+
+class GuidedBaselineRegistrationRequest(BaseModel):
+    """Register only the server-configured source after an authoritative refetch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    production_id: str = Field(min_length=1, max_length=512)
     site_id: str = Field(min_length=1, max_length=512)
     queue_name: str = Field(min_length=1, max_length=512)
     idempotency_key: str = Field(min_length=1, max_length=512)
@@ -556,6 +588,203 @@ def create_app(
                 "dead_letter_possible": result.dead_letter_possible,
                 "message_ids": list(result.message_ids),
                 "notification_status": "NOT_CLAIMED",
+            },
+        )
+
+    @app.get("/api/v1/setup/source")
+    async def source_setup_status() -> JSONResponse:
+        """Describe the bounded onboarding seam without exposing the Drive file ID."""
+
+        if cloud_settings is None or drive_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "Drive workflow is not configured"},
+            )
+        provider = drive_workflow.provider
+        return JSONResponse(
+            status_code=200,
+            content={
+                "schema_version": "guided-source-setup.v1",
+                "status": "CONFIGURED",
+                "runtime_service_account_email": (cloud_settings.runtime_service_account_email),
+                "project_id": cloud_settings.project_id,
+                "cloud_run_region": cloud_settings.cloud_run_region,
+                "source_mime_type": provider.supported_mime_type,
+                "source_file_id_sha256": hashlib.sha256(
+                    provider.expected_file_id.encode("utf-8")
+                ).hexdigest(),
+                "source_max_bytes": provider.max_bytes,
+                "site_id": cloud_settings.site_id,
+                "queue_name": cloud_settings.cups_queue_name,
+                "authority_boundary": (
+                    "READ_ONLY_DRIVE; HUMAN_CREATES_AND_SHARES_SOURCE; "
+                    "NO_CLOUD_CONFIGURATION_OR_CUPS_MUTATION"
+                ),
+            },
+        )
+
+    @app.post("/api/v1/setup/source-verifications")
+    async def verify_setup_source(payload: SourceSetupVerificationRequest) -> JSONResponse:
+        """Fetch and parse a candidate through the runtime's read-only Drive identity."""
+
+        if drive_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "Drive workflow is not configured"},
+            )
+        configured = drive_workflow.provider
+        candidate = DriveBlobProvider(
+            service=configured.service,
+            expected_file_id=payload.file_id,
+            supported_mime_type=payload.mime_type,
+            max_bytes=configured.max_bytes,
+        )
+        locator = SourceLocator(
+            provider=SourceProvider.GOOGLE_DRIVE,
+            file_id=payload.file_id,
+            mime_type=payload.mime_type,
+        )
+        try:
+            snapshot = await candidate.fetch_revision(locator)
+            normalized = normalize_source_bytes(
+                snapshot.source_bytes,
+                document_id="guided-source-verification",
+            )
+        except (DriveSourceError, UnsupportedContentError, ValueError) as exc:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "status": "NEEDS_ATTENTION",
+                    "blocking_reason": "SOURCE_NOT_READABLE_OR_UNSUPPORTED",
+                    "sanitized_detail": str(exc),
+                },
+            )
+        matches_configured = (
+            payload.file_id == configured.expected_file_id
+            and payload.mime_type == configured.supported_mime_type
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "schema_version": "guided-source-verification.v1",
+                "status": "VERIFIED",
+                "matches_configured_source": matches_configured,
+                "source_file_id_sha256": hashlib.sha256(
+                    payload.file_id.encode("utf-8")
+                ).hexdigest(),
+                "source_mime_type": payload.mime_type,
+                "source_sha256": snapshot.revision.source_sha256,
+                "provider_version": snapshot.revision.metadata.provider_version,
+                "byte_length": snapshot.revision.metadata.byte_length,
+                "block_count": len(normalized.blocks),
+                "normalized_source_sha256": normalized.normalized_source_sha256,
+                "next_step": (
+                    "REGISTER_CONFIGURED_BASELINE"
+                    if matches_configured
+                    else "HUMAN_UPDATE_CLOUD_RUN_CONFIGURATION"
+                ),
+            },
+        )
+
+    @app.post("/api/v1/setup/baselines")
+    async def guided_register_baseline(
+        payload: GuidedBaselineRegistrationRequest,
+    ) -> JSONResponse:
+        """Initialize and register only the configured source; never touch production."""
+
+        if drive_workflow is None or baseline_workflow is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "BLOCKED", "detail": "baseline setup is not configured"},
+            )
+        try:
+            initialized = await drive_workflow.initialize()
+            if len(initialized.source_revision_ids) != 1:
+                raise BaselineRegistrationError(
+                    "configured Drive initialization did not produce one source revision"
+                )
+            result = await baseline_workflow.register_demo_fixture(
+                production_id=payload.production_id,
+                source_revision_id=initialized.source_revision_ids[0],
+                expected_file_id=drive_workflow.provider.expected_file_id,
+                approval_label="DEMO_FIXTURE_APPROVED",
+                site_id=payload.site_id,
+                queue_name=payload.queue_name,
+                idempotency_key=payload.idempotency_key,
+            )
+        except (BaselineRegistrationError, DriveSourceError, RuntimeError, ValueError) as exc:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "status": "NEEDS_REVIEW",
+                    "blocking_reason": "GUIDED_BASELINE_REGISTRATION_INVALID",
+                    "sanitized_detail": str(exc),
+                },
+            )
+        baseline = result.record.baseline
+        return JSONResponse(
+            status_code=200 if result.duplicate else 201,
+            content={
+                "schema_version": "guided-baseline-registration.v1",
+                "status": "REGISTERED",
+                "duplicate": result.duplicate,
+                "baseline": {
+                    "baseline_id": baseline.baseline_id,
+                    "production_id": baseline.production_id,
+                    "source_revision_sha256": hashlib.sha256(
+                        baseline.source_revision_id.encode("utf-8")
+                    ).hexdigest(),
+                    "source_sha256": baseline.source_sha256,
+                    "approved_brf_sha256": baseline.approved_brf_sha256,
+                    "translation_profile_sha256": baseline.translation_profile_sha256,
+                    "site_id": baseline.site_id,
+                    "queue_name": baseline.queue_name,
+                    "status": baseline.status.value,
+                    "state_version": baseline.state_version,
+                    "created_at": result.record.created_at.isoformat(),
+                },
+                "production_action": "NOT_PERFORMED",
+                "next_step": "MONITOR_BASELINE_AND_USE_HUMAN_PRODUCTION_SURFACE",
+            },
+        )
+
+    @app.get("/api/v1/setup/baselines/{baseline_id}")
+    async def guided_get_baseline(baseline_id: str) -> JSONResponse:
+        """Return a monitor-safe baseline view with no Drive identifier or artifact URI."""
+
+        if ledger is None:
+            return JSONResponse(status_code=503, content={"status": "BLOCKED"})
+        try:
+            record = await ledger.get_baseline(baseline_id)
+        except ValueError:
+            return JSONResponse(status_code=404, content={"detail": "baseline not found"})
+        if record is None:
+            return JSONResponse(status_code=404, content={"detail": "baseline not found"})
+        baseline = record.baseline
+        return JSONResponse(
+            status_code=200,
+            content={
+                "schema_version": "guided-baseline-monitor.v1",
+                "baseline_id": baseline.baseline_id,
+                "production_id": baseline.production_id,
+                "source_revision_sha256": hashlib.sha256(
+                    baseline.source_revision_id.encode("utf-8")
+                ).hexdigest(),
+                "source_sha256": baseline.source_sha256,
+                "approved_brf_sha256": baseline.approved_brf_sha256,
+                "baseline_manifest_sha256": baseline.baseline_manifest_sha256,
+                "translation_profile_sha256": baseline.translation_profile_sha256,
+                "artifact_origin": baseline.artifact_origin.value,
+                "approval_label": baseline.approval_label,
+                "site_id": baseline.site_id,
+                "queue_name": baseline.queue_name,
+                "status": baseline.status.value,
+                "state_version": baseline.state_version,
+                "created_at": record.created_at.isoformat(),
+                "production_action": "NOT_PERFORMED",
+                "authority_boundary": (
+                    "HUMAN_SUBMITS_OR_LINKS_PRODUCTION; RELAY_MONITORS_READ_ONLY"
+                ),
             },
         )
 

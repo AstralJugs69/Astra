@@ -33,6 +33,27 @@ class FakePrivateReviewApi:
         self.downloads: list[str] = []
 
     async def get_json(self, path: str) -> dict[str, object]:
+        if path == "/api/v1/setup/source":
+            return {
+                "status": "CONFIGURED",
+                "runtime_service_account_email": "relay-runtime@project-12345.iam.gserviceaccount.com",
+                "project_id": "project-12345",
+                "cloud_run_region": "europe-west3",
+                "source_mime_type": "application/vnd.google-apps.document",
+                "site_id": "demo-site",
+                "queue_name": "Braille-Embosser-Sim",
+            }
+        if path == f"/api/v1/setup/baselines/{'d' * 64}":
+            return {
+                "baseline_id": "d" * 64,
+                "production_id": "BIOLOGY-DEMO",
+                "approved_brf_sha256": "e" * 64,
+                "site_id": "demo-site",
+                "queue_name": "Braille-Embosser-Sim",
+                "status": "AWAITING_PRODUCTION_LINK",
+                "state_version": 0,
+                "created_at": "2026-08-31T12:00:00+00:00",
+            }
         if path == "/api/v1/incidents":
             return {
                 "incidents": [
@@ -86,6 +107,21 @@ class FakePrivateReviewApi:
 
     async def post_json(self, path: str, payload: Mapping[str, object]) -> dict[str, object]:
         self.posts.append((path, dict(payload)))
+        if path == "/api/v1/setup/source-verifications":
+            return {
+                "status": "VERIFIED",
+                "matches_configured_source": True,
+                "source_file_id_sha256": "f" * 64,
+                "source_mime_type": payload["mime_type"],
+                "source_sha256": "a" * 64,
+                "byte_length": 128,
+                "block_count": 3,
+            }
+        if path == "/api/v1/setup/baselines":
+            return {
+                "status": "REGISTERED",
+                "baseline": {"baseline_id": "d" * 64},
+            }
         return {"status": "HALT_REQUESTED"}
 
     async def get_bytes(self, path: str) -> tuple[bytes, str]:
@@ -218,6 +254,84 @@ def _csrf(client: TestClient) -> str:
     match = re.search(r'name="csrf_token" value="([^"]+)"', response.text)
     assert match is not None
     return match.group(1)
+
+
+def _setup_csrf(client: TestClient) -> str:
+    response = client.get("/setup/source")
+    assert response.status_code == 200
+    match = re.search(r'name="csrf_token" value="([^"]+)"', response.text)
+    assert match is not None
+    return match.group(1)
+
+
+def test_guided_source_setup_verifies_configured_google_doc_without_echoing_id() -> None:
+    client, api = _client()
+    csrf = _setup_csrf(client)
+    raw_file_id = "1AbCdEfGhIjKlMnOpQrStUvWxYz"
+
+    response = client.post(
+        "/setup/source/verify",
+        data={
+            "csrf_token": csrf,
+            "source_reference": f"https://docs.google.com/document/d/{raw_file_id}/edit",
+            "mime_type": "application/vnd.google-apps.document",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+    )
+
+    assert response.status_code == 200
+    assert "Source verified and configured" in response.text
+    assert "Continue to baseline" in response.text
+    assert raw_file_id not in response.text
+    assert api.posts[-1] == (
+        "/api/v1/setup/source-verifications",
+        {
+            "file_id": raw_file_id,
+            "mime_type": "application/vnd.google-apps.document",
+        },
+    )
+
+
+def test_guided_baseline_registration_requires_verification_then_redirects_to_monitor() -> None:
+    client, api = _client()
+    unverified = client.get("/setup/baseline")
+    assert "Verify the currently configured source" in unverified.text
+    csrf = _setup_csrf(client)
+    client.post(
+        "/setup/source/verify",
+        data={
+            "csrf_token": csrf,
+            "source_reference": "1AbCdEfGhIjKlMnOpQrStUvWxYz",
+            "mime_type": "application/vnd.google-apps.document",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+    )
+    baseline_page = client.get("/setup/baseline")
+    match = re.search(r'name="csrf_token" value="([^"]+)"', baseline_page.text)
+    assert match is not None
+
+    registered = client.post(
+        "/setup/baseline",
+        data={
+            "csrf_token": match.group(1),
+            "production_id": "BIOLOGY-DEMO",
+            "site_id": "demo-site",
+            "queue_name": "Braille-Embosser-Sim",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert registered.status_code == 303
+    assert registered.headers["location"] == f"/baselines/{'d' * 64}"
+    payload = api.posts[-1]
+    assert payload[0] == "/api/v1/setup/baselines"
+    assert payload[1]["production_id"] == "BIOLOGY-DEMO"
+    assert isinstance(payload[1]["idempotency_key"], str)
+    monitor = client.get(registered.headers["location"])
+    assert monitor.status_code == 200
+    assert "Registration successful" in monitor.text
+    assert "No CUPS/device action" in monitor.text
 
 
 def _disposition_form(csrf: str) -> dict[str, str]:

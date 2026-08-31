@@ -85,6 +85,13 @@ forms remain available only when a human deliberately opens and submits them.
 If `doctor` is blocked, resolve the documented prerequisite before claiming
 live data is ready.
 
+For a fresh source, open `http://127.0.0.1:8765/setup/source`. The guided flow
+supports a native Google Doc or Drive-hosted Markdown file, verifies read-only
+access, initializes the configured source, registers the deterministic
+demo-fixture baseline, and redirects to its monitor. It never changes Drive
+sharing or Cloud Run configuration and never touches CUPS. See
+[guided baseline onboarding](guided-baseline-onboarding.md).
+
 ### One-command rehearsal wrapper
 
 ~~~powershell

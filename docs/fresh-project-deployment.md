@@ -22,8 +22,9 @@ The outcome is a private Cloud Run service with:
   human explicitly enables it.
 
 This guide supports the current release, not a generic production platform.
-The current source adapter accepts one shared **text/markdown** Drive file; the
-current Firestore helper scripts support only the **(default)** database.
+The current source adapter accepts one shared native Google Doc or one
+**text/markdown** Drive file; the current Firestore helper scripts support only
+the **(default)** database.
 
 ## 1. Decide whether you need this path
 
@@ -161,9 +162,9 @@ Creator role.
 
 The current source adapter is narrow by design:
 
-1. Create or upload one Markdown file whose Google Drive MIME type is
-   **text/markdown**. A native Google Docs document is not the supported
-   source type for this release.
+1. Create either a simple native Google Doc or upload one UTF-8 Markdown file
+   whose Google Drive MIME type is **text/markdown**. Native Docs are exported
+   read-only as Markdown; those exported bytes are authoritative input.
 2. Share that exact file, or the appropriate Shared Drive content, with
    **$RuntimeServiceAccount** as a viewer. The runtime uses Drive read-only
    scopes and re-fetches metadata plus bytes before accepting a revision.
@@ -197,8 +198,9 @@ FIRESTORE_DATABASE=(default)
 GCS_ARTIFACT_BUCKET=<globally-unique-artifact-bucket>
 RUNTIME_SERVICE_ACCOUNT_EMAIL=<astra-runtime-service-account-email>
 
-DRIVE_FILE_ID=<one-shared-text-markdown-file-id>
-DRIVE_SOURCE_MIME_TYPE=text/markdown
+DRIVE_FILE_ID=<one-shared-drive-file-id>
+# Choose: text/markdown or application/vnd.google-apps.document
+DRIVE_SOURCE_MIME_TYPE=application/vnd.google-apps.document
 SOURCE_MAX_BYTES=1048576
 SEMANTIC_CONTEXT_CHARS=12000
 SEMANTIC_MODEL_TIMEOUT_SECONDS=90
@@ -414,10 +416,14 @@ Events/Pub/Sub subscription. The cycle runs **Drive changes.list plus
 authoritative byte refetch**. A notification, timestamp, or scheduler tick is
 never source truth on its own.
 
-Before enabling the watch, register the matching accepted baseline through the
-authenticated baseline workflow. Then initialize the Drive cursor and first
-accepted source revision once through the deliberate diagnostic/initialization
-tool. The initial outbox record can then converge quietly against that baseline:
+Before enabling the watch, initialize the Drive cursor and register the
+matching accepted baseline. The recommended path is the loopback dashboard at
+`/setup/source`, which verifies the configured source and performs
+initialization plus deterministic registration in the required order. See
+[guided-baseline-onboarding.md](guided-baseline-onboarding.md).
+
+The lower-level diagnostic path remains available. First initialize the
+accepted source revision:
 
 ~~~powershell
 .\infra\gcp\reconcile_live_drive.ps1 -Operation INITIALIZE -ExecuteDriveRead
@@ -425,9 +431,10 @@ tool. The initial outbox record can then converge quietly against that baseline:
 
 Record the returned `receipt_id` and pass it to the enable command in step 11.
 That script validates the receipt's SHA-256 shape only; it does not remotely
-verify the record. The initialization operation is not a dashboard action. It
-uses the scheduler identity and the project's temporary scoped impersonation
-procedure.
+verify the record. This diagnostic operation uses the scheduler identity and
+the project's temporary scoped impersonation procedure. Then register that
+exact revision through the authenticated baseline API/CLI before enabling the
+watch. Never register a revision that has not been durably initialized.
 
 After it succeeds and the automatic watch is enabled in step 11, a human Drive
 V1-to-V2 edit requires no reconciliation command: Astra detects it on the next
