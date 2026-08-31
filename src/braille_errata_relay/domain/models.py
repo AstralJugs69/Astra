@@ -15,6 +15,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 HexSha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 NonEmpty = Annotated[str, Field(min_length=1, max_length=512)]
 BoundedNote = Annotated[str, Field(max_length=2000)]
+MAX_SOURCE_BLOCK_CHARACTERS = 4000
+SourceBlockText = Annotated[
+    str,
+    Field(min_length=1, max_length=MAX_SOURCE_BLOCK_CHARACTERS),
+]
 
 
 class DomainModel(BaseModel):
@@ -271,7 +276,7 @@ class DriveChangeBatch(DomainModel):
 class SourceBlock(DomainModel):
     block_id: NonEmpty
     kind: SourceBlockKind
-    text: NonEmpty
+    text: SourceBlockText
     ordinal: int = Field(ge=0)
 
 

@@ -35,7 +35,9 @@ wizard and select the correct type.
 Verification performs a metadata read, authoritative byte read/export, a
 second metadata read to detect a concurrent edit, strict normalization, and a
 source-block parse. The response contains hashes and counts, not source text
-or the raw Drive file ID.
+or the raw Drive file ID. A heading or paragraph may contain up to 4,000
+characters, which accommodates ordinary Google Docs paragraphs while keeping
+the semantic evidence passed to the model explicitly bounded.
 
 If the candidate is not currently configured in Cloud Run, the page shows a
 copyable `gcloud run services update` command. A human must review and run it,

@@ -62,10 +62,12 @@ not define that metadata as the export length.
 The live demo intentionally uses headings and paragraphs only. Rich document
 ingestion, tables, drawings, comments, revision authoring, and general Google
 Docs publishing are out of scope and fail closed rather than being silently
-reformatted into Braille. Run the metadata-only doctor before relying on a
-native Doc, then perform one human-observed baseline initialization/export
-smoke before claiming that a particular document is live-ready. The configured
-Drive ID is never rendered in the browser watch floor.
+reformatted into Braille. Individual headings and paragraphs are bounded to
+4,000 characters, matching the semantic-evidence span boundary. Run the
+metadata-only doctor before relying on a native Doc, then perform one
+human-observed baseline initialization/export smoke before claiming that a
+particular document is live-ready. The configured Drive ID is never rendered
+in the browser watch floor.
 
 ## Read-only access check
 

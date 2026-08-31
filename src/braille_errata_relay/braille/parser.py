@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import re
 
-from braille_errata_relay.domain.models import SourceBlock, SourceBlockKind
+from braille_errata_relay.domain.models import (
+    MAX_SOURCE_BLOCK_CHARACTERS,
+    SourceBlock,
+    SourceBlockKind,
+)
 
 from .errors import UnsupportedContentError
 
@@ -50,6 +54,10 @@ def parse_markdown(text: str) -> tuple[SourceBlock, ...]:
             return
         value = " ".join(pending).strip()
         if value:
+            if len(value) > MAX_SOURCE_BLOCK_CHARACTERS:
+                raise UnsupportedContentError(
+                    f"source paragraph exceeds {MAX_SOURCE_BLOCK_CHARACTERS} characters"
+                )
             blocks.append(
                 SourceBlock(
                     block_id=_new_block_id(len(blocks)),
@@ -73,11 +81,17 @@ def parse_markdown(text: str) -> tuple[SourceBlock, ...]:
             if match is None or not match.group(2).strip() or match.group(2).rstrip().endswith("#"):
                 raise UnsupportedContentError(f"invalid heading at line {line_number}")
             _reject_inline_or_block_markup(match.group(2), line_number)
+            heading = match.group(2).strip()
+            if len(heading) > MAX_SOURCE_BLOCK_CHARACTERS:
+                raise UnsupportedContentError(
+                    "source heading exceeds "
+                    f"{MAX_SOURCE_BLOCK_CHARACTERS} characters at line {line_number}"
+                )
             blocks.append(
                 SourceBlock(
                     block_id=_new_block_id(len(blocks)),
                     kind=SourceBlockKind.HEADING,
-                    text=match.group(2).strip(),
+                    text=heading,
                     ordinal=len(blocks),
                 )
             )

@@ -5,6 +5,7 @@ import pytest
 from braille_errata_relay.braille.diff import diff_sources, evidence_span_ids
 from braille_errata_relay.braille.errors import UnsupportedContentError
 from braille_errata_relay.braille.normalize import normalize_source_bytes
+from braille_errata_relay.domain.models import MAX_SOURCE_BLOCK_CHARACTERS
 
 
 def test_normalization_is_line_ending_and_trailing_space_invariant() -> None:
@@ -51,6 +52,24 @@ def test_normalized_source_hash_includes_block_kind() -> None:
 
     assert heading.normalized_text == paragraph.normalized_text == "Title"
     assert heading.normalized_source_sha256 != paragraph.normalized_source_sha256
+
+
+def test_google_docs_paragraph_above_legacy_boundary_is_supported() -> None:
+    paragraph = "A" * 553
+
+    normalized = normalize_source_bytes(paragraph.encode(), document_id="google-doc")
+
+    assert normalized.blocks[0].text == paragraph
+
+
+def test_source_paragraph_above_semantic_evidence_boundary_fails_cleanly() -> None:
+    paragraph = "A" * (MAX_SOURCE_BLOCK_CHARACTERS + 1)
+
+    with pytest.raises(
+        UnsupportedContentError,
+        match=f"source paragraph exceeds {MAX_SOURCE_BLOCK_CHARACTERS} characters",
+    ):
+        normalize_source_bytes(paragraph.encode(), document_id="oversized")
 
 
 @pytest.mark.parametrize(
