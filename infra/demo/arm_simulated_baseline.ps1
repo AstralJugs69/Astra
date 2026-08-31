@@ -91,7 +91,7 @@ if ($bucketName -notmatch '^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$') {
 }
 
 $deviceLine = [string](
-    wsl.exe -d Ubuntu-24.04 --user relay-operator -- lpstat -v $queueName
+    wsl.exe -d Ubuntu-24.04 --user relay-operator --exec lpstat -v $queueName
 )
 if ($LASTEXITCODE -ne 0 -or $deviceLine.Trim() -ne "device for ${queueName}: relay-capture://demo-embosser") {
     throw 'Refusing submission because the queue is not bound to the fixed relay-capture demo endpoint.'
@@ -118,7 +118,7 @@ $jobTitle = "BER|$ProductionId|$($ApprovedBrfSha256.Substring(0, 12))|BASELINE"
 
 Write-Output 'SIMULATED_DEMO: submitting the exact registered BRF to Braille-Embosser-Sim.'
 $submission = @(
-    wsl.exe -d Ubuntu-24.04 --user relay-operator -- `
+    wsl.exe -d Ubuntu-24.04 --user relay-operator --exec `
         lp -d $queueName -o raw -t $jobTitle $wslBrfPath
 )
 if ($LASTEXITCODE -ne 0) {
@@ -180,4 +180,3 @@ if ($LASTEXITCODE -ne 0) {
     approved_brf_sha256 = $ApprovedBrfSha256
     physical_embosser = 'NOT_USED'
 } | ConvertTo-Json -Compress
-

@@ -16,8 +16,9 @@ def test_simulated_baseline_arming_is_fixed_to_truthful_local_evidence() -> None
     assert "link_local_baseline_job.ps1" in script
     assert "confirm_local_endpoint_receipt.ps1" in script
     assert "Get-FileHash" in script
-    assert "--user relay-operator" in script
+    assert "--user relay-operator --exec" in script
     assert " -o raw " in script
+    assert "--exec `\n        lp -d $queueName" in script
 
     for forbidden in (
         "google.cloud.firestore",
@@ -34,6 +35,6 @@ def test_simulated_baseline_arming_has_non_mutating_validation_mode() -> None:
     script = SCRIPT.read_text(encoding="utf-8")
 
     validate = script.index("if ($ValidateOnly)")
-    submission = script.index("wsl.exe -d Ubuntu-24.04 --user relay-operator -- `")
+    submission = script.index("wsl.exe -d Ubuntu-24.04 --user relay-operator --exec `")
     assert validate < submission
     assert "exit 0" in script[validate:submission]
