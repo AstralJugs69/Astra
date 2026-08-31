@@ -126,3 +126,10 @@ Write-Output 'The presentation server is read-only with respect to CUPS and prod
 if (-not $NoBrowser) {
     Start-Process -FilePath $url
 }
+
+# The optional doctor is advisory for this presentation-only launcher. When it
+# reports a platform-specific blocker, its native exit code remains in
+# $LASTEXITCODE even after the loopback server has passed its readiness probe.
+# Return success based on that definitive readiness result so callers such as
+# rehearse.ps1 do not tear down a healthy dashboard session.
+exit 0

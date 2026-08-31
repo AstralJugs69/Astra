@@ -31,3 +31,11 @@ def test_demo_launcher_accepts_relative_or_absolute_config_paths() -> None:
 
     assert "[IO.Path]::IsPathRooted($ConfigPath)" in launcher
     assert "Join-Path $repoRoot $ConfigPath" in launcher
+
+
+def test_demo_launcher_returns_success_after_loopback_readiness() -> None:
+    launcher = (ROOT / "infra" / "demo" / "start_demo.ps1").read_text(encoding="utf-8")
+
+    readiness = launcher.index("if (-not $ready)")
+    explicit_success = launcher.rindex("exit 0")
+    assert explicit_success > readiness
