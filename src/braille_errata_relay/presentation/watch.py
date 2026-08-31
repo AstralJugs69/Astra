@@ -244,9 +244,6 @@ def _automation_summary(automation: Mapping[str, object]) -> str:
         label = "Completed; no new source content requiring investigation"
     else:
         label = "Waiting for durable automatic-cycle evidence"
-    completed_at = automation.get("last_completed_at")
-    if isinstance(completed_at, str):
-        return f"{label} · {completed_at}"
     return label
 
 
@@ -397,4 +394,20 @@ class WatchEventTracker:
                 events.append(WatchEvent("review_required", self._incident_payload(row)))
         self._previous = current
         self._previous_automation = current_automation
+        # The browser must refresh its compact incident summary before it
+        # announces a newly durable transition.  Individual transition events
+        # intentionally contain only the small alert payload, so they cannot
+        # otherwise update the visible row, stage, and next-safe-action values.
+        # This is still a sanitized snapshot and it is emitted only when the
+        # durable state actually changed; the initial marker remains true only
+        # for a new SSE connection, which prevents historical snapshots from
+        # becoming alerts.
+        if events:
+            events.insert(
+                0,
+                WatchEvent(
+                    name="snapshot",
+                    payload={"initial": False, "snapshot": dict(snapshot)},
+                ),
+            )
         return tuple(events)

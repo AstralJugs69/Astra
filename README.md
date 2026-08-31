@@ -298,7 +298,7 @@ Start here:
 - [local-floor-and-cups-simulator.md](docs/local-floor-and-cups-simulator.md)
   for the human-owned local floor.
 
-The live watch launcher is intentionally read-only:
+The `/watch` floor opened by the live launcher is intentionally read-only:
 
 ~~~powershell
 $RepoRoot = (git rev-parse --show-toplevel).Trim()
@@ -307,8 +307,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\infra\demo\start_demo.
 ~~~
 
 It displays durable state while the private service performs configured
-background reconciliation. It cannot grant IAM, control CUPS, or make a
-professional disposition. Its temporary authentication prerequisite is
+background reconciliation. The watch view cannot grant IAM, control CUPS, or
+make a professional disposition. The same local presentation server also has
+separately guarded incident-detail forms for explicit human records; the
+launcher never invokes them. Its temporary authentication prerequisite is
 explained in the Google Cloud setup guide.
 
 ## Configuration and security
@@ -376,8 +378,8 @@ release record is created only after that path is actually run.
 
 ## Record the demo honestly
 
-Use [live-demo-runbook.md](docs/live-demo-runbook.md) for the 4–5 minute
-problem-first recording story. The detailed human action/CUPS procedure stays
+Use [live-demo-runbook.md](docs/live-demo-runbook.md) for the problem-first
+recording story and its truthful automatic-watch timing. The detailed human action/CUPS procedure stays
 in [active-professional-review-demo.md](docs/active-professional-review-demo.md).
 
 If a live prerequisite is unavailable, use the offline fixture and say so on

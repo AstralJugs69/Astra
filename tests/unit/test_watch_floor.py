@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+import json
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -115,7 +116,12 @@ class OverviewApi:
         raise AssertionError("watch floor must not download an artifact")
 
 
-def _client(api: OverviewApi) -> TestClient:
+def _client(
+    api: OverviewApi,
+    *,
+    watch_poll_seconds: float = 2.0,
+    watch_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> TestClient:
     app = create_presentation_app(
         PresentationSettings(
             api_base_url=AUDIENCE,
@@ -124,6 +130,8 @@ def _client(api: OverviewApi) -> TestClient:
             impersonate_service_account=DEMONSTRATOR_IDENTITY,
         ),
         api_client=api,
+        watch_poll_seconds=watch_poll_seconds,
+        watch_sleep=watch_sleep,
     )
     return TestClient(app, base_url="http://127.0.0.1:8765")
 
@@ -198,7 +206,12 @@ def test_watch_tracker_deduplicates_historical_snapshots_and_emits_one_new_alert
     assert [event.name for event in initial] == ["snapshot"]
     assert all(event.name != "review_required" for event in initial)
     assert unchanged == ()
-    assert [event.name for event in new_incident] == ["incident_detected", "review_required"]
+    assert [event.name for event in new_incident] == [
+        "snapshot",
+        "incident_detected",
+        "review_required",
+    ]
+    assert new_incident[0].payload == {"initial": False, "snapshot": second}
     assert duplicate == ()
     assert [event.name for event in reconnect] == ["snapshot"]
     assert all(event.name != "review_required" for event in reconnect)
@@ -215,10 +228,12 @@ def test_watch_tracker_emits_durable_stage_transition_once() -> None:
     )
 
     assert [event.name for event in transitioned] == [
+        "snapshot",
         "stage_changed",
         "report_ready",
         "review_required",
     ]
+    assert transitioned[0].payload["initial"] is False
     assert repeated == ()
 
 
@@ -235,8 +250,9 @@ def test_watch_tracker_emits_a_durable_automation_transition_once_without_alert(
     repeated = tracker.observe(changed)
 
     assert [event.name for event in initial] == ["snapshot"]
-    assert [event.name for event in transitioned] == ["automation_cycle"]
-    assert transitioned[0].payload == {"automation": changed["automation"]}
+    assert [event.name for event in transitioned] == ["snapshot", "automation_cycle"]
+    assert transitioned[0].payload == {"initial": False, "snapshot": changed}
+    assert transitioned[1].payload == {"automation": changed["automation"]}
     assert repeated == ()
 
 
@@ -253,6 +269,7 @@ def test_watch_sse_endpoint_has_framing_security_headers_and_same_origin_asset()
     assert "connect-src 'self'" in page.headers["content-security-policy"]
     assert "private-baseline" not in page.text
     assert "Completed; no new source content requiring investigation" in page.text
+    assert "2026-08-31T12:00:00+00:00" not in page.text
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert stream.headers["x-accel-buffering"] == "no"
@@ -262,6 +279,36 @@ def test_watch_sse_endpoint_has_framing_security_headers_and_same_origin_asset()
     assert asset.headers["content-type"].startswith("application/javascript")
     assert 'new window.EventSource("/events")' in asset.text
     assert "watch-automatic-cycle" in asset.text
+
+
+def test_watch_sse_refreshes_sanitized_summary_before_later_transition_events() -> None:
+    async def no_wait(_seconds: float) -> None:
+        return None
+
+    client = _client(
+        OverviewApi(
+            _overview(stage="IMPACT_READY"),
+            _overview(stage="REPORT_READY", review_state="REPORT_READY"),
+        ),
+        watch_poll_seconds=0.001,
+        watch_sleep=no_wait,
+    )
+
+    response = client.get("/events?max_events=2")
+    frames = [frame for frame in response.text.split("\n\n") if frame]
+    initial = json.loads(frames[0].split("data: ", maxsplit=1)[1])
+    refreshed = json.loads(frames[1].split("data: ", maxsplit=1)[1])
+
+    assert response.status_code == 200
+    assert frames[0].startswith("retry: 2000\nevent: snapshot\n")
+    assert frames[1].startswith("event: snapshot\n")
+    assert initial["initial"] is True
+    assert refreshed["initial"] is False
+    assert refreshed["snapshot"]["incidents"][0]["workflow_stage"] == "REPORT_READY"
+    assert (
+        refreshed["snapshot"]["incidents"][0]["next_safe_action"]
+        == "Review the report and record only an attributable human disposition."
+    )
 
 
 def test_watch_sse_upstream_error_is_sanitized_and_heartbeat_framing_is_explicit() -> None:
@@ -310,6 +357,9 @@ def test_watch_client_controls_are_opt_in_and_do_not_issue_cloud_mutations() -> 
     assert "audibleEnabled = true" in source
     assert "acknowledged = true" in source
     assert 'new window.EventSource("/events")' in source
+    assert 'events.addEventListener("snapshot", (event) => {' in source
+    assert "renderSnapshot(JSON.parse(event.data))" in source
+    assert "payload.initial" not in source
     assert "fetch(" not in source
     assert ".post(" not in source
     assert "window.open" not in source

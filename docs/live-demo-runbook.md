@@ -52,7 +52,13 @@ making a live claim.
    the older standalone outbox job can remain paused. Do not use the dashboard
    to reconcile Drive, submit a job, or mutate CUPS.
 
-## Live flow: 4–5 minutes
+## Live flow: prepare for 2–5 minutes after the Drive edit
+
+The exact reveal time is intentionally variable: the next one-minute scheduler
+tick, authoritative byte refetch, durable outbox work, and bounded semantic
+assessment all have to finish. Do not promise a sub-minute transition. For a
+recorded video, retain the waiting state or explicitly label an edit rather
+than presenting a pre-existing incident as a live result.
 
 ### 0:00–0:25 — establish the real problem
 
@@ -63,16 +69,19 @@ Show the approved baseline/current production context and say:
 > not merely ‘can we regenerate a file?’ It is ‘what can no longer be trusted,
 > what output may be affected, and what must the responsible professional do?’”
 
-### 0:25–1:10 — change the authoritative source
+### 0:25 — change the authoritative source
 
 In the normal Google Drive UI, make the prepared V1-to-V2 edit. Astra never
 makes this edit. Then leave Astra alone: its already-enabled private automatic
 cycle notices the change, drains the change feed, and re-fetches authoritative
 metadata and bytes. No reconciliation command is run after the edit.
 
-Keep the watch page visible while the next cycle completes; allow up to one
-minute for the scheduled check, plus normal processing. The scheduler is a
-private OIDC caller, not a browser button or a synthetic event. The manual
+Before making the edit, open the loopback **`/watch`** page and wait for its
+initial snapshot to show **Connected**. That initial connection deliberately
+suppresses historical alerts. If you want sound, click **Enable audible
+alerts** now; browsers require that explicit local gesture. Keep this page
+visible while the next automatic cycle completes. The scheduler is a private
+OIDC caller, not a browser button or a synthetic event. The manual
 `reconcile_live_drive.ps1` command remains available for baseline setup and
 diagnostics, but is deliberately absent from this path.
 
@@ -81,9 +90,10 @@ the source is being checked, that no source revision was found, that a revision
 advanced the durable workflow, or that the status is unavailable. It never
 labels the browser's own poll time as a successful Drive check.
 
-### 1:10–2:00 — reveal autonomous investigation
+### After the durable transition arrives — reveal autonomous investigation
 
-Open the loopback **/watch** page. Explain:
+The already-open loopback **`/watch`** page refreshes its compact incident
+summary before it announces a new durable transition. Explain:
 
 > “This screen receives sanitized, durable incident state from the private
 > service. The initial snapshot intentionally creates no alert. A new durable
@@ -158,13 +168,13 @@ the read-only CUPS boundary. Close with:
 
 | Time | Visual | Narration focus |
 | --- | --- | --- |
-| 0:00–0:25 | Approved baseline and current production context | Late corrections create a source-to-production trust problem. |
-| 0:25–1:10 | Human Drive edit, then the automatic watch reacts | Drive is authoritative; bytes are refetched rather than inferred. |
-| 1:10–2:00 | Watch alert and stage changes | Astra autonomously builds the recovery case. |
-| 2:00–2:45 | Incident detail | Diff, BRF/page impact, Gemini assessment, and observation are different evidence types. |
-| 2:45–3:25 | Human authority gate | No device-control capability; fail-closed evidence protects the decision. |
-| 3:25–3:45 | Optional replacement observation | Human submits independently; Astra may observe, not submit. |
-| 3:45–4:10 | Private Cloud Run / architecture | Production-minded, deeply implemented vertical slice with deliberate authority boundaries. |
+| Start | Approved baseline, current production context, and a connected `/watch` page | Late corrections create a source-to-production trust problem; historical data is quiet. |
+| Human edit | V1-to-V2 Drive edit, then hands off | Drive is authoritative; bytes are refetched rather than inferred. |
+| 2–5 min after edit | Watch status, alert, and live incident summary | Astra autonomously builds the recovery case from durable evidence. |
+| After report readiness | Incident detail | Diff, BRF/page impact, Gemini assessment, and observation are different evidence types. |
+| Then | Human authority gate | No device-control capability; fail-closed evidence protects the decision. |
+| Optional | Replacement observation | Human submits independently; Astra may observe, not submit. |
+| Close | Private Cloud Run / architecture | Production-minded, deeply implemented vertical slice with deliberate authority boundaries. |
 
 ## Offline fixture fallback
 

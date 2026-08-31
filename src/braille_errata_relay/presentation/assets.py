@@ -68,9 +68,6 @@ WATCH_JAVASCRIPT = r"""(() => {
     else if (automation.content_equivalent_replay === true) label = "Drive revision matched existing source bytes; no new investigation";
     else if (automation.source_change_detected === true) label = "Drive source content detected; durable workflow advanced";
     else if (automation.last_status === "COMPLETED") label = "Completed; no new source content requiring investigation";
-    if (automation.state === "IDLE" && typeof automation.last_completed_at === "string") {
-      return label + " · " + automation.last_completed_at;
-    }
     return label;
   }
 

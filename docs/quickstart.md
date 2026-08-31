@@ -78,10 +78,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\infra\demo\start_demo.
 
 The launcher binds only to `127.0.0.1`, opens `/watch` once, and keeps cloud
 credentials on the local server. A browser page receives no private URL or
-credential. It displays durable state while the private service performs any
-configured automatic reconciliation; it cannot initiate Drive writes, change
-CUPS, or make a human production decision. If `doctor` is blocked, resolve the
-documented prerequisite before claiming live data is ready.
+credential. The `/watch` view displays durable state while the private service
+performs configured automatic reconciliation; it cannot initiate Drive writes,
+change CUPS, or create a human record. Separately guarded incident-detail
+forms remain available only when a human deliberately opens and submits them.
+If `doctor` is blocked, resolve the documented prerequisite before claiming
+live data is ready.
 
 ## 5. Verify the code
 
