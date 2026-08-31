@@ -19,6 +19,11 @@ def test_simulated_baseline_arming_is_fixed_to_truthful_local_evidence() -> None
     assert "--user relay-operator --exec" in script
     assert " -o raw " in script
     assert "--exec `\n        lp -d $queueName" in script
+    assert "[Security.SecureString]$ObserverPassword" in script
+    assert 'Read-Host "relay-observer password" -AsSecureString' in script
+    assert "relay_bridge.main verify-access" in script
+    assert "--password-stdin" in script
+    assert script.index("relay_bridge.main verify-access") < script.index("lp -d $queueName")
 
     for forbidden in (
         "google.cloud.firestore",

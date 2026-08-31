@@ -130,6 +130,8 @@ def test_live_baseline_link_harness_uses_only_readonly_bridge_and_narrow_iam() -
     script = LIVE_LINK_SCRIPT.read_text(encoding="utf-8")
 
     assert "relay_bridge.main observe-once" in script
+    assert "[Security.SecureString]$ObserverPassword" in script
+    assert "--password-stdin" in script
     assert "--require-job-id '$SchedulerJobId'" in script
     assert "relay_bridge.main pending-outbox" in script
     assert "acknowledge-published" in script

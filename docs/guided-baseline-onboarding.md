@@ -86,8 +86,15 @@ monitor page, then run:
   -BaselineId '<complete baseline ID>' `
   -ApprovedBrfSha256 '<complete BRF SHA-256>' `
   -ProductionId 'BIOLOGY-VOLUME-2-DEMO' `
+  -ObserverPassword (Read-Host 'relay-observer password' -AsSecureString) `
   -Confirmation ARM-SIMULATED-BASELINE
 ```
+
+The password prompt happens before the helper starts its work. PowerShell passes
+the resulting `SecureString` to the WSL bridge over standard input; it is not
+placed in shell history, process arguments, logs, evidence, or configuration.
+The helper verifies read-only CUPS access before submitting a simulator job, so
+an incorrect password fails without adding another job to the queue history.
 
 This is not a database status override. The helper refuses any destination
 except `Braille-Embosser-Sim` bound to

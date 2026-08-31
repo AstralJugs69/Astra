@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import os
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
@@ -285,6 +286,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     observe.add_argument("--user", default="relay-observer")
     observe.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read one CUPS password line from stdin instead of prompting",
+    )
+    observe.add_argument(
         "--journal",
         type=Path,
         default=Path(
@@ -293,6 +299,19 @@ def _parser() -> argparse.ArgumentParser:
                 "/var/lib/braille-relay/observer/journal.sqlite3",
             )
         ),
+    )
+
+    verify = commands.add_parser(
+        "verify-access",
+        help="Verify read-only access to one configured CUPS queue without writing evidence.",
+    )
+    verify.add_argument("--server", default=os.environ.get("CUPS_SERVER", "localhost:631"))
+    verify.add_argument("--queue", default=os.environ.get("QUEUE_NAME", "Braille-Embosser-Sim"))
+    verify.add_argument("--user", default="relay-observer")
+    verify.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read one CUPS password line from stdin instead of prompting",
     )
     observe.add_argument("--output", type=Path, required=True)
     observe.add_argument(
@@ -319,22 +338,53 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _configure_cups_identity(username: str) -> None:
+def _configure_cups_identity(username: str, *, password_stdin: bool = False) -> None:
     try:
         import cups  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError("pycups is required in the WSL bridge") from exc
-    password = getpass.getpass(f"Password for {username}: ")
+    if password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+        if not password:
+            raise ValueError("CUPS password stdin was empty")
+    else:
+        password = getpass.getpass(f"Password for {username}: ")
     cups.setUser(username)
-    cups.setPasswordCB(lambda _prompt: password)
+    supplied = False
+
+    def password_callback(_prompt: str) -> str:
+        nonlocal supplied
+        if supplied:
+            return ""
+        supplied = True
+        return password
+
+    cups.setPasswordCB(password_callback)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "verify-access":
+        _configure_cups_identity(args.user, password_stdin=args.password_stdin)
+        observer = ReadOnlyCupsObserver(server=args.server, queue_name=args.queue)
+        try:
+            observer.queue_snapshot()
+        except Exception as exc:
+            if exc.args and exc.args[0] == 4096:
+                print(
+                    json.dumps(
+                        {"status": "ACCESS_DENIED", "queue": args.queue},
+                        sort_keys=True,
+                    )
+                )
+                return 4
+            raise
+        print(json.dumps({"status": "ACCESS_VERIFIED", "queue": args.queue}, sort_keys=True))
+        return 0
     if args.command == "observe-once":
         if args.require_job_id is not None and args.require_job_id <= 0:
             raise ValueError("required scheduler job ID must be positive")
-        _configure_cups_identity(args.user)
+        _configure_cups_identity(args.user, password_stdin=args.password_stdin)
         args.journal.parent.mkdir(parents=True, exist_ok=True)
         journal = ObservationJournal(args.journal)
         try:

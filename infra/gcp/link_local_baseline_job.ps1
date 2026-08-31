@@ -21,6 +21,8 @@ param(
     [ValidateRange(1, 30)]
     [int]$RetryDelaySeconds = 10,
 
+    [Security.SecureString]$ObserverPassword,
+
     [switch]$ArchiveUnpublishedLocalJournal,
 
     [switch]$ValidateOnly
@@ -73,6 +75,23 @@ function Invoke-GcloudQuietly {
     }
     finally {
         $ErrorActionPreference = $previousPreference
+    }
+}
+
+function Invoke-WslWithSecureInput {
+    param(
+        [Parameter(Mandatory)][Security.SecureString]$Secret,
+        [Parameter(Mandatory)][string]$Command
+    )
+
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+    try {
+        $plainText = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        return @($plainText | & wsl.exe -e bash -lc $Command)
+    }
+    finally {
+        $plainText = $null
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
     }
 }
 
@@ -288,16 +307,24 @@ try {
     # snapshot, so a retry cannot create a broken cloud hash chain.
     [void](Publish-PendingBridgeObservations -Token $telemetryToken)
 
-    # This invokes only the bridge's pycups Get operations and prompts locally for the
-    # observer password. It never changes CUPS job state.
+    # This invokes only the bridge's pycups Get operations. When a SecureString was
+    # supplied by the human caller it travels over stdin, never in argv or logs.
+    # It never changes CUPS job state.
     $bridgeCommand = "cd '$wslRepoRoot' && PYTHONPATH=local_bridge/src python3 -m " +
         "relay_bridge.main observe-once --server localhost:631 --queue '$queueName' " +
         "--site-id '$siteId' --bridge-id '$bridgeId' --journal '$journalPath' " +
         "--require-job-id '$SchedulerJobId' --output '$observationPathWsl'"
-    & wsl.exe -e bash -lc $bridgeCommand
+    if ($null -ne $ObserverPassword) {
+        $bridgeCommand += " --password-stdin"
+        $bridgeOutput = Invoke-WslWithSecureInput -Secret $ObserverPassword -Command $bridgeCommand
+    }
+    else {
+        $bridgeOutput = @(& wsl.exe -e bash -lc $bridgeCommand)
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Read-only bridge observation failed."
     }
+    $bridgeOutput | Write-Output
     $observationJson = Get-Content -Raw -LiteralPath $observationPath
     $observation = $observationJson | ConvertFrom-Json
     if ($observation.schema_version -ne "site-observation.v1") {

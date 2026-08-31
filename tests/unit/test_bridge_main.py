@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,26 @@ from relay_bridge.cups_observer import CupsRequiredJobNotFound
 from relay_bridge.journal import ObservationJournal
 from relay_bridge.main import DemoArmAlreadyRunning, observe_loop, observe_once, write_json_atomic
 from relay_bridge.main import main as bridge_main
+
+
+def test_password_stdin_is_consumed_once_and_never_reprompted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callbacks: list[object] = []
+    fake_cups = types.SimpleNamespace(
+        setUser=lambda username: None,
+        setPasswordCB=lambda callback: callbacks.append(callback),
+    )
+    monkeypatch.setitem(sys.modules, "cups", fake_cups)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("one-secret-line\n"))
+
+    bridge_module._configure_cups_identity("relay-observer", password_stdin=True)
+
+    assert len(callbacks) == 1
+    callback = callbacks[0]
+    assert callable(callback)
+    assert callback("Password:") == "one-secret-line"
+    assert callback("Password:") == ""
 
 
 class FakeObserver:
@@ -151,7 +173,11 @@ def test_observe_command_reports_missing_lineage_without_queuing_an_observation(
     journal_path = tmp_path / "journal.sqlite3"
     output_path = tmp_path / "observation.json"
     monkeypatch.setattr(bridge_module, "ReadOnlyCupsObserver", MissingRequiredJobObserver)
-    monkeypatch.setattr(bridge_module, "_configure_cups_identity", lambda _username: None)
+    monkeypatch.setattr(
+        bridge_module,
+        "_configure_cups_identity",
+        lambda _username, **_kwargs: None,
+    )
 
     exit_code = bridge_main(
         [

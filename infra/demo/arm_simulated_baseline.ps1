@@ -8,6 +8,8 @@ param(
 
     [string]$Confirmation = '',
 
+    [Security.SecureString]$ObserverPassword,
+
     [ValidateNotNullOrEmpty()]
     [string]$ServiceName = 'braille-errata-relay',
 
@@ -63,6 +65,9 @@ if ($ProductionId -notmatch '^[A-Za-z0-9._-]{1,128}$') {
 if ($Confirmation -ne 'ARM-SIMULATED-BASELINE') {
     throw 'Pass -Confirmation ARM-SIMULATED-BASELINE to authorize this local simulator submission.'
 }
+if ($null -eq $ObserverPassword) {
+    throw 'Pass -ObserverPassword (Read-Host "relay-observer password" -AsSecureString).'
+}
 
 $project = ([string](gcloud config get-value project 2>$null)).Trim()
 $account = ([string](gcloud config get-value account 2>$null)).Trim()
@@ -96,6 +101,40 @@ $deviceLine = [string](
 if ($LASTEXITCODE -ne 0 -or $deviceLine.Trim() -ne "device for ${queueName}: relay-capture://demo-embosser") {
     throw 'Refusing submission because the queue is not bound to the fixed relay-capture demo endpoint.'
 }
+
+function Invoke-WslWithSecureInput {
+    param(
+        [Parameter(Mandatory)][Security.SecureString]$Secret,
+        [Parameter(Mandatory)][string]$Command
+    )
+
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
+    try {
+        $plainText = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        return @($plainText | & wsl.exe -e bash -lc $Command)
+    }
+    finally {
+        $plainText = $null
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+    }
+}
+
+$wslRepoRoot = ([string](wsl.exe -d Ubuntu-24.04 --exec wslpath -a $repoRoot)).Trim()
+if (-not $wslRepoRoot.StartsWith('/')) {
+    throw 'The repository path could not be resolved inside WSL.'
+}
+$accessCommand = "cd '$wslRepoRoot' && PYTHONPATH=local_bridge/src python3 -m " +
+    "relay_bridge.main verify-access --server localhost:631 --queue '$queueName' " +
+    "--user relay-observer --password-stdin"
+$accessOutput = Invoke-WslWithSecureInput -Secret $ObserverPassword -Command $accessCommand
+if ($LASTEXITCODE -ne 0) {
+    throw 'The relay-observer password was rejected. No new simulator job was submitted.'
+}
+$accessResult = ($accessOutput | Select-Object -Last 1) | ConvertFrom-Json
+if ($accessResult.status -ne 'ACCESS_VERIFIED') {
+    throw 'Read-only CUPS access returned an unexpected result. No new simulator job was submitted.'
+}
+Write-Output 'PASS: relay-observer read-only access verified before submission.'
 
 $workRoot = Join-Path $repoRoot 'work\demo-arm'
 New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
@@ -136,6 +175,7 @@ $linkOutput = @(
         -BaselineId $BaselineId `
         -SchedulerJobId $schedulerJobId `
         -ExpectedJobTitle $jobTitle `
+        -ObserverPassword $ObserverPassword `
         -ServiceName $ServiceName `
         -Region $Region
 )
