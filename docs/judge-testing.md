@@ -10,6 +10,9 @@ Use the public Astra judge dashboard when you want to understand the project
 without provisioning Google Cloud or installing the local production-floor
 simulator.
 
+**Live dashboard:**
+[https://astra-judge-dashboard-zqesk2cifq-ey.a.run.app](https://astra-judge-dashboard-zqesk2cifq-ey.a.run.app)
+
 The hosted dashboard lets you:
 
 1. inspect registered source-to-Braille baselines;

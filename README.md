@@ -260,10 +260,17 @@ registered baselines, live reconciliation state, past incident reports,
 recorded human outcomes, deterministic Braille impact, Gemini assessment, and
 the audit timeline without exposing the private API or a mutation surface.
 
+**Live judge dashboard:**
+[astra-judge-dashboard-zqesk2cifq-ey.a.run.app](https://astra-judge-dashboard-zqesk2cifq-ey.a.run.app)
+
 Open the dashboard's **Test Astra** page for the guided route. The public
 service is GET-only and uses a dedicated identity that is rejected from
 candidate downloads, human-record routes, Drive setup, scheduler calls, and
 every CUPS/device action. The underlying Cloud Run API remains private.
+
+The dashboard includes the prepared Google Docs source link. Its availability
+to an unauthenticated judge is governed by that document's Drive **Viewer**
+sharing setting; Astra never changes that setting.
 
 See [judge-testing.md](docs/judge-testing.md) for the deployed path, prepared
 source link, and the full self-hosted alternative.

@@ -494,15 +494,15 @@ gcloud run deploy $JudgeService `
   --image $ImageDigest `
   --service-account $JudgeServiceAccount `
   --command uvicorn `
-  --args braille_errata_relay.presentation.hosted:app,--host,0.0.0.0,--port,8080 `
-  --set-env-vars "RELAY_PRESENTATION_API_URL=$ServiceUrl,RELAY_PRESENTATION_AUDIENCE=$InternalAudience,RELAY_PRESENTATION_IMPERSONATE_SERVICE_ACCOUNT=$JudgeServiceAccount,RELAY_JUDGE_SOURCE_URL=$SourceDocumentUrl,RELAY_REPOSITORY_URL=https://github.com/AstralJugs69/Astra" `
+  '--args=braille_errata_relay.presentation.hosted:app,--host,0.0.0.0,--port,8080' `
+  "--set-env-vars=^|^RELAY_PRESENTATION_API_URL=$ServiceUrl|RELAY_PRESENTATION_AUDIENCE=$InternalAudience|RELAY_PRESENTATION_IMPERSONATE_SERVICE_ACCOUNT=$JudgeServiceAccount|RELAY_JUDGE_SOURCE_URL=$SourceDocumentUrl|RELAY_REPOSITORY_URL=https://github.com/AstralJugs69/Astra" `
   --set-secrets RELAY_PRESENTATION_SESSION_SECRET=astra-judge-session-secret:latest `
   --allow-unauthenticated
 
-$JudgeUrl = gcloud run services describe $JudgeService `
+$JudgeUrl = (gcloud run services describe $JudgeService `
   --project $ProjectId `
   --region $RunRegion `
-  --format 'value(status.url)'
+  --format 'value(status.url)').Trim()
 gcloud run services update $JudgeService `
   --project $ProjectId `
   --region $RunRegion `
