@@ -266,7 +266,17 @@ def test_watch_summary_exposes_a_result_hero_for_report_ready_or_needs_review_on
     assert watch_summary(no_highlight)["hero"] is None
 
 
-def test_watch_page_distinguishes_report_ready_from_safe_needs_review_results() -> None:
+def test_watch_summary_can_suppress_retained_results_for_a_new_monitor_session() -> None:
+    snapshot = sanitize_watch_snapshot(_overview(stage="NEEDS_REVIEW"))
+
+    summary = watch_summary(snapshot, suppress_existing_results=True)
+
+    assert summary["durable_stage"] == "WATCHING"
+    assert summary["hero"] is None
+    assert summary["stage_label"] == "Monitoring authoritative source"
+
+
+def test_watch_page_suppresses_retained_result_hero_for_all_initial_statuses() -> None:
     report = _overview(stage="REPORT_READY", review_state="REPORT_READY")
     needs_review = _overview(stage="NEEDS_REVIEW", review_state="NEEDS_REVIEW")
     highlight = {
@@ -286,10 +296,19 @@ def test_watch_page_distinguishes_report_ready_from_safe_needs_review_results() 
     no_result_page = _client(OverviewApi(_overview(stage="NEEDS_REVIEW"))).get("/watch")
 
     assert report_page.status_code == review_page.status_code == no_result_page.status_code == 200
-    assert "Professional recovery report ready" in report_page.text
-    assert "Material issue detected — safe human review required" in review_page.text
-    assert "Resynchronized after page 24." in review_page.text
+    assert "No newly observed incident is awaiting review." in report_page.text
+    assert "No newly observed incident is awaiting review." in review_page.text
+    assert 'id="watch-hero" class="report-hero" hidden' in report_page.text
+    assert 'id="watch-hero" class="report-hero" hidden' in review_page.text
     assert 'id="watch-hero" class="report-hero" hidden' in no_result_page.text
+
+
+def test_watch_page_suppresses_retained_result_hero_on_first_monitor_view() -> None:
+    page = _client(OverviewApi(_overview(stage="NEEDS_REVIEW"))).get("/watch")
+
+    assert page.status_code == 200
+    assert "No newly observed incident is awaiting review." in page.text
+    assert 'id="watch-hero" class="report-hero" hidden' in page.text
 
 
 def test_watch_tracker_deduplicates_historical_snapshots_and_emits_one_new_alert() -> None:

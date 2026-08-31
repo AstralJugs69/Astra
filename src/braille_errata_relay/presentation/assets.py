@@ -46,6 +46,7 @@ WATCH_JAVASCRIPT = r"""(() => {
   let alertTimer = null;
   let alertStartedAt = 0;
   let lastToneAt = 0;
+  let liveIncidentId = null;
 
   function setConnection(connected) {
     status.textContent = connected ? "Live connection" : "Reconnecting";
@@ -148,13 +149,23 @@ WATCH_JAVASCRIPT = r"""(() => {
     const snapshot = payload && payload.snapshot;
     if (!snapshot || typeof snapshot !== "object") return;
     const incidents = Array.isArray(snapshot.incidents) ? snapshot.incidents : [];
-    const lead = incidents[0] || null;
+    const lead = liveIncidentId ? incidents.find((item) => item && item.incident_id === liveIncidentId) : null;
     automaticCycle.textContent = automationLabel(snapshot.automation);
     stage.textContent = lead ? safeText(lead.workflow_label, stageLabel(lead.workflow_stage)) : "Monitoring authoritative source";
     nextAction.textContent = lead ? safeText(lead.next_safe_action, "Review authoritative evidence.") : "No incident is currently awaiting review.";
     renderPipeline(lead ? lead.workflow_stage : "");
     renderHero(lead);
     renderRows(incidents);
+  }
+
+  function promoteLiveIncident(payload) {
+    const incident = payload && payload.incident;
+    if (!incident || typeof incident.incident_id !== "string") return;
+    liveIncidentId = incident.incident_id;
+    stage.textContent = safeText(incident.workflow_label, stageLabel(incident.workflow_stage));
+    nextAction.textContent = safeText(incident.next_safe_action, "Review authoritative evidence.");
+    renderPipeline(incident.workflow_stage);
+    renderHero(incident);
   }
 
   function stopSound() {
@@ -226,13 +237,13 @@ WATCH_JAVASCRIPT = r"""(() => {
   events.addEventListener("snapshot", (event) => {
     try { renderSnapshot(JSON.parse(event.data)); setConnection(true); } catch (_) { setConnection(false); }
   });
-  events.addEventListener("incident_detected", () => setConnection(true));
-  events.addEventListener("stage_changed", () => setConnection(true));
+  events.addEventListener("incident_detected", (event) => { try { promoteLiveIncident(JSON.parse(event.data)); setConnection(true); } catch (_) { setConnection(false); } });
+  events.addEventListener("stage_changed", (event) => { try { promoteLiveIncident(JSON.parse(event.data)); setConnection(true); } catch (_) { setConnection(false); } });
   events.addEventListener("automation_cycle", (event) => {
     try { automaticCycle.textContent = automationLabel(JSON.parse(event.data).automation); setConnection(true); } catch (_) { setConnection(false); }
   });
-  events.addEventListener("report_ready", (event) => { try { showAlert(JSON.parse(event.data)); } catch (_) {} });
-  events.addEventListener("review_required", (event) => { try { showAlert(JSON.parse(event.data)); } catch (_) {} });
+  events.addEventListener("report_ready", (event) => { try { const payload = JSON.parse(event.data); promoteLiveIncident(payload); showAlert(payload); } catch (_) {} });
+  events.addEventListener("review_required", (event) => { try { const payload = JSON.parse(event.data); promoteLiveIncident(payload); showAlert(payload); } catch (_) {} });
   events.addEventListener("heartbeat", () => setConnection(true));
   events.addEventListener("upstream_unavailable", () => {
     setConnection(false);

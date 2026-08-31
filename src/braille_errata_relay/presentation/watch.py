@@ -349,7 +349,9 @@ def _automation_summary(automation: Mapping[str, object]) -> str:
     return label
 
 
-def watch_summary(snapshot: Mapping[str, object]) -> dict[str, object]:
+def watch_summary(
+    snapshot: Mapping[str, object], *, suppress_existing_results: bool = False
+) -> dict[str, object]:
     """Build only display-safe summary fields for the watch template."""
 
     raw_incidents = snapshot.get("incidents")
@@ -357,6 +359,21 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, object]:
     raw_automation = snapshot.get("automation")
     automation = raw_automation if isinstance(raw_automation, Mapping) else {}
     automatic_cycle = _automation_summary(automation)
+    # A new browser session must not turn retained historical incidents into a
+    # live mismatch alarm.  The SSE tracker separately promotes only a durable
+    # transition it observes after the connection is established.
+    if suppress_existing_results:
+        return {
+            "source_label": WATCH_SOURCE_LABEL,
+            "durable_stage": "WATCHING",
+            "stage_label": "Monitoring authoritative source",
+            "next_safe_action": (
+                "No newly observed incident is awaiting review. "
+                "Continue watching authoritative source."
+            ),
+            "automatic_cycle": automatic_cycle,
+            "hero": None,
+        }
     if not incidents:
         return {
             "source_label": WATCH_SOURCE_LABEL,

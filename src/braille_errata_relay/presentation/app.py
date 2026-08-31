@@ -866,7 +866,7 @@ def create_presentation_app(
         return render(
             "watch.html",
             snapshot=snapshot,
-            watch=watch_summary(snapshot),
+            watch=watch_summary(snapshot, suppress_existing_results=True),
             error=error,
             fixture_mode=False,
             fixture_alert=False,
