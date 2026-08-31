@@ -74,6 +74,29 @@ The next optional step is human submission followed by fresh, unambiguous,
 read-only observation linking. Source-change automation is enabled separately
 and remains paused by default.
 
+### Time-bounded simulated-endpoint rehearsal
+
+For a live hackathon rehearsal with no physical embosser, the human operator
+may arm the registered baseline through the fixed local simulator with one
+explicit command. Copy the complete baseline ID and BRF SHA-256 from the
+monitor page, then run:
+
+```powershell
+.\infra\demo\arm_simulated_baseline.ps1 `
+  -BaselineId '<complete baseline ID>' `
+  -ApprovedBrfSha256 '<complete BRF SHA-256>' `
+  -ProductionId 'BIOLOGY-VOLUME-2-DEMO' `
+  -Confirmation ARM-SIMULATED-BASELINE
+```
+
+This is not a database status override. The helper refuses any destination
+except `Braille-Embosser-Sim` bound to
+`relay-capture://demo-embosser`, downloads and re-hashes the immutable BRF,
+submits it under the separate local `relay-operator` identity, records a fresh
+read-only observation, and admits exact received-byte evidence with truth basis
+`SIMULATED_DEMO`. It never uses a physical embosser. A successful final line
+reports `PRODUCTION_LINK_VERIFIED` and `physical_embosser: NOT_USED`.
+
 ## Recovery
 
 - **403/404 while verifying:** confirm the runtime account is a Viewer on the
