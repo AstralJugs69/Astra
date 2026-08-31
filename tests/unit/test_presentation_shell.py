@@ -392,6 +392,9 @@ def test_presentation_is_server_rendered_escaped_and_uses_strict_http_only_sessi
     assert "<script>must be escaped</script>" not in response.text
     assert "[REAL]" in response.text
     assert "[HUMAN ATTESTATION]" in response.text
+    assert "Human workflow state:" in response.text
+    assert "Choose a decision" in response.text
+    assert 'select name="decision" required' in response.text
     assert "[SIMULATED ENDPOINT]" in response.text
     assert DEMONSTRATOR_IDENTITY not in response.text
     cookie = response.headers["set-cookie"].lower()

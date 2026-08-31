@@ -190,6 +190,54 @@ def decision_cockpit(
             "status": "Professional report ready"
             if not blocking_reason
             else "Human review required",
+            "message": "Choose one attributable professional disposition after reviewing the evidence.",
+        }
+    if state == "HALT_REQUESTED":
+        return {
+            "role": "Machine operator",
+            "action": (
+                "Perform any authorized containment outside Astra, then record "
+                "the attributable result"
+            ),
+            "form": "operator",
+            "status": "Review outcome recorded — halt requested",
+            "message": (
+                "The coordinator requested a halt. Astra recorded that decision but did not "
+                "stop CUPS, an embosser, or any physical device."
+            ),
+        }
+    if state == "CONTINUE_ACCEPTED":
+        return {
+            "role": "Production coordinator",
+            "action": "Preserve the recorded continuation decision and its audit evidence",
+            "form": "none",
+            "status": "Review outcome recorded — continue accepted",
+            "message": (
+                "The coordinator accepted continuation after reviewing the report. "
+                "Astra performed no production action."
+            ),
+        }
+    if state == "DEFERRED":
+        return {
+            "role": "Production coordinator",
+            "action": "Resolve the stated deferral before beginning a new assessment",
+            "form": "none",
+            "status": "Review outcome recorded — decision deferred",
+            "message": (
+                "The coordinator deferred the decision. No containment, proof, replacement, "
+                "or closure is claimed."
+            ),
+        }
+    if state == "REPORT_REJECTED":
+        return {
+            "role": "Production coordinator",
+            "action": "Correct the report evidence before beginning a new assessment",
+            "form": "none",
+            "status": "Review outcome recorded — report rejected",
+            "message": (
+                "The coordinator rejected the report. The candidate remains unapproved and "
+                "no production action was performed."
+            ),
         }
     if state == "CONTAINMENT_IN_PROGRESS":
         action = mapping(review_actions.get("containment_confirmation"))
@@ -199,7 +247,17 @@ def decision_cockpit(
                 "action": "Record containment confirmation",
                 "form": "containment",
                 "status": "Attributable containment evidence is ready for confirmation",
+                "message": "The coordinator can now evaluate the complete containment evidence set.",
             }
+        reason = action.get("blocking_reason")
+        reason_label = reason if isinstance(reason, str) else "REQUIRED_EVIDENCE_UNAVAILABLE"
+        return {
+            "role": "Production coordinator and machine operator",
+            "action": "Collect the missing attributable evidence before containment confirmation",
+            "form": "none",
+            "status": "Containment in progress — evidence incomplete",
+            "message": f"Containment is not yet confirmed. Current block: {reason_label}.",
+        }
     if state == "AWAITING_PROOF":
         action = mapping(review_actions.get("proof"))
         if action.get("eligible") is True:
@@ -208,6 +266,7 @@ def decision_cockpit(
                 "action": "Record exact-candidate proof decision",
                 "form": "proof",
                 "status": "Exact candidate proof is awaiting human review",
+                "message": "Only the exact candidate and its bound manifest are eligible for review.",
             }
     if state == "AWAITING_REPLACEMENT":
         action = mapping(review_actions.get("replacement_observation"))
@@ -217,12 +276,36 @@ def decision_cockpit(
                 "action": "Link independent replacement observation",
                 "form": "replacement",
                 "status": "Awaiting human-controlled replacement submission",
+                "message": (
+                    "Astra can record a fresh read-only observation only after an independent "
+                    "human submission."
+                ),
             }
+    if state == "RESOLVED_NO_REMEDIATION_BY_HUMAN":
+        return {
+            "role": "Production coordinator",
+            "action": "No further Astra action is required",
+            "form": "none",
+            "status": "Final human outcome — resolved without remediation",
+            "message": "The attributable human workflow is complete without a replacement job.",
+        }
+    if state == "RESOLVED_BY_HUMAN":
+        return {
+            "role": "Production coordinator",
+            "action": "Preserve the final verification and audit evidence",
+            "form": "none",
+            "status": "Final human outcome — resolved",
+            "message": "The attributable human workflow and final verification are complete.",
+        }
     return {
         "role": "Qualified human reviewer",
         "action": "Review visible evidence",
         "form": "none",
         "status": "Waiting for the next evidence-backed human gate",
+        "message": (
+            "No human record is currently eligible. Review the durable state and visible "
+            "blocking reason."
+        ),
     }
 
 
