@@ -17,6 +17,7 @@ from braille_errata_relay.presentation.app import (
     GoogleAudienceTokenProvider,
     PresentationAuthenticationError,
     PresentationSettings,
+    PrivateReviewApiError,
     _settings_from_args,
     create_presentation_app,
     main,
@@ -220,6 +221,16 @@ class UnavailablePrivateReviewApi:
         raise AssertionError("fallback review controls must not submit")
 
 
+class RejectedSourcePrivateReviewApi(FakePrivateReviewApi):
+    async def post_json(self, path: str, payload: Mapping[str, object]) -> dict[str, object]:
+        if path == "/api/v1/setup/source-verifications":
+            raise PrivateReviewApiError(
+                422,
+                sanitized_detail="The exported document contains a paragraph longer than 512 characters.",
+            )
+        return await super().post_json(path, payload)
+
+
 def _client() -> tuple[TestClient, FakePrivateReviewApi]:
     api = FakePrivateReviewApi()
     app = create_presentation_app(
@@ -290,6 +301,33 @@ def test_guided_source_setup_verifies_configured_google_doc_without_echoing_id()
             "mime_type": "application/vnd.google-apps.document",
         },
     )
+
+
+def test_guided_source_setup_shows_the_runtime_sanitized_rejection_detail() -> None:
+    api = RejectedSourcePrivateReviewApi()
+    app = create_presentation_app(
+        PresentationSettings(
+            api_base_url=AUDIENCE,
+            audience=AUDIENCE,
+            session_secret="s" * 32,
+            impersonate_service_account=DEMONSTRATOR_IDENTITY,
+        ),
+        api_client=api,
+    )
+    client = TestClient(app, base_url="http://127.0.0.1:8765")
+    response = client.post(
+        "/setup/source/verify",
+        data={
+            "csrf_token": _setup_csrf(client),
+            "source_reference": "1AbCdEfGhIjKlMnOpQrStUvWxYz",
+            "mime_type": "application/vnd.google-apps.document",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+    )
+
+    assert response.status_code == 422
+    assert "Runtime detail:" in response.text
+    assert "paragraph longer than 512 characters" in response.text
 
 
 def test_guided_baseline_registration_requires_verification_then_redirects_to_monitor() -> None:

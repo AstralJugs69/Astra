@@ -58,9 +58,10 @@ from braille_errata_relay.presentation.watch import (
 class PrivateReviewApiError(RuntimeError):
     """The local shell cannot safely complete a private Relay API request."""
 
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, *, sanitized_detail: str | None = None) -> None:
         super().__init__(f"private Relay API request returned HTTP {status_code}")
         self.status_code = status_code
+        self.sanitized_detail = sanitized_detail
 
 
 class PresentationAuthenticationError(RuntimeError):
@@ -253,7 +254,19 @@ class CloudRunPrivateReviewApi:
                 json=payload,
             )
         if response.status_code < 200 or response.status_code >= 300:
-            raise PrivateReviewApiError(response.status_code)
+            sanitized_detail: str | None = None
+            try:
+                error_body = response.json()
+            except (json.JSONDecodeError, ValueError):
+                error_body = None
+            if isinstance(error_body, dict):
+                candidate_detail = error_body.get("sanitized_detail")
+                if isinstance(candidate_detail, str):
+                    sanitized_detail = candidate_detail[:500]
+            raise PrivateReviewApiError(
+                response.status_code,
+                sanitized_detail=sanitized_detail,
+            )
         body = response.json()
         if not isinstance(body, dict):
             raise PrivateReviewApiError(502)
@@ -939,9 +952,13 @@ def create_presentation_app(
             )
         except ValueError:
             return _form_error(422, "Enter a valid Google Drive or Google Docs URL.")
+        except PrivateReviewApiError as exc:
+            detail = "The private runtime could not read and parse that source. Confirm Viewer sharing and the selected source type."
+            if exc.sanitized_detail:
+                detail = f"{detail} Runtime detail: {exc.sanitized_detail}"
+            return _form_error(422, detail)
         except (
             httpx.HTTPError,
-            PrivateReviewApiError,
             PresentationAuthenticationError,
             TypeError,
         ):
