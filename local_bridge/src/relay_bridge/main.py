@@ -338,7 +338,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _configure_cups_identity(username: str, *, password_stdin: bool = False) -> None:
+def _configure_cups_identity(
+    username: str,
+    *,
+    password_stdin: bool = False,
+    single_use: bool = False,
+) -> None:
     try:
         import cups  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -354,7 +359,7 @@ def _configure_cups_identity(username: str, *, password_stdin: bool = False) -> 
 
     def password_callback(_prompt: str) -> str:
         nonlocal supplied
-        if supplied:
+        if single_use and supplied:
             return ""
         supplied = True
         return password
@@ -365,7 +370,11 @@ def _configure_cups_identity(username: str, *, password_stdin: bool = False) -> 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "verify-access":
-        _configure_cups_identity(args.user, password_stdin=args.password_stdin)
+        _configure_cups_identity(
+            args.user,
+            password_stdin=args.password_stdin,
+            single_use=True,
+        )
         observer = ReadOnlyCupsObserver(server=args.server, queue_name=args.queue)
         try:
             observer.queue_snapshot()

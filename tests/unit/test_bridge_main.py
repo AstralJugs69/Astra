@@ -18,7 +18,31 @@ from relay_bridge.main import DemoArmAlreadyRunning, observe_loop, observe_once,
 from relay_bridge.main import main as bridge_main
 
 
-def test_password_stdin_is_consumed_once_and_never_reprompted(
+def test_password_stdin_preflight_is_consumed_once_and_never_reprompted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callbacks: list[object] = []
+    fake_cups = types.SimpleNamespace(
+        setUser=lambda username: None,
+        setPasswordCB=lambda callback: callbacks.append(callback),
+    )
+    monkeypatch.setitem(sys.modules, "cups", fake_cups)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("one-secret-line\n"))
+
+    bridge_module._configure_cups_identity(
+        "relay-observer",
+        password_stdin=True,
+        single_use=True,
+    )
+
+    assert len(callbacks) == 1
+    callback = callbacks[0]
+    assert callable(callback)
+    assert callback("Password:") == "one-secret-line"
+    assert callback("Password:") == ""
+
+
+def test_verified_observation_can_authenticate_multiple_read_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     callbacks: list[object] = []
@@ -31,11 +55,10 @@ def test_password_stdin_is_consumed_once_and_never_reprompted(
 
     bridge_module._configure_cups_identity("relay-observer", password_stdin=True)
 
-    assert len(callbacks) == 1
     callback = callbacks[0]
     assert callable(callback)
     assert callback("Password:") == "one-secret-line"
-    assert callback("Password:") == ""
+    assert callback("Password:") == "one-secret-line"
 
 
 class FakeObserver:
