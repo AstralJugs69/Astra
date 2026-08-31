@@ -38,6 +38,7 @@ from braille_errata_relay.application.automatic_reconciliation import (
 from braille_errata_relay.application.baseline_registration import (
     BaselineRegistrationError,
     BaselineRegistrationWorkflow,
+    baseline_registration_idempotency_key,
 )
 from braille_errata_relay.application.containment_proof import (
     ContainmentProofConflict,
@@ -703,14 +704,24 @@ def create_app(
                 raise BaselineRegistrationError(
                     "configured Drive initialization did not produce one source revision"
                 )
+            source_revision_id = initialized.source_revision_ids[0]
+            deterministic_idempotency_key = baseline_registration_idempotency_key(
+                production_id=payload.production_id,
+                source_file_id=drive_workflow.provider.expected_file_id,
+                source_revision_id=source_revision_id,
+                translation_profile_id=baseline_workflow.profile.profile_id,
+                approval_label="DEMO_FIXTURE_APPROVED",
+                site_id=payload.site_id,
+                queue_name=payload.queue_name,
+            )
             result = await baseline_workflow.register_demo_fixture(
                 production_id=payload.production_id,
-                source_revision_id=initialized.source_revision_ids[0],
+                source_revision_id=source_revision_id,
                 expected_file_id=drive_workflow.provider.expected_file_id,
                 approval_label="DEMO_FIXTURE_APPROVED",
                 site_id=payload.site_id,
                 queue_name=payload.queue_name,
-                idempotency_key=payload.idempotency_key,
+                idempotency_key=deterministic_idempotency_key,
             )
         except (BaselineRegistrationError, DriveSourceError, RuntimeError, ValueError) as exc:
             return JSONResponse(

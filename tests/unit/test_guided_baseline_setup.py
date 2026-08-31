@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 from braille_errata_relay.api import main as api_main
 from braille_errata_relay.api.main import create_app
 from braille_errata_relay.api.security import IdentityVerifier, VerifiedIdentity
-from braille_errata_relay.application.baseline_registration import BaselineRegistrationWorkflow
+from braille_errata_relay.application.baseline_registration import (
+    BaselineRegistrationWorkflow,
+    baseline_registration_idempotency_key,
+)
 from braille_errata_relay.application.drive_gate0 import DriveGate0Workflow
 from braille_errata_relay.cloud_settings import CloudSettings
 from braille_errata_relay.domain.models import (
@@ -76,6 +79,7 @@ class CandidateProvider:
 class FakeBaselineWorkflow:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.profile = SimpleNamespace(profile_id="demo-ueb-40x25-v1")
 
     async def register_demo_fixture(self, **values: object) -> SimpleNamespace:
         self.calls.append(values)
@@ -198,6 +202,14 @@ def test_guided_registration_derives_configured_revision_and_performs_no_product
             "approval_label": "DEMO_FIXTURE_APPROVED",
             "site_id": "demo-site",
             "queue_name": "Braille-Embosser-Sim",
-            "idempotency_key": "guided-registration-1",
+            "idempotency_key": baseline_registration_idempotency_key(
+                production_id="BIOLOGY-DEMO",
+                source_file_id=ConfiguredProvider.expected_file_id,
+                source_revision_id="drive:configured:7:source",
+                translation_profile_id="demo-ueb-40x25-v1",
+                approval_label="DEMO_FIXTURE_APPROVED",
+                site_id="demo-site",
+                queue_name="Braille-Embosser-Sim",
+            ),
         }
     ]
