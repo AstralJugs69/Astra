@@ -28,7 +28,7 @@ the **(default)** database.
 
 ## 1. Decide whether you need this path
 
-Use the [offline evaluator path](quickstart.md)
+Use the [offline fixture path](quickstart.md)
 if you want to inspect the UI and contracts. It requires no Google account,
 cloud resources, Drive access, CUPS, or credentials.
 
@@ -71,7 +71,7 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 ~~~
 
 The private runtime does not require Pub/Sub, Workspace Events, Secret Manager,
-or a Gemini API key fallback. The optional public judge dashboard in step 15
+or a Gemini API key fallback. The optional public dashboard in step 15
 uses Secret Manager for its signed-session secret; skip that service if you do
 not deploy the public read-only surface.
 
@@ -211,8 +211,8 @@ INTERNAL_SOURCE_PUSH_PRINCIPAL_EMAIL=<source-service-account-email>
 INTERNAL_TELEMETRY_PUSH_PRINCIPAL_EMAIL=<telemetry-service-account-email>
 INTERNAL_SCHEDULER_PRINCIPAL_EMAIL=<scheduler-service-account-email>
 DEMONSTRATOR_PRINCIPAL_EMAIL=<demonstrator-service-account-email>
-# Optional: set only when deploying the separate GET-only judge dashboard.
-JUDGE_READER_PRINCIPAL_EMAIL=<judge-dashboard-service-account-email>
+# Optional: set only when deploying the separate GET-only public dashboard.
+PUBLIC_READER_PRINCIPAL_EMAIL=<public-dashboard-service-account-email>
 ENDPOINT_EVIDENCE_PRINCIPAL_EMAIL=<endpoint-evidence-service-account-email>
 
 RELAY_SITE_ID=<site-id>
@@ -447,9 +447,9 @@ remains an explicit diagnostic/recovery tool, not the hero path.
 Read [authoritative-drive-source.md](authoritative-drive-source.md) and
 [live-demo-runbook.md](live-demo-runbook.md) before exercising it.
 
-## 15. Optional public, GET-only judge dashboard
+## 15. Optional public, GET-only dashboard
 
-The recommended evaluator architecture is a second Cloud Run service, not a
+The recommended public-dashboard architecture is a second Cloud Run service, not a
 public binding on the private Astra API. The second service renders HTML and
 uses one dedicated service account that can invoke only monitor-safe GET routes
 inside the application. Its own middleware rejects every non-GET request.
@@ -458,67 +458,67 @@ Before using these commands, build the same reviewed Astra image used for the
 private service and store its fully qualified digest in `$ImageDigest`.
 
 ~~~powershell
-$JudgeService = 'astra-judge-dashboard'
-$JudgeServiceAccount = "relay-judge-reader@$ProjectId.iam.gserviceaccount.com"
+$PublicDashboardService = 'astra-public-dashboard'
+$PublicReaderServiceAccount = "relay-public-reader@$ProjectId.iam.gserviceaccount.com"
 $SourceDocumentUrl = '<your-view-only-source-link>'
 
 gcloud services enable secretmanager.googleapis.com --project $ProjectId
-gcloud iam service-accounts create relay-judge-reader `
+gcloud iam service-accounts create relay-public-reader `
   --project $ProjectId `
-  --display-name 'Astra GET-only judge dashboard'
+  --display-name 'Astra GET-only public dashboard'
 
 gcloud run services add-iam-policy-binding $ServiceName `
   --project $ProjectId `
   --region $RunRegion `
-  --member "serviceAccount:$JudgeServiceAccount" `
+  --member "serviceAccount:$PublicReaderServiceAccount" `
   --role roles/run.invoker
 
-# Add JUDGE_READER_PRINCIPAL_EMAIL=$JudgeServiceAccount to the private API's
+# Add PUBLIC_READER_PRINCIPAL_EMAIL=$PublicReaderServiceAccount to the private API's
 # environment and deploy a new private revision before continuing.
 
 $SessionSecret = [Convert]::ToBase64String(
   [Security.Cryptography.RandomNumberGenerator]::GetBytes(48)
 )
-$SessionSecret | gcloud secrets create astra-judge-session-secret `
+$SessionSecret | gcloud secrets create astra-public-session-secret `
   --project $ProjectId `
   --replication-policy automatic `
   --data-file=-
-gcloud secrets add-iam-policy-binding astra-judge-session-secret `
+gcloud secrets add-iam-policy-binding astra-public-session-secret `
   --project $ProjectId `
-  --member "serviceAccount:$JudgeServiceAccount" `
+  --member "serviceAccount:$PublicReaderServiceAccount" `
   --role roles/secretmanager.secretAccessor
 
-gcloud run deploy $JudgeService `
+gcloud run deploy $PublicDashboardService `
   --project $ProjectId `
   --region $RunRegion `
   --image $ImageDigest `
-  --service-account $JudgeServiceAccount `
+  --service-account $PublicReaderServiceAccount `
   --command uvicorn `
   '--args=braille_errata_relay.presentation.hosted:app,--host,0.0.0.0,--port,8080' `
-  "--set-env-vars=^|^RELAY_PRESENTATION_API_URL=$ServiceUrl|RELAY_PRESENTATION_AUDIENCE=$InternalAudience|RELAY_PRESENTATION_IMPERSONATE_SERVICE_ACCOUNT=$JudgeServiceAccount|RELAY_JUDGE_SOURCE_URL=$SourceDocumentUrl|RELAY_REPOSITORY_URL=https://github.com/AstralJugs69/Astra" `
-  --set-secrets RELAY_PRESENTATION_SESSION_SECRET=astra-judge-session-secret:latest `
+  "--set-env-vars=^|^RELAY_PRESENTATION_API_URL=$ServiceUrl|RELAY_PRESENTATION_AUDIENCE=$InternalAudience|RELAY_PRESENTATION_IMPERSONATE_SERVICE_ACCOUNT=$PublicReaderServiceAccount|RELAY_PUBLIC_SOURCE_URL=$SourceDocumentUrl|RELAY_REPOSITORY_URL=https://github.com/AstralJugs69/Astra" `
+  --set-secrets RELAY_PRESENTATION_SESSION_SECRET=astra-public-session-secret:latest `
   --allow-unauthenticated
 
-$JudgeUrl = (gcloud run services describe $JudgeService `
+$PublicDashboardUrl = (gcloud run services describe $PublicDashboardService `
   --project $ProjectId `
   --region $RunRegion `
   --format 'value(status.url)').Trim()
-gcloud run services update $JudgeService `
+gcloud run services update $PublicDashboardService `
   --project $ProjectId `
   --region $RunRegion `
-  --update-env-vars "RELAY_PRESENTATION_PUBLIC_ORIGIN=$JudgeUrl"
+  --update-env-vars "RELAY_PRESENTATION_PUBLIC_ORIGIN=$PublicDashboardUrl"
 ~~~
 
 Verify all four boundaries before sharing the URL:
 
-1. an anonymous `GET $JudgeUrl` returns the dashboard;
-2. a `POST` to the judge service returns HTTP 405;
+1. an anonymous `GET $PublicDashboardUrl` returns the dashboard;
+2. a `POST` to the public dashboard returns HTTP 405;
 3. an anonymous request to the private API remains rejected by Cloud Run; and
-4. the judge service account is rejected from a candidate download and every
+4. the public-dashboard service account is rejected from a candidate download and every
    API mutation route.
 
-The source link should normally be **Viewer**, not Editor. Evaluators who want
-to make a correction should copy the source into their own Drive and use the
+The source link should normally be **Viewer**, not Editor. Anyone who wants to
+make a correction should copy the source into a separate Drive account and use the
 full private setup.
 
 ## 16. Cleanup and non-negotiable boundaries

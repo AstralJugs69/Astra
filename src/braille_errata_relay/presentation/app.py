@@ -569,10 +569,10 @@ _TEMPLATES["incident.html"] = """<!doctype html>
 </style></head>
 <body><a class="skip" href="#incident-content">Skip to incident</a><header class="site-header"><div class="shell"><div><p class="eyebrow">Braille Errata Relay</p><div class="brand">Astra{% if fixture_mode %} — SANITIZED DEMO FIXTURE{% endif %}</div></div><nav aria-label="Primary"><a href="/">Overview</a> · <a href="/watch">Live watch</a> · <a href="/#baselines">Baselines</a> · <a href="/#reports">Reports</a> · <a href="/test-astra">Test Astra</a></nav></div></header>
 {% macro disposition_form() -%}
-{% if error %}<p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>{% elif hosted_read_only %}<div class="role"><strong>Public judge view:</strong> this outcome is view-only. Recording a new human decision requires the private operator surface.</div>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: disposition recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/professional-dispositions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ disposition_idempotency_key }}"><label>Decision <select name="decision" required><option value="" selected disabled>Choose a decision</option>{% for decision in decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record professional disposition</button></form>{% endif %}
+{% if error %}<p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>{% elif hosted_read_only %}<div class="role"><strong>Public read-only view:</strong> this outcome is view-only. Recording a new human decision requires the private operator surface.</div>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: disposition recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/professional-dispositions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ disposition_idempotency_key }}"><label>Decision <select name="decision" required><option value="" selected disabled>Choose a decision</option>{% for decision in decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record professional disposition</button></form>{% endif %}
 {%- endmacro %}
 {% macro operator_form() -%}
-{% if error %}<p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>{% elif hosted_read_only %}<div class="role"><strong>Public judge view:</strong> operator attestations are view-only here.</div>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: operator attestation disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/operator-attestations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ attestation_idempotency_key }}"><label>Attributable fact <select name="attestation_type">{% for kind in attestation_types %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label>Truth basis <select name="truth_basis">{% for basis in truth_bases %}<option value="{{ basis }}">{{ basis }}</option>{% endfor %}</select></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record operator attestation</button></form>{% endif %}
+{% if error %}<p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>{% elif hosted_read_only %}<div class="role"><strong>Public read-only view:</strong> operator attestations are view-only here.</div>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: operator attestation disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/operator-attestations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ attestation_idempotency_key }}"><label>Attributable fact <select name="attestation_type">{% for kind in attestation_types %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label>Truth basis <select name="truth_basis">{% for basis in truth_bases %}<option value="{{ basis }}">{{ basis }}</option>{% endfor %}</select></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record operator attestation</button></form>{% endif %}
 {%- endmacro %}
 {% macro containment_form() -%}
 <p>CUPS state alone never proves device stop or physical-output isolation.</p>{% if review_actions.containment_confirmation.eligible %}{% if fixture_mode %}<button class="action" disabled>Offline fixture: containment recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/containment-confirmations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ containment_idempotency_key }}"><input type="hidden" name="halt_disposition_record_id" value="{{ review_actions.containment_confirmation.halt_disposition_record_id }}"><input type="hidden" name="site_observation_id" value="{{ review_actions.containment_confirmation.site_observation_id }}"><input type="hidden" name="physical_output_isolation_attestation_id" value="{{ review_actions.containment_confirmation.physical_output_isolation_attestation_id }}"><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record containment confirmation</button></form>{% endif %}{% else %}<p>Containment confirmation is unavailable: {{ review_actions.containment_confirmation.blocking_reason }}.</p>{% endif %}
@@ -638,7 +638,7 @@ _TEMPLATES["baseline_monitor.html"] = (
 _TEMPLATES.update(MODERN_TEMPLATES)
 
 # Keep the visibly labelled offline fixture distinct from both the private
-# operator dashboard and the public read-only judge dashboard.
+# operator dashboard and the public read-only dashboard.
 _TEMPLATES["index.html"] = _TEMPLATES["index.html"].replace(
     '<section class="hero">',
     '{% if fixture_mode %}<p class="notice"><strong>SANITIZED DEMO FIXTURE</strong> '
@@ -665,24 +665,24 @@ _TEMPLATES["index.html"] = _TEMPLATES["index.html"].replace(
     "{{ incident.review_state.state|replace('_',' ') }}</span>",
 )
 
-# The incident cockpit remains shared by the private operator and public judge
+# The incident cockpit remains shared by the private operator and public
 # surfaces.  In hosted mode, eligible workflow gates must render as evidence,
 # never as forms.  The application middleware independently rejects every
 # hosted non-GET request; these substitutions keep the visible affordances
 # aligned with that enforced authority boundary.
 _HOSTED_GATE_COPY = {
     '{% if fixture_mode %}<button class="action" disabled>Offline fixture: containment recording disabled</button>': (
-        '{% if hosted_read_only %}<div class="role"><strong>Public judge view:</strong> '
+        '{% if hosted_read_only %}<div class="role"><strong>Public read-only view:</strong> '
         "containment evidence is view-only here.</div>{% elif fixture_mode %}<button "
         'class="action" disabled>Offline fixture: containment recording disabled</button>'
     ),
     '{% if fixture_mode %}<button class="action" disabled>Offline fixture: proof decision recording disabled</button>': (
-        '{% if hosted_read_only %}<div class="role"><strong>Public judge view:</strong> '
+        '{% if hosted_read_only %}<div class="role"><strong>Public read-only view:</strong> '
         "proof evidence is view-only here.</div>{% elif fixture_mode %}<button "
         'class="action" disabled>Offline fixture: proof decision recording disabled</button>'
     ),
     '{% if fixture_mode %}<div class="role"><strong>Proof-ready offline fixture:</strong>': (
-        '{% if hosted_read_only %}<div class="role"><strong>Public judge view:</strong> '
+        '{% if hosted_read_only %}<div class="role"><strong>Public read-only view:</strong> '
         "replacement evidence is view-only here.</div>{% elif fixture_mode %}<div "
         'class="role"><strong>Proof-ready offline fixture:</strong>'
     ),
@@ -898,7 +898,7 @@ def create_presentation_app(
         call_next: RequestResponseEndpoint,
     ) -> Response:
         if settings.hosted_read_only and request.method not in {"GET", "HEAD"}:
-            return PlainTextResponse("Hosted judge dashboard is read-only.", status_code=405)
+            return PlainTextResponse("Hosted dashboard is read-only.", status_code=405)
         return await call_next(request)
 
     def render(name: str, **context: object) -> HTMLResponse:
@@ -1000,7 +1000,7 @@ def create_presentation_app(
 
     def require_local_form(request: Request, csrf: str) -> HTMLResponse | None:
         if settings.hosted_read_only:
-            return _form_error(405, "Hosted judge dashboard is read-only.")
+            return _form_error(405, "Hosted dashboard is read-only.")
         if request.headers.get("host") != f"127.0.0.1:{settings.port}":
             return _form_error(403, "Local review requests must use the loopback host.")
         origin = request.headers.get("origin")

@@ -1,4 +1,4 @@
-"""Public GET-only judge dashboard backed by the private Relay review API."""
+"""Public GET-only dashboard backed by the private Relay review API."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class GoogleAmbientAudienceTokenProvider(AudienceTokenProvider):
                 )
             except google_auth_exceptions.GoogleAuthError as exc:
                 raise PresentationAuthenticationError(
-                    "attached judge dashboard identity could not mint a private API token"
+                    "attached public dashboard identity could not mint a private API token"
                 ) from exc
             if not token:
                 raise PresentationAuthenticationError("attached identity returned no token")
@@ -59,12 +59,12 @@ def create_hosted_app() -> FastAPI:
         session_secret=os.environ.get("RELAY_PRESENTATION_SESSION_SECRET", ""),
         impersonate_service_account=os.environ.get(
             "RELAY_PRESENTATION_IMPERSONATE_SERVICE_ACCOUNT",
-            "relay-judge-reader@placeholder-project.iam.gserviceaccount.com",
+            "relay-public-reader@placeholder-project.iam.gserviceaccount.com",
         ),
         port=int(os.environ.get("PORT", "8080")),
         hosted_read_only=True,
         public_origin=os.environ.get("RELAY_PRESENTATION_PUBLIC_ORIGIN") or None,
-        source_document_url=os.environ.get("RELAY_JUDGE_SOURCE_URL") or None,
+        source_document_url=os.environ.get("RELAY_PUBLIC_SOURCE_URL") or None,
         repository_url=os.environ.get(
             "RELAY_REPOSITORY_URL", "https://github.com/AstralJugs69/Astra"
         ),

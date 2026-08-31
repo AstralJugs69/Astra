@@ -3,7 +3,7 @@
 This module never creates cloud resources, changes IAM, edits Drive, contacts
 CUPS, submits a job, or handles a password or service-account key.  It writes
 only an explicitly requested gitignored local environment file and exposes
-read-only diagnostics for an evaluator's machine.
+read-only diagnostics for a local machine.
 """
 
 from __future__ import annotations

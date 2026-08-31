@@ -1898,7 +1898,7 @@ Lack of an independent Braille reviewer is not hidden. It is recorded as a pilot
 
 ## 14. Demonstration flow
 
-### 14.1 Preflight before the judges see the app
+### 14.1 Preflight before a live presentation
 
 `infra/scripts/preflight.py` must show:
 

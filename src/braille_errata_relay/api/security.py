@@ -63,7 +63,7 @@ class GoogleOidcVerifier:
 _RECORD_ID = r"[0-9a-f]{64}"
 
 
-def _is_judge_safe_get(path: str) -> bool:
+def _is_public_read_safe_get(path: str) -> bool:
     """Admit only monitor JSON, never artifact downloads or mutation subroutes."""
 
     if path in {"/api/v1/automation-status", "/api/v1/baselines", "/api/v1/incidents"}:
@@ -95,9 +95,9 @@ def _expected_principals(method: str, path: str, settings: CloudSettings) -> tup
         return tuple(filter(None, (settings.endpoint_evidence_principal_email,)))
     if path.startswith("/api/"):
         principals = [settings.demonstrator_principal_email]
-        judge_safe_get = method == "GET" and _is_judge_safe_get(path)
-        if judge_safe_get:
-            principals.append(settings.judge_reader_principal_email)
+        public_read_safe_get = method == "GET" and _is_public_read_safe_get(path)
+        if public_read_safe_get:
+            principals.append(settings.public_reader_principal_email)
         return tuple(filter(None, principals))
     return ()
 

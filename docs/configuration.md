@@ -14,7 +14,7 @@ uv run --frozen braille-relay init-local-config \
   --project-id <project-id> \
   --region europe-west3 \
   --drive-source <drive-url-or-file-id> \
-  --source-mime-type text/markdown \
+  --source-mime-type application/vnd.google-apps.document \
   --site-id <site-id> \
   --queue-name <queue-name> \
   --bridge-id <bridge-id> \
@@ -41,10 +41,10 @@ It rejects non-HTTPS, credential-bearing, or non-Google URLs.
 | `GOOGLE_CLOUD_PROJECT` | Yes | Deployment project reference. |
 | `CLOUD_RUN_REGION` | Yes | Defaults to `europe-west3`. |
 | `DRIVE_FILE_ID` | Yes | One authoritative source identity. |
-| `DRIVE_SOURCE_MIME_TYPE` | Yes | Currently `text/markdown` only. |
+| `DRIVE_SOURCE_MIME_TYPE` | Yes | One strict source type: `text/markdown` for a Drive-hosted UTF-8 Markdown file, or `application/vnd.google-apps.document` for a native Google Doc exported read-only as Markdown. |
 | `SITE_ID`, `QUEUE_NAME`, `LOCAL_BRIDGE_ID` | Yes | Read-only local site-observation identity. |
 | `DEMONSTRATOR_PRINCIPAL_EMAIL` | Live presentation | Human-authorized temporary impersonation target. |
-| `JUDGE_READER_PRINCIPAL_EMAIL` | Optional public judge dashboard | Dedicated service identity admitted only to monitor-safe private API GET routes. |
+| `PUBLIC_READER_PRINCIPAL_EMAIL` | Cloud Run public dashboard only | Dedicated service identity admitted only to monitor-safe private API GET routes. It is not written by `init-local-config`. |
 | `INTERNAL_TELEMETRY_PUSH_PRINCIPAL_EMAIL` | Telemetry runbook | Read-only bridge telemetry principal. |
 | `RELAY_API_BASE_URL`, `RELAY_API_AUDIENCE` | Live presentation | Credential-free private HTTPS origins. |
 

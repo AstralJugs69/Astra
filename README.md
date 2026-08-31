@@ -104,6 +104,7 @@ The intended live hero path is:
 - [Live demo preparation](docs/demo-preparation.md)
 - [Fresh-project deployment](docs/fresh-project-deployment.md)
 - [Guided source and baseline onboarding](docs/guided-baseline-onboarding.md)
+- [Hosted public read-only dashboard](docs/public-read-only-dashboard.md)
 - [Security and authority](docs/security-and-authority.md)
 - [Scope and limits](#scope-and-unclaimed-behavior)
 
@@ -130,6 +131,7 @@ with the people and controls already responsible for them.
 | Gemini / Google ADK semantic assessment | **Real bounded adapter when configured.** It returns structured semantic assessment only; it never owns production facts or device tools. |
 | Firestore ledger and GCS artifact lineage | **Real cloud adapters.** They hold durable workflow state and immutable content-addressed evidence, not a publishing system of record. |
 | Private Cloud Run deployment and authenticated read-only smoke | **Real.** The final readiness evidence records a private deployment and authenticated GET-only smoke. |
+| Hosted public read-only dashboard | **Real, separate presentation surface.** It renders durable monitor-safe records through a dedicated GET-only service; it has no mutation, candidate-download, Drive, scheduler, CUPS, or device-control capability. |
 | CUPS scheduling and read-only production observation | **Real in the WSL Gate 0 harness.** The application and bridge remain read-only with respect to CUPS. |
 | Physical embossing endpoint | **Simulated only.** The endpoint simulator stands in for the final physical act; CUPS/job observation is not faked. |
 | Offline screenshots and local fixture | **Sanitized fixture only.** It proves the UI and contracts, never live Drive, Gemini, cloud, CUPS, professional action, or endpoint execution. |
@@ -224,7 +226,7 @@ The architecture deliberately separates:
 
 ## Delivered workflow boundaries
 
-The implementation stories remain useful engineering scope; the judge-facing
+The implementation stories remain useful engineering scope; the demonstrated
 workflow above is the easier way to understand their operational effect.
 
 | Story | Delivered boundary |
@@ -243,7 +245,7 @@ workflow above is the easier way to understand their operational effect.
 | [src/braille_errata_relay/application](src/braille_errata_relay/application) | Idempotent workflows, retry/recovery behavior, and fail-closed gates. |
 | [src/braille_errata_relay/adapters](src/braille_errata_relay/adapters) | Google Drive, Firestore, GCS, and Gemini/ADK adapters. |
 | [src/braille_errata_relay/api](src/braille_errata_relay/api) | Private Cloud Run API and route-level identity enforcement. |
-| [src/braille_errata_relay/presentation](src/braille_errata_relay/presentation) | Loopback dashboard, live watch SSE, and sanitized offline fixture. |
+| [src/braille_errata_relay/presentation](src/braille_errata_relay/presentation) | Loopback dashboard, hosted public read-only dashboard, live watch SSE, and sanitized offline fixture. |
 | [local_bridge](local_bridge) | Read-only CUPS observer and transactional observation journal. |
 | [simulator/cups_backend](simulator/cups_backend) | Simulated physical endpoint only. |
 | [infra](infra) | Explicit human-run GCP, WSL, CUPS, and demonstration tools. |
@@ -253,32 +255,32 @@ workflow above is the easier way to understand their operational effect.
 
 ## Quick start: choose the truthful path
 
-### Hosted judge path — no setup, read-only durable evidence
+### Hosted public read-only path — no setup, durable evidence
 
-The deployed judge dashboard is the fastest way to understand Astra. It shows
+The deployed public dashboard is the fastest way to explore Astra. It shows
 registered baselines, live reconciliation state, past incident reports,
 recorded human outcomes, deterministic Braille impact, Gemini assessment, and
 the audit timeline without exposing the private API or a mutation surface.
 
-**Live judge dashboard:**
-[astra-judge-dashboard-zqesk2cifq-ey.a.run.app](https://astra-judge-dashboard-zqesk2cifq-ey.a.run.app)
+**Hosted dashboard:**
+[astra-public-dashboard-zqesk2cifq-ey.a.run.app](https://astra-public-dashboard-zqesk2cifq-ey.a.run.app)
 
-Open the dashboard's **Test Astra** page for the guided route. The public
+Open the dashboard's **Explore Astra** page for the guided route. The public
 service is GET-only and uses a dedicated identity that is rejected from
 candidate downloads, human-record routes, Drive setup, scheduler calls, and
 every CUPS/device action. The underlying Cloud Run API remains private.
 
 The dashboard includes the prepared Google Docs source link. Its availability
-to an unauthenticated judge is governed by that document's Drive **Viewer**
+to an unauthenticated visitor is governed by that document's Drive **Viewer**
 sharing setting; Astra never changes that setting.
 
-See [judge-testing.md](docs/judge-testing.md) for the deployed path, prepared
-source link, and the full self-hosted alternative.
+See [public-read-only-dashboard.md](docs/public-read-only-dashboard.md) for
+the hosted path, prepared source link, and the full self-hosted alternative.
 
-### Offline evaluator path — five minutes, zero credentials
+### Offline fixture path — no credentials
 
-This is safe for any evaluator. It does not contact Google Cloud, Drive, CUPS,
-or a device. It proves only the UI and contracts.
+This is safe for local inspection. It does not contact Google Cloud, Drive,
+CUPS, or a device. It proves only the UI and contracts.
 
 ~~~powershell
 $RepoRoot = (git rev-parse --show-toplevel).Trim()
@@ -299,7 +301,7 @@ Every page is visibly marked **SANITIZED DEMO FIXTURE**. The fixture has
 GET-only routes; it cannot create a human record, contact an external service,
 or operate production equipment.
 
-### Live evaluator path — configured private environment
+### Live private path — configured environment
 
 This path demonstrates actual adapters and requires:
 
@@ -315,8 +317,8 @@ Start here:
 
 - [quickstart.md](docs/quickstart.md) for local configuration and fixture/live
   choices;
-- [judge-testing.md](docs/judge-testing.md) for the hosted GET-only dashboard
-  and full evaluator-owned reproduction paths;
+- [public-read-only-dashboard.md](docs/public-read-only-dashboard.md) for the
+  hosted GET-only dashboard and full isolated-account reproduction paths;
 - [fresh-project-deployment.md](docs/fresh-project-deployment.md) for an
   explicit human-reviewed GCP deployment path;
 - [google-cloud-setup.md](docs/google-cloud-setup.md) for credentials, Drive
@@ -339,11 +341,11 @@ separately guarded incident-detail forms for explicit human records; the
 launcher never invokes them. Its temporary authentication prerequisite is
 explained in the Google Cloud setup guide.
 
-For a repeated rehearsal or an evaluator walkthrough, the bounded wrapper
-reduces this to one command:
+For a repeated rehearsal or team walkthrough, the bounded wrapper reduces this
+to one command:
 
 ~~~powershell
-# Fastest judge path: offline, visibly labeled, no Google account required.
+# Fastest fixture path: offline, visibly labeled, no Google account required.
 .\infra\demo\rehearse.ps1 -Mode Fixture
 
 # Private read-only dashboard over existing durable cloud evidence.
@@ -444,7 +446,8 @@ mathematics/table transcription, or compatibility with all facility software.
 
 The demonstrated topology is intentionally narrow:
 
-- one strict text/Markdown source profile;
+- two strict source profiles: a native Google Doc exported read-only as
+  Markdown, or one Drive-hosted UTF-8 Markdown file;
 - one real Drive source-authority adapter;
 - deterministic Liblouis BRF production under a pinned profile;
 - one real CUPS observer topology in WSL;

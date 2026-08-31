@@ -160,9 +160,23 @@ def _settings() -> CloudSettings:
         telemetry_push_principal_email="telemetry@example.iam.gserviceaccount.com",
         scheduler_principal_email="scheduler@example.iam.gserviceaccount.com",
         demonstrator_principal_email="demonstrator@example.com",
-        judge_reader_principal_email="judge-reader@example.iam.gserviceaccount.com",
+        public_reader_principal_email="public-reader@example.iam.gserviceaccount.com",
         endpoint_evidence_principal_email="endpoint@example.iam.gserviceaccount.com",
     )
+
+
+def test_public_reader_principal_is_loaded_from_the_explicit_environment_field() -> None:
+    settings = CloudSettings.from_env(
+        {
+            "GOOGLE_CLOUD_PROJECT": "test-project",
+            "CLOUD_RUN_REGION": "europe-west3",
+            "GOOGLE_CLOUD_LOCATION": "europe-west3",
+            "GEMINI_MODEL": "gemini-test",
+            "PUBLIC_READER_PRINCIPAL_EMAIL": "public-reader@example.iam.gserviceaccount.com",
+        }
+    )
+
+    assert settings.public_reader_principal_email == "public-reader@example.iam.gserviceaccount.com"
 
 
 def _payload() -> dict[str, object]:
@@ -315,9 +329,9 @@ def test_demonstrator_is_the_only_principal_admitted_to_baseline_api() -> None:
     assert denied.status_code == 403
 
 
-def test_judge_reader_is_limited_to_monitor_gets_and_cannot_download_or_mutate() -> None:
+def test_public_reader_is_limited_to_monitor_gets_and_cannot_download_or_mutate() -> None:
     record_id = "a" * 64
-    headers = {"Authorization": "Bearer judge-reader@example.iam.gserviceaccount.com"}
+    headers = {"Authorization": "Bearer public-reader@example.iam.gserviceaccount.com"}
 
     monitor_gets = (
         "/api/v1/automation-status",

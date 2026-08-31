@@ -8,7 +8,7 @@ the Gate 0 evidence is present.
 
 ## Live-demo volume
 
-`demo-volume/` is the judge-facing, wholly synthetic V1/V2 source pair. With
+`demo-volume/` is the demonstration, wholly synthetic V1/V2 source pair. With
 the pinned demo profile it renders to **46 Braille pages** in both revisions.
 The material correction is in a single middle source block, changes page **24**
 only, and deterministically resynchronizes the unchanged suffix after page

@@ -274,7 +274,7 @@ def _gate_client(gate: str) -> tuple[TestClient, GateEligiblePrivateReviewApi]:
     return TestClient(app, base_url="http://127.0.0.1:8765"), api
 
 
-def test_hosted_judge_dashboard_is_read_only_and_explains_both_test_paths() -> None:
+def test_hosted_public_dashboard_is_read_only_and_explains_both_access_paths() -> None:
     api = FakePrivateReviewApi()
     app = create_presentation_app(
         PresentationSettings(
@@ -283,12 +283,12 @@ def test_hosted_judge_dashboard_is_read_only_and_explains_both_test_paths() -> N
             session_secret="s" * 32,
             impersonate_service_account=DEMONSTRATOR_IDENTITY,
             hosted_read_only=True,
-            public_origin="https://astra-judge.example.run.app",
+            public_origin="https://astra-public.example.run.app",
             source_document_url="https://docs.google.com/document/d/safe-demo/edit",
         ),
         api_client=api,
     )
-    client = TestClient(app, base_url="https://astra-judge.example.run.app")
+    client = TestClient(app, base_url="https://astra-public.example.run.app")
 
     overview = client.get("/")
     guide = client.get("/test-astra")
@@ -298,7 +298,7 @@ def test_hosted_judge_dashboard_is_read_only_and_explains_both_test_paths() -> N
     )
 
     assert overview.status_code == 200
-    assert "Public judge view" in overview.text
+    assert "Public read-only view" in overview.text
     assert "Registered baselines" in overview.text
     assert "Past reports and human outcomes" in overview.text
     assert "Register baseline" not in overview.text
@@ -307,14 +307,14 @@ def test_hosted_judge_dashboard_is_read_only_and_explains_both_test_paths() -> N
     assert "Path B" in guide.text
     assert "https://docs.google.com/document/d/safe-demo/edit" in guide.text
     assert incident.status_code == 200
-    assert "Public judge view" in incident.text
+    assert "Public read-only view" in incident.text
     assert "<form" not in incident.text
     assert rejected.status_code == 405
-    assert rejected.text == "Hosted judge dashboard is read-only."
+    assert rejected.text == "Hosted dashboard is read-only."
     assert api.posts == []
 
 
-def test_hosted_judge_dashboard_hides_eligible_human_forms_and_candidate_downloads() -> None:
+def test_hosted_public_dashboard_hides_eligible_human_forms_and_candidate_downloads() -> None:
     api = GateEligiblePrivateReviewApi(gate="proof")
     app = create_presentation_app(
         PresentationSettings(
@@ -323,17 +323,17 @@ def test_hosted_judge_dashboard_hides_eligible_human_forms_and_candidate_downloa
             session_secret="s" * 32,
             impersonate_service_account=DEMONSTRATOR_IDENTITY,
             hosted_read_only=True,
-            public_origin="https://astra-judge.example.run.app",
+            public_origin="https://astra-public.example.run.app",
         ),
         api_client=api,
     )
-    client = TestClient(app, base_url="https://astra-judge.example.run.app")
+    client = TestClient(app, base_url="https://astra-public.example.run.app")
 
     detail = client.get(f"/incidents/{INCIDENT_ID}")
     candidate = client.get(f"/incidents/{INCIDENT_ID}/approved-candidate")
 
     assert detail.status_code == 200
-    assert "Public judge view" in detail.text
+    assert "Public read-only view" in detail.text
     assert '<form method="post"' not in detail.text
     assert "Download exact approved candidate BRF" not in detail.text
     assert candidate.status_code == 404

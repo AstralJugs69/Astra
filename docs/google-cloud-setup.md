@@ -76,8 +76,8 @@ uv run --frozen braille-relay doctor --config .env --check-drive
 For that optional check:
 
 1. Create an approved **Desktop OAuth client** in the project that owns the
-   local evaluator flow.
-2. If the OAuth audience is in testing, add the evaluator’s Google account as
+   local presentation flow.
+2. If the OAuth audience is in testing, add the local Google account as
    a test user. If Workspace policy applies, ask the administrator to allowlist
    the client and read-only scope.
 3. Keep the downloaded client configuration outside the repository.
@@ -169,7 +169,7 @@ Authentication for Astra does not authorize:
 - a service-account JSON key or permanent Token Creator grant.
 
 For all local settings, see [configuration.md](configuration.md). For the
-offline, no-auth evaluator path, see [quickstart.md](quickstart.md).
+offline, no-auth fixture path, see [quickstart.md](quickstart.md).
 
 ## Official references
 

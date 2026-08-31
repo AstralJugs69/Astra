@@ -1,19 +1,18 @@
-# Judge testing: hosted evidence or full reproduction
+# Public dashboard and full reproduction
 
-Astra supports two deliberately different evaluation paths. They use the same
-durable records and preserve the same human-authority boundary, but they do not
-grant the same capabilities.
+Astra has two deliberately different access paths. They use the same durable
+records and preserve the same human-authority boundary, but they do not grant
+the same capabilities.
 
 ## Path A — deployed read-only dashboard
 
-Use the public Astra judge dashboard when you want to understand the project
-without provisioning Google Cloud or installing the local production-floor
-simulator.
+Use the public Astra dashboard to explore the project without provisioning
+Google Cloud or installing the local production-floor simulator.
 
 **Live dashboard:**
-[https://astra-judge-dashboard-zqesk2cifq-ey.a.run.app](https://astra-judge-dashboard-zqesk2cifq-ey.a.run.app)
+[https://astra-public-dashboard-zqesk2cifq-ey.a.run.app](https://astra-public-dashboard-zqesk2cifq-ey.a.run.app)
 
-The hosted dashboard lets you:
+The hosted dashboard provides:
 
 1. inspect registered source-to-Braille baselines;
 2. watch the durable reconciliation status;
@@ -33,14 +32,14 @@ The prepared authoritative source is:
 
 <https://docs.google.com/document/d/1w5YaYKGFAkJSsRIMRKRX1jX6QUgpGqKYU7sHKd_1qi4/edit?tab=t.0>
 
-If Google asks the evaluator to sign in, the document owner has not enabled
+If Google asks a visitor to sign in, the document owner has not enabled
 "Anyone with the link — Viewer". Do not grant public Editor access to the
-authoritative source. A judge who wants to create a correction should use a
-copy they own and follow Path B.
+authoritative source. A person who wants to create a correction should use a
+copy in a separate Drive account and follow Path B.
 
-## Path B — reproduce Astra in your own account
+## Path B — reproduce Astra in a separate account
 
-Use the repository path when you want to test actual source editing, private
+Use the repository path to test actual source editing, private
 automation, Gemini/ADK, deterministic Liblouis BRF generation, durable
 Firestore/GCS lineage, or the real CUPS queue/capture simulator.
 
@@ -57,8 +56,8 @@ Firestore/GCS lineage, or the real CUPS queue/capture simulator.
 7. Use [live-demo-runbook.md](live-demo-runbook.md) for the edit-to-report
    walkthrough.
 
-This path keeps billing, IAM, source ownership, and all human actions inside the
-evaluator's own account. The deployment scripts leave the scheduler paused by
+This path keeps billing, IAM, source ownership, and all human actions inside
+the account that runs it. The deployment scripts leave the scheduler paused by
 default and never make the private API public.
 
 ## What both paths prove

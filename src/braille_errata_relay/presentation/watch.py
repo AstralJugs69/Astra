@@ -400,7 +400,7 @@ def watch_summary(
             )
         ),
         "automatic_cycle": automatic_cycle,
-        # A result hero is evidence-led: no highlight, no judge-facing result.
+        # A result hero is evidence-led: no highlight, no reader-facing result.
         # NEEDS_REVIEW remains a strong autonomous outcome when the complete
         # deterministic/semantic report evidence exists.
         "hero": hero,

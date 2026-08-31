@@ -70,7 +70,7 @@ Drive ID is never rendered in the browser watch floor.
 ## Read-only access check
 
 After optional local Drive ADC is configured with a project-owned OAuth client,
-an evaluator may run:
+a local operator may run:
 
 ~~~text
 uv run --frozen braille-relay doctor --config .env --check-drive

@@ -12,7 +12,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "92c12d7b1f38f111ef5a0bced4485d9272141e07d9e6f802e9a20329bed6299e"
+      "sha256": "aaaf81ab11aa9bb5a27874ae6c8a3bdc11cbdcb721fa0af964997d2a5655cf26"
     },
     {
       "filename": "watch-floor-mismatch-desktop.png",
@@ -22,7 +22,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "c23d3f8bd82ca43c05a0086b74580fec4c8ada70c745d96c96ac57b8cf8564eb"
+      "sha256": "f4d330aa6524f5fc982b40fadaf915750945dfbbacdc886e5c46b2b6855027ae"
     },
     {
       "filename": "incident-overview-desktop.png",
@@ -32,7 +32,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "0cf3264ffd7736d47024ec2d671f226202cf78e746d7c68bc7959ff0fbba1e6b"
+      "sha256": "52a73f0aa5707a454db5e2a78ac68a35266234f8787e5a9c32dda017a0c87c29"
     },
     {
       "filename": "incident-detail-desktop.png",
@@ -42,7 +42,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "fe46ba17a17467f7f624e0362c3eecd60b612a2b2752dc980ad79591eabd8586"
+      "sha256": "4595937c4d67d3abecbd1d2ed173e550e2834a7aada17930b8c56f593546a0ed"
     },
     {
       "filename": "incident-detail-mobile.png",
@@ -52,7 +52,7 @@
         "height": 844,
         "device_scale_factor": 1
       },
-      "sha256": "79a0370b1fd2fcaca168b81bec6d48b99f2ce9654c44d4f59252e6da3e8e65d1"
+      "sha256": "cd31024e15587be2b7eba921236025842d7967877342e725b2d1db13ff99632d"
     },
     {
       "filename": "incident-report-desktop.png",
@@ -62,7 +62,7 @@
         "height": 1100,
         "device_scale_factor": 1
       },
-      "sha256": "a7d2466bd79b42fcfe3d4b90f6b621ddc4352e4934640c22ec9cb6a485988dad"
+      "sha256": "e78465897f16c1ee2a0b0010cae89bcd644fce6e568fd5682ddaa047443d1271"
     }
   ],
   "sanitization_assertions": [

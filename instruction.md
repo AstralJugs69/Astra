@@ -57,7 +57,7 @@ Drive source correction
 ### 1.3 Why this idea is compelling
 
 1. **It is agent-native.** The workflow begins with an external event, spans interpretation and multiple tools, has irreversible state, and ends in verified action rather than generated prose.
-2. **It exposes a non-obvious cascade.** One ordinary-language correction can invalidate multiple tactile pages. The before/after Braille reflow makes that consequence legible to judges who do not read Braille.
+2. **It exposes a non-obvious cascade.** One ordinary-language correction can invalidate multiple tactile pages. The before/after Braille reflow makes that consequence legible to people who do not read Braille.
 3. **It fits an existing operational world.** Source repositories and transfer portals, electronic documents, translation tools, BRF artifacts, production jobs, and embosser queues already exist. Google Drive is the MVP's source adapter, not a claim about an industry-wide intake standard. The project inserts an agent between existing systems instead of inventing a replacement platform.
 4. **It has a principled AI boundary.** Gemini decides semantic meaning and risk. Liblouis, hashes, page diffs, state transitions, and policy code decide production facts. This is stronger than asking a model to “generate Braille.”
 5. **It demonstrates recovery, not only happy-path automation.** At-least-once events, duplicate delivery, stale jobs, partial physical progress, bridge outages, and uncertain model output are first-class states.
@@ -176,7 +176,7 @@ The current form requires or expects:
 - disclosure of the Google framework, Cloud services, and Gemini model used;
 - the project's actual start date and disclosure of pre-existing work.
 
-A hosted URL is optional but strongly encouraged. The event record says the service need not remain continuously live if the repo and demo clearly prove that it was deployed on Google Cloud. Judges may evaluate only the video, description, and images, so the video must stand alone.
+A hosted URL is optional but strongly encouraged. The event record says the service need not remain continuously live if the repo and demo clearly prove that it was deployed on Google Cloud. The video, description, and images must therefore stand on their own.
 
 Optional bonus paths include a public build article/video/podcast, a public social post using `#AllThingsAgenticHackathon`, or additional eligible Google AI models. These are lower priority than a reliable core demo.
 
@@ -190,7 +190,7 @@ Other material requirements include:
 - standard libraries, frameworks, starter templates, and AI coding assistants may be used, while other pre-existing code or work must be disclosed;
 - third-party SDKs, APIs, data, and other information must be used with authorization and under their licenses;
 - the project must install and run consistently on its intended platform and match the submitted description/video;
-- testing access, if provided, must remain free for judges through the applicable judging period;
+- testing access, if provided, must remain free through the applicable review period;
 - submission content must be owned or properly licensed and must not violate privacy, IP, law, or platform rules;
 - submissions lock after the deadline; preserve the submitted repo/video state and continue later work in a separate branch or copy.
 
@@ -266,7 +266,7 @@ Acceptance criteria:
 
 #### Story 3 — Report to the professional before requesting intervention
 
-> As the designated production professional, I want one decision-ready incident report before anyone acts on the relay's recommendation, so I can judge the source correction, production stage, and consequences in context.
+> As the designated production professional, I want one decision-ready incident report before anyone acts on the relay's recommendation, so I can assess the source correction, production stage, and consequences in context.
 
 Acceptance criteria:
 
@@ -1662,7 +1662,7 @@ Show the deployed Cloud Run URL/dashboard or logs, Vertex AI/Gemini invocation e
 
 ### 18.1 Innovation & Operational Utility (40%)
 
-Lead with the correction cascade, autonomous investigation, and governed handoff. A judge should be able to repeat this sentence:
+Lead with the correction cascade, autonomous investigation, and governed handoff. The project narrative should make this sentence clear:
 
 > “A one-sentence correction invalidated two tactile pages; the agent found the active job, told the right professional exactly what was at risk, prepared the candidate, and verified the human-controlled recovery.”
 

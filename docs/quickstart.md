@@ -1,8 +1,8 @@
 # Astra — quick start
 
-Choose one truthful path. The **offline evaluator path** is safe for any judge
-and needs no cloud, Drive, CUPS, credentials, or hardware. The **live evaluator
-path** uses a configured private Astra deployment and does not provision cloud
+Choose one truthful path. The **offline fixture path** is safe for local
+inspection and needs no cloud, Drive, CUPS, credentials, or hardware. The
+**live private path** uses a configured private Astra deployment and does not provision cloud
 resources or grant production authority.
 
 ## 1. Get the repository ready — local state only
@@ -25,7 +25,7 @@ uv sync --frozen
 uv lock --check
 ~~~
 
-## 2. Offline evaluator path — fixture only, no production claim
+## 2. Offline fixture path — fixture only, no production claim
 
 ~~~text
 uv run --frozen python -m braille_errata_relay.presentation.screenshot_fixture --port 8877
@@ -48,7 +48,7 @@ password or token, shows a sanitized preview, and refuses to overwrite `.env`
 without `--force`. It writes local identifiers only; it is not a Cloud Run
 deployment template.
 
-## 4. Live evaluator path — configured private environment
+## 4. Live private path — configured private environment
 
 Before using this path:
 

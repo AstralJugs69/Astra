@@ -74,7 +74,7 @@ def test_v1_and_v2_repeat_renders_are_byte_identical() -> None:
 
 @pytest.mark.liblouis
 def test_demo_volume_is_mid_volume_narrow_and_resynchronizes_deterministically() -> None:
-    """Keep the judge-visible corpus substantial without letting it drift silently."""
+    """Keep the visible corpus substantial without letting it drift silently."""
 
     if importlib.util.find_spec("louis") is None:
         pytest.skip("Gate 0 blocker: upstream Liblouis binding is unavailable")
