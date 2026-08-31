@@ -122,6 +122,11 @@ def test_real_adk_api_constructs_agent_without_any_tools() -> None:
     assert runner.agent.tools == []
     assert runner.agent.code_executor is None
     assert runner.agent.output_schema is not None
+    config = runner.agent.generate_content_config
+    assert config is not None
+    assert config.max_output_tokens == 2048
+    assert config.thinking_config is not None
+    assert config.thinking_config.thinking_budget == 0
 
 
 @pytest.mark.asyncio

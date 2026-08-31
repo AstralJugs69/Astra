@@ -138,7 +138,14 @@ class AdkModelRunner:
             tools=[],
             generate_content_config=types.GenerateContentConfig(
                 temperature=0.0,
-                max_output_tokens=1024,
+                # This is a narrow structured classification, not an open-ended
+                # reasoning task. With the model default, almost the entire
+                # 1,024-token response budget could be consumed by hidden
+                # thoughts, leaving a truncated JSON object. Preserve the
+                # complete closed-schema response by disabling thinking and
+                # reserving the output budget for the persisted assessment.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=2048,
             ),
             disallow_transfer_to_parent=True,
             disallow_transfer_to_peers=True,
