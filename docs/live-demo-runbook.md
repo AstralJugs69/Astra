@@ -25,26 +25,33 @@ making a live claim.
 
 ## Before recording the live path
 
-1. **Prepare the baseline and source.** Use one supported authoritative
-   text/Markdown Drive file and a known V1 to V2 correction. See
-   [authoritative-drive-source.md](authoritative-drive-source.md). Register the
-   matching accepted baseline, then initialize that source once before recording
-   and retain the returned receipt ID for the automatic-watch enablement.
-2. **Prepare production observation honestly.** If you plan to show a CUPS
-   card as fresh evidence, use the independent human-owned local-floor
-   procedure and preserve the resulting read-only observation. If you did not
-   run it, label any displayed CUPS information as historical, stale, or
-   fixture evidence rather than calling it current.
-3. **Start the local view.** The loopback watch floor is a read-only view of
+1. **Prepare a fresh baseline and source.** Use the original 46-page synthetic
+   volume and its known one-sentence V1-to-V2 correction, following
+   [demo preparation](demo-preparation.md). A simple native Google Doc is now
+   supported as well as Markdown, but its exported Markdown bytes remain the
+   authoritative input. Register the matching accepted baseline, initialize
+   the source once before recording, and retain the returned receipt ID for
+   automatic-watch enablement.
+2. **Run the read-only preflight.** Start with
+   `infra/demo/test_demo_readiness.ps1`. It reports setup gaps without running
+   Scheduler, touching Drive, publishing telemetry, changing IAM, or contacting
+   CUPS.
+3. **Prepare production observation honestly.** If you plan to show a fresh
+   CUPS card, have the human submit the exact job independently, then use the
+   bounded `infra/demo/arm_fresh_observation.ps1 -Arm` session. It keeps the
+   canonical observation journal fresh and publishes accepted snapshots without
+   manually republishing each one. If you do not run it, label CUPS information
+   as historical, stale, or fixture evidence rather than calling it current.
+4. **Start the local view.** The loopback watch floor is a read-only view of
    durable incident state from Astra’s private service. It does not watch Drive
    directly; Drive reconciliation runs behind the private boundary, and the
    browser receives neither Drive credentials nor the source identifier.
-4. **Verify credentials and authority.** The service remains private. A
+5. **Verify credentials and authority.** The service remains private. A
    temporary demonstrator Token Creator binding is absent before use, narrowly
    present only during the human-authorized local presentation operation, and
    verified absent afterward. See
    [google-cloud-setup.md](google-cloud-setup.md).
-5. **Enable the automatic watch.** Configure
+6. **Enable the automatic watch.** Configure
    `astra-automation-cycle` through
    [fresh-project-deployment.md](fresh-project-deployment.md#11-automatic-drive-watch-configure-paused-then-enable-explicitly),
    then explicitly enable it with the one-time `INITIALIZE` receipt ID. The
@@ -56,9 +63,11 @@ making a live claim.
 
 The exact reveal time is intentionally variable: the next one-minute scheduler
 tick, authoritative byte refetch, durable outbox work, and bounded semantic
-assessment all have to finish. Do not promise a sub-minute transition. For a
-recorded video, retain the waiting state or explicitly label an edit rather
-than presenting a pre-existing incident as a live result.
+assessment all have to finish. Do not promise a sub-minute transition. The
+watch floor turns each persisted milestone into a clear human label, but never
+pretends that Gemini is “thinking” or that an older report belongs to the new
+edit. For a recorded video, retain the waiting state or explicitly label an
+edit rather than presenting a pre-existing incident as a live result.
 
 ### 0:00–0:25 — establish the real problem
 
@@ -114,7 +123,10 @@ without asking a human to reconstruct the evidence manually.
 
 ### 2:00–2:45 — make the evidence legible
 
-Open incident detail. Contrast the evidence types rather than collapsing them:
+Open incident detail. The top decision cockpit intentionally prioritizes the
+current required human role and one eligible action. Expand audit material only
+after the central decision is clear. Contrast the evidence types rather than
+collapsing them:
 
 - **source evidence**: old/new authoritative source blocks and revision
   lineage;
@@ -158,8 +170,9 @@ or closure. Astra does not submit the replacement.
 
 ### 3:45–4:10 — show deployment and close
 
-Show private Cloud Run, the architecture, the deterministic/semantic split, and
-the read-only CUPS boundary. Close with:
+Show the `astra-automation-cycle` execution and private Cloud Run request/logs
+around the Drive-edit timestamp, then the architecture, deterministic/semantic
+split, and read-only CUPS boundary. Close with:
 
 > “Astra autonomously performs the investigation and recovery preparation.
 > Humans retain professional and irreversible physical-production authority.”
@@ -197,6 +210,7 @@ The fixture is a legitimate visual backup, not a substitute for live evidence.
 ## Related runbooks
 
 - [Authoritative Drive source](authoritative-drive-source.md)
+- [Demo preparation and non-destructive rehearsal](demo-preparation.md)
 - [Google Cloud and temporary authentication](google-cloud-setup.md)
 - [Local CUPS simulator and bridge](local-floor-and-cups-simulator.md)
 - [Active professional review](active-professional-review-demo.md)

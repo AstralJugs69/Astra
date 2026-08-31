@@ -40,6 +40,23 @@ read-only observer authorization denials, exact submitted/backend/captured BRF
 hash equality, journal continuity, and simulated endpoint capture. It cannot
 turn a scheduler event into a physical-output or professional-approval fact.
 
+## Bounded fresh-observation session for the live demo
+
+For a short, human-owned live demonstration only, use
+[`arm_fresh_observation.ps1`](../infra/demo/arm_fresh_observation.ps1) after an
+operator independently creates the exact CUPS job. The script starts the
+`relay-observer` read-only loop with a locally entered CUPS password and a
+separate telemetry-only publisher. It observes only the supplied numeric job
+ID, appends to the existing canonical journal, and acknowledges each entry only
+after telemetry admission accepts it. It contains no CUPS lifecycle command.
+
+The session is bounded to 15 minutes, uses a five-second default observation
+cadence, and stores only sanitized local monitor status under ignored `work/`.
+It does not create a new journal, relax the 15-second cloud freshness limit, or
+provide any device-control capability. See
+[demo preparation](demo-preparation.md) for the explicit human preparation and
+stop procedure.
+
 ## Restore and blockers
 
 The setup and active-review scripts contain deliberate rollback and restoration

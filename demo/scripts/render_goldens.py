@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,35 +17,40 @@ from braille_errata_relay.contracts.canonical_json import canonical_json_bytes
 from braille_errata_relay.domain.models import ArtifactKind
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from demo.fixtures.demo_volume_source import build_demo_volume
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "demo" / "expected")
-    args = parser.parse_args()
-    profile = load_translation_profile(args.profile)
+def _render_pair(
+    *,
+    profile_path: Path,
+    output: Path,
+    document_id: str,
+    sources: dict[str, bytes],
+) -> None:
+    profile = load_translation_profile(profile_path)
     adapter = LiblouisAdapter()
-    args.output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
     rendered = {}
-    for version in ("v1", "v2"):
-        fixture = ROOT / "demo" / "fixtures" / f"source-{version}-hero.md"
-        normalized = normalize_source_bytes(fixture.read_bytes(), document_id="biology-vol2")
+    for version, source_bytes in sources.items():
+        normalized = normalize_source_bytes(source_bytes, document_id=document_id)
         rendered[version] = render(
             normalized,
             profile,
             adapter,
-            source_revision_id=f"drive:fixture:{version}",
+            source_revision_id=f"drive:fixture:{document_id}:{version}",
             source_sha256=normalized.normalized_source_sha256,
             artifact_kind=ArtifactKind.FULL_CANDIDATE_BRF,
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             generator_build={"profile_sha256": profile_sha256(profile)},
         )
-        (args.output / f"{version}.brf").write_bytes(rendered[version].brf)
-        (args.output / f"{version}-manifest.json").write_bytes(
+        (output / f"{version}.brf").write_bytes(rendered[version].brf)
+        (output / f"{version}-manifest.json").write_bytes(
             canonical_json_bytes(rendered[version].manifest.model_dump(mode="json")) + b"\n"
         )
-        (args.output / f"{version}-source-map.json").write_bytes(
+        (output / f"{version}-source-map.json").write_bytes(
             canonical_json_bytes(rendered[version].source_map) + b"\n"
         )
     comparison = compare_brf(
@@ -55,12 +61,8 @@ def main() -> int:
         candidate_artifact_sha256=rendered["v2"].manifest.artifact_sha256,
     )
     source_diff = diff_sources(
-        normalize_source_bytes(
-            (ROOT / "demo/fixtures/source-v1-hero.md").read_bytes(), document_id="biology-vol2"
-        ),
-        normalize_source_bytes(
-            (ROOT / "demo/fixtures/source-v2-hero.md").read_bytes(), document_id="biology-vol2"
-        ),
+        normalize_source_bytes(sources["v1"], document_id=document_id),
+        normalize_source_bytes(sources["v2"], document_id=document_id),
     )
     impact = {
         "schema_version": "page-impact.v1",
@@ -69,8 +71,37 @@ def main() -> int:
         "old_page_sha256": list(comparison.old_page_hashes),
         "new_page_sha256": list(comparison.new_page_hashes),
     }
-    (args.output / "page-impact.json").write_bytes(canonical_json_bytes(impact) + b"\n")
-    print(f"PASS: rendered V1/V2 goldens into {args.output}")
+    (output / "page-impact.json").write_bytes(canonical_json_bytes(impact) + b"\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=ROOT / "demo" / "expected")
+    parser.add_argument(
+        "--volume-only",
+        action="store_true",
+        help="Render only the sizeable synthetic demo volume into demo/expected/demo-volume.",
+    )
+    args = parser.parse_args()
+    if not args.volume_only:
+        _render_pair(
+            profile_path=args.profile,
+            output=args.output,
+            document_id="biology-vol2",
+            sources={
+                version: (ROOT / "demo" / "fixtures" / f"source-{version}-hero.md").read_bytes()
+                for version in ("v1", "v2")
+            },
+        )
+    volume_output = args.output / "demo-volume"
+    _render_pair(
+        profile_path=args.profile,
+        output=volume_output,
+        document_id="synthetic-cellular-systems-field-guide",
+        sources={version: build_demo_volume(version) for version in ("v1", "v2")},
+    )
+    print(f"PASS: rendered deterministic demo-volume goldens into {volume_output}")
     return 0
 
 

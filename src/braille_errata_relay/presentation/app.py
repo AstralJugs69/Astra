@@ -41,7 +41,8 @@ from braille_errata_relay.domain.models import (
     ProofDecision,
     TruthBasis,
 )
-from braille_errata_relay.presentation.assets import WATCH_JAVASCRIPT
+from braille_errata_relay.presentation.assets import REPORT_JAVASCRIPT, WATCH_JAVASCRIPT
+from braille_errata_relay.presentation.view_models import report_view
 from braille_errata_relay.presentation.watch import (
     WatchEventTracker,
     heartbeat_event,
@@ -514,6 +515,79 @@ _TEMPLATES["watch.html"] = """<!doctype html>
 </main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. This is a local read-only monitor, not a production control surface.</div></footer></body></html>"""
 
 
+# The two templates below intentionally supersede the first presentation pass.
+# Keeping the string-local templates makes the loopback surface portable while
+# retaining the original route and CSRF boundaries.  The visual hierarchy is
+# driven by persisted artifacts and eligibility, not by a demo-only state.
+_TEMPLATES["watch.html"] = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Braille Errata Relay | Live watch floor</title>
+<style>
+:root{color-scheme:light;--ink:#10263f;--muted:#53657b;--paper:#f4f7fb;--card:#fff;--line:#d0dbe8;--navy:#173f75;--teal:#007b78;--amber:#7e5600;--red:#9c2040;--violet:#5d459e;--shadow:0 12px 30px rgba(20,42,74,.09)}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1160px,calc(100% - 2rem));margin:auto}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:5;background:#fff;padding:.6rem 1rem;border:3px solid var(--navy)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #28aab9}.site-header .shell{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1rem 0}.eyebrow{margin:0;color:#bdebf1;font-size:.76rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.brand{font-weight:900;letter-spacing:.015em}.nav-link{color:#fff;font-weight:800}.hero{padding:2.4rem 0 1.2rem}.hero h1{margin:.25rem 0 .55rem;font-size:clamp(2rem,5vw,3.6rem);line-height:1.06}.lede{max-width:75ch;margin:0;color:var(--muted);font-size:1.08rem}.status-grid,.watch-grid{display:grid;gap:1rem}.status-grid{grid-template-columns:repeat(4,1fr);margin:1.1rem 0}.status-card,.panel,.pipeline-step,.report-hero{background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow)}.status-card{padding:1rem}.status-card strong{display:block;font-size:1.02rem}.status-card span{color:var(--muted);font-size:.88rem}.connection{font-weight:900}.connection[data-state=connected]{color:var(--teal)}.connection[data-state=disconnected]{color:var(--red)}.pipeline{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.6rem;margin:1rem 0 1.4rem}.pipeline-step{padding:.8rem;font-size:.84rem;border-left:5px solid #b4c0d0}.pipeline-step strong{display:block;color:var(--navy);font-size:.69rem;letter-spacing:.05em;text-transform:uppercase}.pipeline-step.complete{border-left-color:var(--teal);background:#effaf8}.pipeline-step.current{border-left-color:var(--navy);background:#eaf2ff}.pipeline-step.blocked{border-left-color:var(--red);background:#fff1f4}.pipeline-step.waiting{opacity:.72}.watch-grid{grid-template-columns:minmax(0,1fr) minmax(280px,.72fr);padding-bottom:2rem}.panel,.report-hero{padding:1.1rem}.panel h2,.report-hero h2{margin:0 0 .55rem;font-size:1.2rem}.notice,.empty{background:#fff9df;border-left:5px solid #b98400;padding:1rem;margin:1rem 0}.mismatch{background:#fff0f3;border:3px solid var(--red);border-radius:13px;padding:1rem 1.1rem;margin:1rem 0}.mismatch h2{margin:0;color:var(--red);font-size:clamp(1.2rem,3.5vw,1.8rem);letter-spacing:.02em}.mismatch p{margin:.35rem 0}.controls{display:flex;flex-wrap:wrap;gap:.55rem;margin-top:.8rem}.controls button{appearance:none;background:var(--navy);border:0;border-radius:7px;color:#fff;cursor:pointer;font:inherit;font-weight:800;padding:.58rem .75rem}.controls button.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}.controls button:focus-visible,a:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}.report-hero{border-left:7px solid var(--violet);margin:1rem 0}.report-hero .kicker{color:var(--violet);font-weight:900;font-size:.78rem;letter-spacing:.08em;text-transform:uppercase}.report-hero a{display:inline-block;background:var(--navy);color:#fff;padding:.58rem .85rem;border-radius:7px;text-decoration:none;font-weight:800;margin-top:.5rem}.watch-list{list-style:none;padding:0;margin:0}.watch-incident{border-top:1px solid var(--line);padding:.8rem 0}.watch-incident:first-child{border-top:0}.watch-incident a{display:block;color:var(--navy);font-weight:900;overflow-wrap:anywhere}.watch-incident span{color:var(--muted);display:block;font-size:.9rem}.boundary{background:#edf7f8;border:1px solid #a7d8da;border-radius:10px;padding:1rem}.boundary strong{color:var(--teal)}.footer{border-top:1px solid var(--line);padding:1.4rem 0 2.5rem;color:var(--muted);font-size:.9rem}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}@media(max-width:860px){.status-grid{grid-template-columns:repeat(2,1fr)}.pipeline{grid-template-columns:repeat(3,1fr)}.watch-grid{grid-template-columns:1fr}}@media(max-width:520px){.shell{width:min(100% - 1rem,1160px)}.site-header .shell{align-items:flex-start;flex-direction:column}.status-grid,.pipeline{grid-template-columns:1fr}.hero{padding-top:1.5rem}}
+</style><script src="/assets/watch.js" defer></script></head>
+<body><a class="skip" href="#watch-floor">Skip to watch floor</a><header class="site-header"><div class="shell"><div><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay {% if fixture_mode %}— SANITIZED DEMO FIXTURE{% endif %}</div></div><a class="nav-link" href="/">Review dashboard</a></div></header>
+<main id="watch-floor" class="shell"><section class="hero"><p class="eyebrow">Live operations view</p><h1>Watching the authoritative source</h1><p class="lede">Background reconciliation is durable and evidence-led. The local browser is read-only: it cannot edit Drive, call Gemini, or control CUPS, an embosser, or another production device.</p></section>
+{% if error %}<p class="notice" role="status">{{ error }}</p>{% endif %}
+<section id="mismatch-alert" class="mismatch" {% if not fixture_alert %}hidden{% endif %} aria-labelledby="mismatch-title"><h2 id="mismatch-title">SOURCE / PRODUCTION MISMATCH — HUMAN REVIEW REQUIRED</h2><p id="mismatch-alert-text">A newly observed durable transition requires human review.</p><div class="controls"><button id="enable-audible-alerts" type="button">Enable audible alerts</button><button id="mute-audible-alerts" class="secondary" type="button">Mute</button><button id="acknowledge-alert-locally" class="secondary" type="button">Acknowledge alert locally</button></div><p><small>Local acknowledgement creates no professional record and no production action.</small></p></section><p id="watch-alert-live" class="skip" role="alert" aria-live="assertive"></p>
+<section class="status-grid" aria-label="Watch monitor status"><article class="status-card"><strong id="watch-connection" class="connection" data-state="connected">{% if fixture_mode %}Connected{% else %}Connecting{% endif %}</strong><span>Loopback event connection</span></article><article class="status-card"><strong id="watch-automatic-cycle" aria-live="polite">{{ watch.automatic_cycle }}</strong><span>Automatic Drive reconciliation</span></article><article class="status-card"><strong>{{ watch.source_label }}</strong><span>Configured source of truth</span></article><article class="status-card"><strong id="watch-stage">{{ watch.stage_label }}</strong><span>Latest durable workflow fact</span></article></section>
+<section class="panel"><h2>Current safe next action</h2><p id="watch-next-action">{{ watch.next_safe_action }}</p></section>
+<section id="watch-hero" class="report-hero" {% if not (watch.hero and watch.hero.watch_highlight and watch.hero.workflow_stage == "REPORT_READY") %}hidden{% endif %} aria-labelledby="watch-hero-title"><p class="kicker">Professional report ready</p><h2 id="watch-hero-title">{% if watch.hero and watch.hero.watch_highlight %}{{ watch.hero.watch_highlight.materiality }} {{ watch.hero.watch_highlight.change_kind|replace("_", " ") }}{% endif %}</h2><p id="watch-hero-impact">{% if watch.hero and watch.hero.watch_highlight %}Braille impact: baseline pages {% if watch.hero.watch_highlight.old_page_range %}{{ watch.hero.watch_highlight.old_page_range.start }}–{{ watch.hero.watch_highlight.old_page_range.end }}{% else %}not recorded{% endif %}, candidate pages {% if watch.hero.watch_highlight.new_page_range %}{{ watch.hero.watch_highlight.new_page_range.start }}–{{ watch.hero.watch_highlight.new_page_range.end }}{% else %}not recorded{% endif %} of {{ watch.hero.watch_highlight.candidate_page_count }}.{% endif %}</p><a id="watch-hero-link" href="{% if watch.hero %}/incidents/{{ watch.hero.incident_id }}{% else %}/{% endif %}">Review incident</a></section>
+<section id="watch-pipeline" class="pipeline" aria-label="Durable workflow progress"><article class="pipeline-step waiting" data-stage="DETECTED"><strong>1 · Source</strong>Authoritative revision verified</article><article class="pipeline-step waiting" data-stage="DIFF_READY"><strong>2 · Diff</strong>Source correction isolated</article><article class="pipeline-step waiting" data-stage="CANDIDATE_READY"><strong>3 · Braille</strong>Candidate regenerated</article><article class="pipeline-step waiting" data-stage="IMPACT_READY"><strong>4 · Impact</strong>Page impact calculated</article><article class="pipeline-step waiting" data-stage="SEMANTIC_READY"><strong>5 · Gemini</strong>Assessment recorded</article><article class="pipeline-step waiting" data-stage="REPORT_READY"><strong>6 · Report</strong>Professional report ready</article></section>
+<section class="watch-grid"><section class="panel" aria-labelledby="live-incidents"><h2 id="live-incidents">Durable review queue</h2><ul id="watch-incidents" class="watch-list">{% for incident in snapshot.incidents %}<li class="watch-incident"><a href="/incidents/{{ incident.incident_id }}">Review incident {{ incident.incident_id[:12] }}…</a><span>{{ incident.workflow_label }} — {{ incident.next_safe_action }}</span></li>{% endfor %}</ul><p id="watch-empty" class="empty" {% if snapshot.incidents %}hidden{% endif %}>No incident is currently awaiting review. The approved baseline remains the current reference until a new authoritative revision is verified.</p></section><aside class="panel"><h2>Truthful activity</h2><p>Only stored workflow facts are shown. “Gemini assessment recorded” means the bounded structured assessment is persisted; this monitor never invents a live model-thinking state.</p><div class="boundary"><strong>Boundary:</strong> deterministic source/Braille calculation, Gemini assessment, read-only production observation, human records, and the simulated physical endpoint are distinct facts.</div></aside></section>
+</main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. This is a local read-only monitor, not a production-control surface.</div></footer></body></html>"""
+
+
+_TEMPLATES["incident.html"] = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Braille Errata Relay | Incident decision cockpit</title>
+<style>
+:root{color-scheme:light;--ink:#10263f;--muted:#53657b;--paper:#f4f7fb;--card:#fff;--line:#d0dbe8;--navy:#173f75;--teal:#007b78;--amber:#7e5600;--red:#9c2040;--violet:#5d459e;--shadow:0 12px 30px rgba(20,42,74,.09)}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:5;background:#fff;padding:.6rem 1rem;border:3px solid var(--navy)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #28aab9}.site-header .shell{padding:1rem 0}.brand{font-weight:900}.eyebrow{margin:0;color:#bdebf1;font-size:.76rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}main{padding:1.4rem 0 3rem}.back{color:var(--navy);font-weight:800}.status,.card,.action-card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.status{padding:1.25rem;margin:1rem 0;border-left:7px solid var(--navy)}.status h1{margin:.2rem 0 .5rem;font-size:clamp(1.7rem,4vw,2.8rem);line-height:1.1}.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(290px,.75fr);gap:1rem}.card,.action-card{padding:1.1rem;margin-bottom:1rem}.card h2,.action-card h2{margin:0 0 .65rem;font-size:1.2rem}.card h3{margin:1rem 0 .4rem;font-size:1rem}.card p{margin:.45rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.real{color:var(--teal);background:#e8faf8}.simulated{color:var(--red);background:#fff0f2}.block{color:var(--red);font-weight:800}.notice{background:#fff9df;border-left:5px solid var(--amber);padding:1rem;margin:1rem 0}.compare{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.compare article{border-left:4px solid var(--navy);background:#f1f5fb;padding:.75rem}.compare article:last-child{border-left-color:var(--teal)}.compare h3{margin:0}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin:1rem 0}.summary{background:#fff;border:1px solid var(--line);border-radius:10px;padding:.8rem}.summary strong{display:block;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}.progress{display:flex;flex-wrap:wrap;gap:.45rem;margin:.8rem 0}.progress span{border:1px solid var(--line);border-radius:999px;padding:.24rem .52rem;font-size:.75rem;font-weight:800}.progress .complete{border-color:var(--teal);background:#effaf8;color:var(--teal)}.progress .blocked{border-color:var(--red);background:#fff1f4;color:var(--red)}.ripple{margin:0}.ripple-row{display:flex;gap:3px;min-height:1.8rem;margin:.45rem 0}.ripple-segment{display:flex;align-items:center;justify-content:center;min-width:1.5rem;padding:.2rem;color:#14233b;font-size:.75rem;font-weight:800;text-align:center}.ripple-segment.match{background:#dce8f5}.ripple-segment.changed{background:#f5bf4f}.ripple-segment.suffix{background:#ccece5}.ripple figcaption{color:var(--muted);font-size:.92rem}.action-card{border-left:7px solid var(--amber)}.action-card .role{background:#fffbeb;border:1px solid #e5c66b;border-radius:8px;padding:.75rem}.action{background:var(--navy);border:0;border-radius:7px;color:#fff;cursor:pointer;font:inherit;font-weight:800;padding:.65rem .9rem}.action[disabled]{background:#9ba8b8;cursor:not-allowed}.print-link,.download{display:inline-block;background:var(--teal);color:#fff;padding:.65rem .9rem;border-radius:7px;font-weight:800;text-decoration:none}.print-link:hover,.download:hover{background:#06595a}label{display:block;font-weight:700;margin:.75rem 0}select,textarea,input[type=number]{display:block;width:100%;margin-top:.25rem;border:1px solid #8797ad;border-radius:6px;padding:.55rem;font:inherit;background:#fff}textarea{min-height:5rem}input[type=hidden]{display:none}details{margin:.85rem 0;border:1px solid var(--line);border-radius:10px;background:#fff;padding:.75rem}summary{cursor:pointer;font-weight:900}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f9;border:1px solid var(--line);padding:.75rem;border-radius:7px;font-size:.83rem}ol{padding-left:1.3rem}li{margin:.45rem 0}.boundary{background:#edf7f8;border:1px solid #a7d8da;border-radius:10px;padding:1rem}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}@media(max-width:850px){.grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}.compare{grid-template-columns:1fr}}@media(max-width:520px){.shell{width:min(100% - 1rem,1180px)}.status,.card,.action-card{padding:1rem}}
+</style></head>
+<body><a class="skip" href="#incident-content">Skip to incident</a><header class="site-header"><div class="shell"><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay{% if fixture_mode %} — SANITIZED DEMO FIXTURE{% endif %}</div></div></header>
+{% macro disposition_form() -%}
+{% if error %}<p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: disposition recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/professional-dispositions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ disposition_idempotency_key }}"><label>Decision <select name="decision">{% for decision in decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record professional disposition</button></form>{% endif %}
+{%- endmacro %}
+{% macro operator_form() -%}
+{% if error %}<p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: operator attestation disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/operator-attestations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ attestation_idempotency_key }}"><label>Attributable fact <select name="attestation_type">{% for kind in attestation_types %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label>Truth basis <select name="truth_basis">{% for basis in truth_bases %}<option value="{{ basis }}">{{ basis }}</option>{% endfor %}</select></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record operator attestation</button></form>{% endif %}
+{%- endmacro %}
+{% macro containment_form() -%}
+<p>CUPS state alone never proves device stop or physical-output isolation.</p>{% if review_actions.containment_confirmation.eligible %}{% if fixture_mode %}<button class="action" disabled>Offline fixture: containment recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/containment-confirmations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ containment_idempotency_key }}"><input type="hidden" name="halt_disposition_record_id" value="{{ review_actions.containment_confirmation.halt_disposition_record_id }}"><input type="hidden" name="site_observation_id" value="{{ review_actions.containment_confirmation.site_observation_id }}"><input type="hidden" name="physical_output_isolation_attestation_id" value="{{ review_actions.containment_confirmation.physical_output_isolation_attestation_id }}"><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record containment confirmation</button></form>{% endif %}{% else %}<p>Containment confirmation is unavailable: {{ review_actions.containment_confirmation.blocking_reason }}.</p>{% endif %}
+{%- endmacro %}
+{% macro proof_form() -%}
+<p>Fixture review is not independent professional certification. Approval does not submit, link, release, or verify a replacement job.</p>{% if review_actions.proof.eligible %}{% if fixture_mode %}<button class="action" disabled>Offline fixture: proof decision recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/proof-records"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="candidate_sha256" value="{{ review_actions.proof.provenance.candidate_sha256 }}"><input type="hidden" name="manifest_sha256" value="{{ review_actions.proof.provenance.manifest_sha256 }}"><input type="hidden" name="review_basis" value="DEMO_FIXTURE_REVIEW"><input type="hidden" name="selected_role" value="proofreader"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ proof_idempotency_key }}"><label>Decision <select name="decision">{% for decision in proof_decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Proof note <textarea name="note" maxlength="2000"></textarea></label><label><input type="checkbox" name="visual_only_uncertainty" value="true"> Visual-only uncertainty remains (blocks approval).</label><button class="action" type="submit">Record exact-candidate proof decision</button></form>{% endif %}{% else %}<p>Proof review is unavailable: {{ review_actions.proof.blocking_reason }}.</p>{% endif %}
+{%- endmacro %}
+{% macro replacement_form() -%}
+<p>After an independent CUPS/vendor submission, a machine operator may link only a fresh read-only observation. This does not prove endpoint completion or physical output.</p>{% if review_actions.replacement_observation.eligible %}{% if fixture_mode %}<div class="role"><strong>Proof-ready offline fixture:</strong> replacement linking is intentionally disabled; no human record can be posted.</div>{% else %}<form method="post" action="/incidents/{{ incident_id }}/replacement-observation-links"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="candidate_sha256" value="{{ review_actions.replacement_observation.provenance.candidate_sha256 }}"><input type="hidden" name="candidate_manifest_sha256" value="{{ review_actions.replacement_observation.provenance.manifest_sha256 }}"><input type="hidden" name="proof_record_id" value="{{ review_actions.replacement_observation.provenance.proof_record_id }}"><input type="hidden" name="site_observation_id" value="{{ current_observation_id|default('') }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ replacement_idempotency_key }}"><label>Observed replacement scheduler job ID <input name="scheduler_job_id" type="number" min="1" required></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record replacement observation link</button></form>{% endif %}{% else %}<p>Replacement observation is unavailable: {{ review_actions.replacement_observation.blocking_reason }}.</p>{% endif %}
+{%- endmacro %}
+<main id="incident-content" class="shell"><p><a class="back" href="/">← All incidents</a></p>{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<section class="status"><div class="badges"><span class="badge deterministic">DETERMINISTIC REPORT</span><span class="badge human">HUMAN AUTHORITY</span>{% if fixture_mode %}<span class="badge simulated">SANITIZED FIXTURE</span>{% endif %}</div><h1>Professional incident review</h1><p><strong>{{ display.workflow_label }}</strong>{% if review_state.blocking_reason %} <span class="block">— {{ review_state.blocking_reason }}</span>{% endif %}</p><p>Relay explains evidence and records human disposition. It does not control CUPS or an embosser.</p></section>
+<section class="card"><div class="badges"><span class="badge deterministic">AUTHORITATIVE SOURCE</span></div><h2>Material correction</h2><div class="compare"><article><h3>Old source</h3><p>{{ source_comparison.old }}</p></article><article><h3>New source</h3><p>{{ source_comparison.new }}</p></article></div><div class="progress" aria-label="Evidence-backed workflow progress">{% for step in display.workflow_progress %}<span class="{{ step.status }}">{{ step.label }}</span>{% endfor %}</div></section>
+<section class="summary-grid" aria-label="Incident decision summary"><article class="summary"><strong>Gemini assessment</strong><p>{{ semantic_materiality }} · {{ semantic_change_kind }}</p><p>{{ uncertainty_summary }}</p></article><article class="summary"><strong>[REAL] Read-only production context</strong><p><strong>Report evidence at creation:</strong> {{ report_observation_age }}</p><p><strong>Current monitor record:</strong> {{ current_monitor_summary }}</p></article><article class="summary"><strong>Safe next action</strong><p>{{ next_safe_action }}</p></article></section>
+<section class="card"><div class="badges"><span class="badge deterministic">DETERMINISTIC BRAILLE IMPACT</span></div><h2>Small source correction → bounded Braille ripple</h2>{% if display.ripple.available %}<figure class="ripple"><p><strong>{{ display.ripple.headline }}</strong></p><div class="ripple-row" aria-label="Baseline and candidate page ripple">{% for segment in display.ripple.segments %}<span class="ripple-segment {{ segment.kind }}" style="flex: {{ segment.pages }}">{{ segment.label }}</span>{% endfor %}</div><figcaption>Baseline: {{ display.ripple.baseline_total }} pages. Candidate: {{ display.ripple.candidate_total }} pages. {{ display.ripple.resynchronization }}</figcaption></figure>{% else %}<p>{{ display.ripple.headline }}</p>{% endif %}</section>
+<section class="card"><div class="badges"><span class="badge gemini">GEMINI STRUCTURED ASSESSMENT</span></div><h2>Why this needs a professional</h2><p>{{ semantic_summary }}</p><h3>Persisted uncertainty</h3><ul>{% for uncertainty in uncertainties %}<li>{{ uncertainty }}</li>{% else %}<li>No uncertainty was recorded in this assessment.</li>{% endfor %}</ul></section>
+<section class="action-card" aria-labelledby="current-human-action"><div class="badges"><span class="badge human">CURRENT HUMAN ROLE</span></div><h2 id="current-human-action">{{ display.cockpit.status }}</h2><p class="role"><strong>Required role:</strong> {{ display.cockpit.role }}. <strong>Current action:</strong> {{ display.cockpit.action }}.</p>{% if display.cockpit.form == "disposition" %}{{ disposition_form() }}{% elif display.cockpit.form == "containment" %}{{ containment_form() }}{% elif display.cockpit.form == "proof" %}{{ proof_form() }}{% elif display.cockpit.form == "replacement" %}{{ replacement_form() }}{% else %}<p class="block">No human-record form is currently eligible. Review the visible evidence and blocking reason.</p>{% endif %}<p><a class="print-link" href="/incidents/{{ incident_id }}/report">View / print full incident report</a></p></section>
+<details><summary>Audit evidence and later human handoffs</summary><section class="card"><h2>Candidate and tool identity</h2><p><strong>Candidate status:</strong> CANDIDATE_NOT_APPROVED_PRODUCTION_MASTER</p><p>This is an <strong>approved demo-fixture candidate for human-controlled submission</strong>, not a certified production master.</p>{% if review_actions.replacement_observation.candidate_download_eligible %}<p><a class="download" href="/incidents/{{ incident_id }}/approved-candidate">Download exact approved candidate BRF</a></p>{% endif %}<pre>{{ candidate_manifest }}</pre><pre>{{ profile_identity }}</pre><h3>{{ candidate_evidence_preview.label }}</h3><pre>{{ candidate_evidence_preview.text }}</pre></section><section class="card"><h2>Other human workflow gates</h2>{% if display.cockpit.form != "disposition" %}<h3>Professional disposition</h3>{{ disposition_form() }}{% endif %}<h3>[HUMAN ATTESTATION] Operator attestation</h3>{{ operator_form() }}{% if display.cockpit.form != "containment" %}<h3>Containment confirmation</h3>{{ containment_form() }}{% endif %}{% if display.cockpit.form != "proof" %}<h3>Exact candidate proof gate</h3>{{ proof_form() }}{% endif %}{% if display.cockpit.form != "replacement" %}<h3>Replacement observation</h3>{{ replacement_form() }}{% endif %}</section><section class="card"><h2>Immutable evidence</h2><h3>Stored source correction</h3><pre>{{ source_correction }}</pre><h3>Exact page-impact evidence</h3><pre>{{ braille_impact }}</pre><h3>Current read-only observation</h3><pre>{{ current_observation }}</pre><h3>Attributable timeline</h3><ol>{% for event in timeline %}<li><strong>[{{ event.truth_basis }}] {{ event.kind }}</strong><br>{{ event.recorded_at }}</li>{% else %}<li>No attributable events are available.</li>{% endfor %}</ol></section></details>
+<section class="boundary"><strong>[SIMULATED ENDPOINT] System boundary:</strong> only the physical endpoint is simulated. Relay does not control CUPS or the embosser. A scheduler observation does not prove device stop, physical isolation, endpoint completion, or final verification. All production actions remain human-owned.</section>
+</main><footer class="footer"><div class="shell">Candidate BRF is not an approved production master. Relay does not operate the production queue or device.</div></footer></body></html>"""
+
+
+_TEMPLATES["report.html"] = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Braille Errata Relay | Printable incident report</title>
+<style>
+:root{--ink:#10263f;--muted:#53657b;--paper:#f4f7fb;--card:#fff;--line:#d0dbe8;--navy:#173f75;--teal:#007b78;--amber:#7e5600;--violet:#5d459e}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.sheet{width:min(900px,calc(100% - 2rem));margin:2rem auto;background:var(--card);border:1px solid var(--line);padding:2rem;box-shadow:0 12px 30px rgba(20,42,74,.09)}.eyebrow{color:var(--teal);font-size:.78rem;font-weight:900;letter-spacing:.09em;text-transform:uppercase}.meta{color:var(--muted)}h1{font-size:clamp(2rem,5vw,3rem);line-height:1.08;margin:.3rem 0}.card{border-top:2px solid var(--line);padding:1.1rem 0}.card h2{margin:0 0 .55rem}.compare{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}.compare div{padding:.8rem;background:#f1f5fb;border-left:4px solid var(--navy)}.compare div:last-child{border-left-color:var(--teal)}.ripple-row{display:flex;gap:3px;min-height:1.8rem}.ripple-segment{display:flex;align-items:center;justify-content:center;min-width:1.5rem;padding:.2rem;font-size:.75rem;font-weight:800;text-align:center}.match{background:#dce8f5}.changed{background:#f5bf4f}.suffix{background:#ccece5}.callout{background:#fffbeb;border-left:5px solid var(--amber);padding:1rem}.boundary{background:#edf7f8;border:1px solid #a7d8da;padding:1rem}.button{display:inline-block;background:var(--navy);color:#fff;text-decoration:none;padding:.55rem .8rem;border-radius:7px;font-weight:800}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem;background:#f1f4f9;padding:.75rem;border:1px solid var(--line)}details{margin:.8rem 0}summary{font-weight:800;cursor:pointer}@media(max-width:620px){.sheet{width:100%;margin:0;border:0;padding:1rem}.compare{grid-template-columns:1fr}}@media print{body{background:#fff}.sheet{width:100%;margin:0;border:0;box-shadow:none;padding:0}.no-print{display:none}details{display:block}details[open]{display:block}summary{display:none}.card{break-inside:avoid}}
+</style><script src="/assets/report.js" defer></script></head>
+<body><main class="sheet">{% if error %}<p class="callout" role="alert">{{ error }}</p>{% else %}<p class="eyebrow">Braille Errata Relay · printable incident report{% if fixture_mode %} · sanitized demo fixture{% endif %}</p><h1>{{ display.workflow_label }}</h1><p class="meta">Incident {{ incident_id[:12] }}… · generated from existing immutable report and disposition-packet evidence. Use browser Print / Save as PDF for a local copy.</p><p class="no-print"><a class="button" href="/incidents/{{ incident_id }}">Return to decision cockpit</a> <button id="print-report" type="button">Print / Save as PDF</button></p>
+<section class="card"><h2>Executive decision summary</h2><p><strong>Current human role:</strong> {{ display.cockpit.role }}</p><p><strong>Required action:</strong> {{ display.cockpit.action }}</p><p>{{ next_safe_action }}</p>{% if review_state.blocking_reason %}<p class="callout"><strong>Blocking reason:</strong> {{ review_state.blocking_reason }}</p>{% endif %}</section>
+<section class="card"><h2>Authoritative source evidence</h2><div class="compare"><div><strong>Old source</strong><p>{{ source_comparison.old }}</p></div><div><strong>New source</strong><p>{{ source_comparison.new }}</p></div></div></section>
+<section class="card"><h2>Gemini semantic assessment</h2><p><strong>Materiality / change kind:</strong> {{ semantic_materiality }} · {{ semantic_change_kind }}</p><p>{{ semantic_summary }}</p><p><strong>Uncertainty:</strong> {{ uncertainty_summary }}</p></section>
+<section class="card"><h2>Deterministic Braille impact</h2>{% if display.ripple.available %}<p><strong>{{ display.ripple.headline }}</strong></p><div class="ripple-row">{% for segment in display.ripple.segments %}<span class="ripple-segment {{ segment.kind }}" style="flex: {{ segment.pages }}">{{ segment.label }}</span>{% endfor %}</div><p>{{ display.ripple.resynchronization }}</p>{% else %}<p>{{ display.ripple.headline }}</p>{% endif %}</section>
+<section class="card"><h2>Read-only production context</h2><p><strong>Report evidence at creation:</strong> {{ report_observation_age }}</p><p><strong>Current monitor record:</strong> {{ current_monitor_summary }}</p><p>This is read-only evidence. It does not prove endpoint completion, physical output, device stop, or closure.</p></section>
+<section class="card"><h2>Recommended human response</h2><ol>{% for step in recommended_human_steps %}<li>{{ step }}</li>{% else %}<li>Review the evidence with the qualified human role shown above.</li>{% endfor %}</ol></section>
+<section class="boundary"><strong>Authority boundary:</strong> Relay presents source evidence, deterministic Braille analysis, Gemini’s persisted structured assessment, read-only production context, and human records. Candidate BRF is not an approved production master. Relay does not certify Braille, submit a replacement, or control a device.</section>
+<details><summary>Audit appendix</summary><h2>Stored source correction</h2><pre>{{ source_correction }}</pre><h2>Page-impact evidence</h2><pre>{{ braille_impact }}</pre><h2>Candidate manifest and profile identity</h2><pre>{{ candidate_manifest }}</pre><pre>{{ profile_identity }}</pre><h2>Attributable timeline</h2><ol>{% for event in timeline %}<li><strong>[{{ event.truth_basis }}] {{ event.kind }}</strong> — {{ event.recorded_at }}</li>{% else %}<li>No attributable events are available.</li>{% endfor %}</ol></details>{% endif %}</main></body></html>"""
+
+
 def _templates() -> Environment:
     return Environment(
         loader=DictLoader(_TEMPLATES),
@@ -563,7 +637,7 @@ def _source_comparison(source_correction: Mapping[str, object]) -> dict[str, str
         compact = " ".join(text.split())
         if len(compact) > 260:
             compact = f"{compact[:257]}..."
-        return f"{kind}: {compact}" if compact else f"{kind}: no text stored"
+        return compact if compact else f"{kind.capitalize()} contains no stored text"
 
     return {"old": side("old_blocks"), "new": side("new_blocks")}
 
@@ -602,6 +676,16 @@ def _semantic_activity(workflow_stage: object) -> str:
     if workflow_stage == "NEEDS_REVIEW":
         return "Human review is required before the workflow can proceed."
     return "Watching for the next persisted workflow stage."
+
+
+def _current_monitor_summary(observation: Mapping[str, object]) -> str:
+    """Describe current read-only evidence without presenting it as report repair."""
+
+    observation_id = observation.get("observation_id")
+    observed_at = observation.get("observed_at")
+    if isinstance(observation_id, str) and isinstance(observed_at, str):
+        return "A newer read-only monitor record is available in the audit appendix."
+    return "No current monitor record is available beyond the report evidence."
 
 
 def _form_error(status_code: int, message: str) -> HTMLResponse:
@@ -758,6 +842,12 @@ def create_presentation_app(
         """Serve the watch logic from this same loopback origin only."""
 
         return Response(WATCH_JAVASCRIPT, media_type="application/javascript")
+
+    @app.get("/assets/report.js")
+    async def report_javascript() -> Response:
+        """Serve only a same-origin browser-print affordance."""
+
+        return Response(REPORT_JAVASCRIPT, media_type="application/javascript")
 
     @app.get("/watch", response_class=HTMLResponse)
     async def watch_floor() -> HTMLResponse:
@@ -942,8 +1032,19 @@ def create_presentation_app(
                 workflow_stages=tuple(stage.value for stage in IncidentWorkflowStage),
                 semantic_activity="Private review data is unavailable.",
                 semantic_materiality="Unavailable",
+                semantic_change_kind="Unavailable",
                 uncertainty_summary="Unavailable",
                 impact_summary="Unavailable",
+                report_observation_age="Unavailable",
+                current_monitor_summary="Unavailable",
+                recommended_human_steps=(),
+                display=report_view(
+                    stage="DETECTED",
+                    checkpoint={},
+                    review_state={"state": "BLOCKED"},
+                    review_actions={},
+                    impact={},
+                ),
                 error="Private review data is unavailable.",
             )
         report = _mapping(detail.get("report"))
@@ -993,6 +1094,12 @@ def create_presentation_app(
         uncertainty_count = (
             len(uncertainties_value) if isinstance(uncertainties_value, (list, tuple)) else 0
         )
+        recommended_steps_value = report.get("recommended_human_steps", ())
+        recommended_steps = (
+            tuple(step for step in recommended_steps_value if isinstance(step, str))
+            if isinstance(recommended_steps_value, (list, tuple))
+            else ()
+        )
         return render(
             "incident.html",
             incident_id=incident_id,
@@ -1031,12 +1138,107 @@ def create_presentation_app(
             workflow_stages=tuple(stage.value for stage in IncidentWorkflowStage),
             semantic_activity=_semantic_activity(workflow_stage),
             semantic_materiality=semantic.get("materiality", "Not recorded"),
+            semantic_change_kind=semantic.get("change_kind", "Not recorded"),
             uncertainty_summary=(
                 "No uncertainty was recorded."
                 if uncertainty_count == 0
                 else f"{uncertainty_count} persisted uncertainty item(s) require human judgment."
             ),
             impact_summary=_impact_summary(braille_impact),
+            report_observation_age=packet.get("observation_age_seconds", "Unavailable"),
+            current_monitor_summary=_current_monitor_summary(
+                _mapping(detail.get("current_site_observation"))
+            ),
+            recommended_human_steps=recommended_steps,
+            display=report_view(
+                stage=workflow_stage,
+                checkpoint=checkpoint,
+                review_state=_mapping(detail.get("review_state")),
+                review_actions=review_actions,
+                impact=braille_impact,
+            ),
+            error=None,
+        )
+
+    @app.get("/incidents/{incident_id}/report", response_class=HTMLResponse)
+    async def printable_incident_report(incident_id: str) -> HTMLResponse:
+        """Render existing immutable incident evidence for local browser print.
+
+        This route deliberately performs only the same private GETs as the
+        decision cockpit. It has no model, Drive, CUPS, or human-record call.
+        """
+
+        try:
+            detail, timeline_payload = await asyncio.gather(
+                api.get_json(f"/api/v1/incidents/{incident_id}"),
+                api.get_json(f"/api/v1/incidents/{incident_id}/timeline"),
+            )
+        except (
+            httpx.HTTPError,
+            PrivateReviewApiError,
+            PresentationAuthenticationError,
+            ValueError,
+        ):
+            return render(
+                "report.html",
+                incident_id=incident_id,
+                fixture_mode=False,
+                error="Private review data is unavailable; no report is rendered.",
+            )
+        report = _mapping(detail.get("report"))
+        packet = _mapping(detail.get("human_disposition_packet"))
+        semantic = _mapping(report.get("semantic_assessment"))
+        checkpoint = _mapping(detail.get("checkpoint"))
+        workflow_stage = checkpoint.get("stage")
+        if not isinstance(workflow_stage, str):
+            workflow_stage = "DETECTED"
+        review_state = _mapping(detail.get("review_state"))
+        raw_actions = _mapping(detail.get("review_actions"))
+        review_actions = {
+            "containment_confirmation": _mapping(raw_actions.get("containment_confirmation")),
+            "proof": _mapping(raw_actions.get("proof")),
+            "replacement_observation": _mapping(raw_actions.get("replacement_observation")),
+        }
+        braille_impact = _mapping(report.get("braille_impact"))
+        uncertainties = semantic.get("uncertainties", ())
+        uncertainty_count = len(uncertainties) if isinstance(uncertainties, (list, tuple)) else 0
+        recommended_value = report.get("recommended_human_steps", ())
+        recommended_steps = (
+            tuple(step for step in recommended_value if isinstance(step, str))
+            if isinstance(recommended_value, (list, tuple))
+            else ()
+        )
+        current_observation = _mapping(detail.get("current_site_observation"))
+        return render(
+            "report.html",
+            incident_id=incident_id,
+            review_state=review_state,
+            source_comparison=_source_comparison(_mapping(detail.get("source_correction"))),
+            semantic_materiality=semantic.get("materiality", "Not recorded"),
+            semantic_change_kind=semantic.get("change_kind", "Not recorded"),
+            semantic_summary=semantic.get("summary", "No semantic summary is available."),
+            uncertainty_summary=(
+                "No uncertainty was recorded."
+                if uncertainty_count == 0
+                else f"{uncertainty_count} persisted uncertainty item(s) require human judgment."
+            ),
+            report_observation_age=packet.get("observation_age_seconds", "Unavailable"),
+            current_monitor_summary=_current_monitor_summary(current_observation),
+            next_safe_action=_next_safe_action(review_state),
+            recommended_human_steps=recommended_steps,
+            source_correction=_pretty(detail.get("source_correction")),
+            braille_impact=_pretty(braille_impact),
+            candidate_manifest=_pretty(detail.get("candidate_manifest")),
+            profile_identity=_pretty(detail.get("profile_identity")),
+            timeline=_mapping(timeline_payload).get("events", ()),
+            display=report_view(
+                stage=workflow_stage,
+                checkpoint=checkpoint,
+                review_state=review_state,
+                review_actions=review_actions,
+                impact=braille_impact,
+            ),
+            fixture_mode=False,
             error=None,
         )
 

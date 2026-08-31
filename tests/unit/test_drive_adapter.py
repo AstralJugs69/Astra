@@ -10,8 +10,11 @@ from googleapiclient.errors import HttpError
 from braille_errata_relay.adapters.drive import (
     DRIVE_CHANGE_FIELDS,
     DRIVE_METADATA_FIELDS,
+    GOOGLE_DOCS_MIME_TYPE,
+    MARKDOWN_MIME_TYPE,
     DriveBlobProvider,
     DriveChangeReconciler,
+    DriveSourceInaccessible,
     DriveSourceInvalid,
     DriveSourceRemoved,
 )
@@ -42,9 +45,15 @@ class FakeRequest:
 
 
 class FakeFiles:
-    def __init__(self, metadata: list[object], media: list[object]) -> None:
+    def __init__(
+        self,
+        metadata: list[object],
+        media: list[object],
+        exports: list[object] | None = None,
+    ) -> None:
         self.metadata = metadata
         self.media = media
+        self.exports = exports or []
         self.calls: list[dict[str, object]] = []
 
     def get(self, **kwargs: object) -> FakeRequest:
@@ -54,6 +63,10 @@ class FakeFiles:
     def get_media(self, **kwargs: object) -> FakeRequest:
         self.calls.append({"method": "get_media", **kwargs})
         return FakeRequest([self.media.pop(0)])
+
+    def export_media(self, **kwargs: object) -> FakeRequest:
+        self.calls.append({"method": "export_media", **kwargs})
+        return FakeRequest([self.exports.pop(0)])
 
 
 class FakeChanges:
@@ -84,15 +97,22 @@ class FakeDrive:
         return self._changes
 
 
-def _metadata(*, version: str = "62", size: int = 12) -> dict[str, object]:
+def _metadata(
+    *,
+    version: str = "62",
+    size: int = 12,
+    mime_type: str = MARKDOWN_MIME_TYPE,
+    can_download: bool = True,
+) -> dict[str, object]:
     return {
         "id": "drive-file",
-        "mimeType": "text/markdown",
+        "mimeType": mime_type,
         "modifiedTime": "2026-08-29T00:00:00Z",
         "name": "synthetic.md",
         "size": str(size),
         "trashed": False,
         "version": version,
+        "capabilities": {"canDownload": can_download},
     }
 
 
@@ -109,7 +129,25 @@ def _locator() -> SourceLocator:
     return SourceLocator(
         provider=SourceProvider.GOOGLE_DRIVE,
         file_id="drive-file",
-        mime_type="text/markdown",
+        mime_type=MARKDOWN_MIME_TYPE,
+    )
+
+
+def _docs_provider(service: Any, *, max_bytes: int = 1024) -> DriveBlobProvider:
+    return DriveBlobProvider(
+        service=service,
+        expected_file_id="drive-file",
+        supported_mime_type=GOOGLE_DOCS_MIME_TYPE,
+        max_bytes=max_bytes,
+        clock=lambda: datetime(2026, 8, 29, tzinfo=UTC),
+    )
+
+
+def _docs_locator() -> SourceLocator:
+    return SourceLocator(
+        provider=SourceProvider.GOOGLE_DRIVE,
+        file_id="drive-file",
+        mime_type=GOOGLE_DOCS_MIME_TYPE,
     )
 
 
@@ -128,6 +166,73 @@ async def test_provider_refetches_metadata_and_hashes_authoritative_bytes() -> N
     assert files.calls[0]["fields"] == DRIVE_METADATA_FIELDS
     assert files.calls[1]["method"] == "get_media"
     assert files.calls[2]["fields"] == DRIVE_METADATA_FIELDS
+
+
+@pytest.mark.asyncio
+async def test_native_google_doc_exports_markdown_and_does_not_compare_native_size() -> None:
+    content = b"# Synthetic Google Doc\n\nA simple paragraph.\n"
+    metadata = _metadata(
+        mime_type=GOOGLE_DOCS_MIME_TYPE,
+        size=1,
+    )
+    files = FakeFiles([metadata, metadata.copy()], [], [content])
+
+    snapshot = await _docs_provider(FakeDrive(files)).fetch_revision(_docs_locator())
+
+    assert snapshot.source_bytes == content
+    assert snapshot.revision.metadata.locator.mime_type == GOOGLE_DOCS_MIME_TYPE
+    assert files.calls[1] == {
+        "method": "export_media",
+        "fileId": "drive-file",
+        "mimeType": MARKDOWN_MIME_TYPE,
+    }
+    assert not any(call.get("method") == "get_media" for call in files.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata", "content", "message"),
+    [
+        (
+            _metadata(mime_type=GOOGLE_DOCS_MIME_TYPE, can_download=False),
+            b"# Synthetic\n",
+            "cannot be exported",
+        ),
+        (
+            {**_metadata(mime_type=GOOGLE_DOCS_MIME_TYPE), "trashed": True},
+            b"# Synthetic\n",
+            "removed",
+        ),
+        (
+            _metadata(mime_type=GOOGLE_DOCS_MIME_TYPE),
+            b"\xff\xfe\x00\x00",
+            "UTF-8",
+        ),
+    ],
+)
+async def test_native_google_doc_fails_closed_on_invalid_export(
+    metadata: dict[str, object], content: bytes, message: str
+) -> None:
+    files = FakeFiles([metadata, metadata.copy()], [], [content])
+    with pytest.raises(
+        (DriveSourceInvalid, DriveSourceRemoved, DriveSourceInaccessible), match=message
+    ):
+        await _docs_provider(FakeDrive(files)).fetch_revision(_docs_locator())
+
+
+@pytest.mark.asyncio
+async def test_native_google_doc_fails_if_version_changes_during_export() -> None:
+    content = b"# Synthetic\n"
+    files = FakeFiles(
+        [
+            _metadata(mime_type=GOOGLE_DOCS_MIME_TYPE, version="62"),
+            _metadata(mime_type=GOOGLE_DOCS_MIME_TYPE, version="63"),
+        ],
+        [],
+        [content],
+    )
+    with pytest.raises(DriveSourceInvalid, match="changed during"):
+        await _docs_provider(FakeDrive(files)).fetch_revision(_docs_locator())
 
 
 @pytest.mark.asyncio

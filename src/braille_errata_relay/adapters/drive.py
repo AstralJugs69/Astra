@@ -20,7 +20,12 @@ from braille_errata_relay.domain.models import (
     SourceSnapshot,
 )
 
-DRIVE_METADATA_FIELDS = "id,mimeType,modifiedTime,name,size,trashed,version"
+MARKDOWN_MIME_TYPE = "text/markdown"
+GOOGLE_DOCS_MIME_TYPE = "application/vnd.google-apps.document"
+SUPPORTED_SOURCE_MIME_TYPES = frozenset({MARKDOWN_MIME_TYPE, GOOGLE_DOCS_MIME_TYPE})
+DRIVE_METADATA_FIELDS = (
+    "id,mimeType,modifiedTime,name,size,trashed,version,capabilities(canDownload)"
+)
 DRIVE_CHANGE_FIELDS = (
     "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,mimeType,trashed,version))"
 )
@@ -66,14 +71,20 @@ async def _execute_request(request: Any, *, attempts: int = 3) -> object:
 
 
 class DriveBlobProvider:
-    """Fetch one configured plain Markdown blob without any Drive write scope."""
+    """Fetch one configured Markdown blob or native Google Doc read-only.
+
+    Native Docs are exported as Markdown after metadata has established the
+    configured provider identity. The exported bytes (not a native-document
+    metadata size) are the authoritative source input for the existing strict
+    Markdown normalizer.
+    """
 
     def __init__(
         self,
         *,
         service: Any,
         expected_file_id: str,
-        supported_mime_type: str = "text/markdown",
+        supported_mime_type: str = MARKDOWN_MIME_TYPE,
         max_bytes: int = 1_048_576,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -81,6 +92,8 @@ class DriveBlobProvider:
             raise ValueError("DRIVE_FILE_ID must be explicit")
         if max_bytes <= 0:
             raise ValueError("Drive source maximum must be positive")
+        if supported_mime_type not in SUPPORTED_SOURCE_MIME_TYPES:
+            raise ValueError("configured Drive source MIME type is unsupported")
         self.service = service
         self.expected_file_id = expected_file_id
         self.supported_mime_type = supported_mime_type
@@ -118,8 +131,12 @@ class DriveBlobProvider:
             provider_version = version
         else:
             raise DriveSourceInvalid("Drive provider version is missing")
+        if self.supported_mime_type == GOOGLE_DOCS_MIME_TYPE:
+            capabilities = metadata.get("capabilities")
+            if not isinstance(capabilities, dict) or capabilities.get("canDownload") is not True:
+                raise DriveSourceInaccessible("configured Google Doc cannot be exported")
         declared_size = metadata.get("size")
-        if declared_size is not None:
+        if self.supported_mime_type == MARKDOWN_MIME_TYPE and declared_size is not None:
             try:
                 parsed_size = int(str(declared_size))
             except ValueError as exc:
@@ -138,13 +155,20 @@ class DriveBlobProvider:
 
         before = await self._metadata()
         provider_version = self._validate_metadata(before)
-        # google-api-python-client exposes files.get(..., alt="media") as
-        # get_media(); calling get(..., alt="media") on the frozen binding
-        # returns parsed metadata rather than the authoritative byte stream.
-        request = self.service.files().get_media(
-            fileId=self.expected_file_id,
-            supportsAllDrives=True,
-        )
+        # google-api-python-client exposes a Drive blob request as get_media().
+        # A native Google Doc is not a blob: export_media() is the documented
+        # read-only acquisition path. The configured provider MIME remains in
+        # the SourceLocator; only the exported bytes are Markdown.
+        if self.supported_mime_type == GOOGLE_DOCS_MIME_TYPE:
+            request = self.service.files().export_media(
+                fileId=self.expected_file_id,
+                mimeType=MARKDOWN_MIME_TYPE,
+            )
+        else:
+            request = self.service.files().get_media(
+                fileId=self.expected_file_id,
+                supportsAllDrives=True,
+            )
         try:
             value = await _execute_request(request)
         except HttpError as exc:
@@ -167,9 +191,10 @@ class DriveBlobProvider:
             raise DriveSourceInvalid("Drive source changed during authoritative fetch")
         if before.get("mimeType") != after.get("mimeType"):
             raise DriveSourceInvalid("Drive source MIME type changed during fetch")
-        declared_size = after.get("size")
-        if declared_size is not None and int(str(declared_size)) != len(value):
-            raise DriveSourceInvalid("Drive metadata and fetched byte length disagree")
+        if self.supported_mime_type == MARKDOWN_MIME_TYPE:
+            declared_size = after.get("size")
+            if declared_size is not None and int(str(declared_size)) != len(value):
+                raise DriveSourceInvalid("Drive metadata and fetched byte length disagree")
 
         source_sha256 = hashlib.sha256(value).hexdigest()
         revision_id = f"drive:{self.expected_file_id}:{provider_version}:{source_sha256}"

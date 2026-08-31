@@ -1050,6 +1050,7 @@ def create_app(
         source_change_summary = "Open immutable incident detail for source-correction evidence."
         page_impact_summary = "Deterministic page impact is available in incident detail."
         observation_freshness = "No current read-only observation is available."
+        watch_highlight: dict[str, object] | None = None
         if checkpoint.report is not None:
             try:
                 report = await _read_json_artifact(checkpoint.report)
@@ -1062,6 +1063,34 @@ def create_app(
                     old_range = impact.get("old_page_range")
                     new_range = impact.get("new_page_range")
                     page_impact_summary = f"Pages changed: {changed}; baseline range {old_range}; candidate range {new_range}."
+                    materiality = (
+                        semantic.get("materiality") if isinstance(semantic, dict) else None
+                    )
+                    change_kind = (
+                        semantic.get("change_kind") if isinstance(semantic, dict) else None
+                    )
+                    baseline_count = impact.get("baseline_page_count")
+                    candidate_count = impact.get("candidate_page_count")
+                    if (
+                        isinstance(materiality, str)
+                        and isinstance(change_kind, str)
+                        and isinstance(baseline_count, int)
+                        and not isinstance(baseline_count, bool)
+                        and isinstance(candidate_count, int)
+                        and not isinstance(candidate_count, bool)
+                    ):
+                        # The local watch sanitizer independently validates this
+                        # closed, structured projection before it reaches the
+                        # browser. No source or Gemini free text is included.
+                        watch_highlight = {
+                            "materiality": materiality,
+                            "change_kind": change_kind,
+                            "baseline_page_count": baseline_count,
+                            "candidate_page_count": candidate_count,
+                            "old_page_range": old_range,
+                            "new_page_range": new_range,
+                            "resynchronized_after_page": impact.get("resynchronized_after_page"),
+                        }
             except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
                 pass
         baseline = await ledger.get_baseline(checkpoint.baseline_id) if ledger is not None else None
@@ -1092,6 +1121,7 @@ def create_app(
             "source_change_summary": source_change_summary,
             "page_impact_summary": page_impact_summary,
             "observation_freshness": observation_freshness,
+            "watch_highlight": watch_highlight,
             "next_safe_action": next_safe_action,
         }
 

@@ -113,6 +113,19 @@ def test_cli_init_shows_sanitized_preview_writes_dotenv_and_requires_force(
     assert "BLOCKED" in capsys.readouterr().err
 
 
+def test_local_config_accepts_the_closed_native_google_docs_provider_mime_type() -> None:
+    values = _config().model_dump()
+    config = local_setup.LocalRelayConfig.model_validate(
+        {**values, "drive_source_mime_type": "application/vnd.google-apps.document"}
+    )
+
+    assert config.drive_source_mime_type == "application/vnd.google-apps.document"
+    with pytest.raises(ValueError, match="source MIME type"):
+        local_setup.LocalRelayConfig.model_validate(
+            {**values, "drive_source_mime_type": "application/pdf"}
+        )
+
+
 def test_doctor_is_sanitized_and_non_mutating_without_optional_remote_checks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -12,8 +12,8 @@ sys.path.insert(0, str(ROOT / "local_bridge" / "src"))
 import relay_bridge.main as bridge_module
 from relay_bridge.cups_observer import CupsRequiredJobNotFound
 from relay_bridge.journal import ObservationJournal
+from relay_bridge.main import DemoArmAlreadyRunning, observe_loop, observe_once, write_json_atomic
 from relay_bridge.main import main as bridge_main
-from relay_bridge.main import observe_once, write_json_atomic
 
 
 class FakeObserver:
@@ -174,6 +174,112 @@ def test_observe_command_reports_missing_lineage_without_queuing_an_observation(
     assert not output_path.exists()
     journal = ObservationJournal(journal_path)
     try:
+        assert journal.pending_outbox() == ()
+    finally:
+        journal.close()
+
+
+def test_observe_loop_keeps_a_single_canonical_chain_and_reports_completion(
+    tmp_path: Path,
+) -> None:
+    journal = ObservationJournal(tmp_path / "journal.sqlite3")
+    status_path = tmp_path / "observer-status.json"
+    elapsed = [0.0]
+    sleeps: list[float] = []
+
+    def monotonic_clock() -> float:
+        return elapsed[0]
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        elapsed[0] += seconds
+
+    try:
+        assert (
+            observe_loop(
+                observer=FakeObserver(),
+                journal=journal,
+                site_id="demo-site",
+                bridge_id="single-pc-bridge",
+                queue_name="Braille-Embosser-Sim",
+                required_job_id=42,
+                interval_seconds=5.0,
+                max_runtime_seconds=30.0,
+                status_path=status_path,
+                monotonic_clock=monotonic_clock,
+                sleep=sleep,
+            )
+            == 0
+        )
+        pending = journal.pending_outbox()
+    finally:
+        journal.close()
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert len(pending) == 6
+    assert sleeps == [5.0] * 6
+    assert status == {
+        "schema_version": "demo-observer-status.v1",
+        "status": "COMPLETED",
+        "required_scheduler_job_id": 42,
+        "last_observation_id": pending[-1]["observation_id"],
+        "last_sequence": 6,
+        "last_observed_at": "2026-08-29T12:00:00+00:00",
+    }
+    assert not status_path.with_suffix(".json.lock").exists()
+    assert [entry["payload"]["sequence"] for entry in pending] == list(range(1, 7))
+    assert all(entry["payload"]["observations"][0]["scheduler_job_id"] == 42 for entry in pending)
+
+
+def test_observe_loop_blocks_without_substituting_a_missing_exact_job(tmp_path: Path) -> None:
+    journal = ObservationJournal(tmp_path / "journal.sqlite3")
+    status_path = tmp_path / "observer-status.json"
+    try:
+        result = observe_loop(
+            observer=MissingRequiredJobObserver(),
+            journal=journal,
+            site_id="demo-site",
+            bridge_id="single-pc-bridge",
+            queue_name="Braille-Embosser-Sim",
+            required_job_id=99,
+            interval_seconds=5.0,
+            max_runtime_seconds=30.0,
+            status_path=status_path,
+        )
+        pending = journal.pending_outbox()
+    finally:
+        journal.close()
+
+    assert result == 3
+    assert pending == ()
+    assert json.loads(status_path.read_text(encoding="utf-8")) == {
+        "schema_version": "demo-observer-status.v1",
+        "status": "BLOCKED",
+        "blocking_reason": "MISSING_LINEAGE",
+        "required_scheduler_job_id": 99,
+    }
+    assert not status_path.with_suffix(".json.lock").exists()
+
+
+def test_observe_loop_refuses_a_parallel_session(tmp_path: Path) -> None:
+    journal = ObservationJournal(tmp_path / "journal.sqlite3")
+    status_path = tmp_path / "observer-status.json"
+    lock_path = status_path.with_suffix(".json.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text("other-process\n", encoding="ascii")
+    try:
+        with pytest.raises(DemoArmAlreadyRunning):
+            observe_loop(
+                observer=FakeObserver(),
+                journal=journal,
+                site_id="demo-site",
+                bridge_id="single-pc-bridge",
+                queue_name="Braille-Embosser-Sim",
+                required_job_id=42,
+                interval_seconds=5.0,
+                max_runtime_seconds=30.0,
+                status_path=status_path,
+            )
         assert journal.pending_outbox() == ()
     finally:
         journal.close()

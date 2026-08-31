@@ -28,6 +28,9 @@ from braille_errata_relay.braille.readiness import check_liblouis_readiness
 _DRIVE_FILE_ID = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 _IDENTIFIER = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
 _PROJECT_IDENTIFIER = "abcdefghijklmnopqrstuvwxyz0123456789-"
+_SUPPORTED_DRIVE_SOURCE_MIME_TYPES = frozenset(
+    {"text/markdown", "application/vnd.google-apps.document"}
+)
 
 
 def _only_from(value: str, allowed: str, *, min_length: int, max_length: int) -> bool:
@@ -128,11 +131,12 @@ class LocalRelayConfig(BaseModel):
     @field_validator("drive_source_mime_type")
     @classmethod
     def validate_mime_type(cls, value: str) -> str:
-        if value.strip() != "text/markdown":
+        normalized = value.strip()
+        if normalized not in _SUPPORTED_DRIVE_SOURCE_MIME_TYPES:
             raise ValueError(
-                "only the supported authoritative source MIME type text/markdown is accepted"
+                "source MIME type must be text/markdown or application/vnd.google-apps.document"
             )
-        return "text/markdown"
+        return normalized
 
     @field_validator("site_id", "queue_name", "local_bridge_id")
     @classmethod
@@ -318,7 +322,7 @@ def _drive_read_check(config: LocalRelayConfig) -> DoctorCheck:
             service.files()
             .get(
                 fileId=config.drive_file_id,
-                fields="id,mimeType,trashed",
+                fields="id,mimeType,trashed,capabilities(canDownload)",
                 supportsAllDrives=True,
             )
             .execute()
@@ -328,6 +332,13 @@ def _drive_read_check(config: LocalRelayConfig) -> DoctorCheck:
             or metadata.get("id") != config.drive_file_id
             or metadata.get("mimeType") != config.drive_source_mime_type
             or metadata.get("trashed") is True
+            or (
+                config.drive_source_mime_type == "application/vnd.google-apps.document"
+                and (
+                    not isinstance(metadata.get("capabilities"), Mapping)
+                    or metadata["capabilities"].get("canDownload") is not True
+                )
+            )
         ):
             return DoctorCheck("drive_read", "BLOCKED", "configured Drive metadata is not eligible")
     except Exception:  # noqa: BLE001 - Drive client error details can contain private identifiers.

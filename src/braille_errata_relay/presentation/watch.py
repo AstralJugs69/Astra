@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from braille_errata_relay.domain.models import IncidentWorkflowStage
+from braille_errata_relay.presentation.view_models import workflow_label
 
 WATCH_SCHEMA_VERSION = "watch-snapshot.v1"
 WATCH_SOURCE_LABEL = "Authoritative source"
@@ -36,6 +37,18 @@ _AUTOMATION_STATUSES = frozenset(
 )
 _AUTOMATION_SCHEMA_VERSION = "automation-cycle-status.v1"
 _MAX_OUTBOX_COUNT = 100
+_MAX_PAGE_COUNT = 100_000
+_MATERIALITY_VALUES = frozenset({"MATERIAL", "NOT_MATERIAL", "UNCERTAIN"})
+_CHANGE_KIND_VALUES = frozenset(
+    {
+        "FACTUAL_CORRECTION",
+        "INSTRUCTION_CHANGE",
+        "NAVIGATION_CHANGE",
+        "EDITORIAL_CHANGE",
+        "FORMATTING_ONLY",
+        "UNKNOWN",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +87,78 @@ def _next_safe_action(*, stage: str, review_state: str, blocking_reason: str | N
     return "Continue monitoring authoritative evidence; Relay performs no production action."
 
 
+def _normalized_timestamp(value: object) -> tuple[str, float] | None:
+    """Accept a bounded RFC-3339-like value and return safe display/sort values."""
+
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    normalized = parsed.astimezone(UTC)
+    return normalized.isoformat(), normalized.timestamp()
+
+
+def _page_range(value: object, *, total: int) -> dict[str, int] | None:
+    raw = value if isinstance(value, Mapping) else {}
+    start = raw.get("start")
+    end = raw.get("end")
+    if (
+        isinstance(start, int)
+        and not isinstance(start, bool)
+        and isinstance(end, int)
+        and not isinstance(end, bool)
+        and 1 <= start <= end <= total
+    ):
+        return {"start": start, "end": end}
+    return None
+
+
+def _sanitize_watch_highlight(value: object) -> dict[str, object] | None:
+    """Pass only closed report facts to the browser, never source/model prose."""
+
+    raw = value if isinstance(value, Mapping) else {}
+    materiality = raw.get("materiality")
+    change_kind = raw.get("change_kind")
+    baseline_count = raw.get("baseline_page_count")
+    candidate_count = raw.get("candidate_page_count")
+    if (
+        materiality not in _MATERIALITY_VALUES
+        or change_kind not in _CHANGE_KIND_VALUES
+        or not isinstance(baseline_count, int)
+        or isinstance(baseline_count, bool)
+        or not isinstance(candidate_count, int)
+        or isinstance(candidate_count, bool)
+        or not 1 <= baseline_count <= _MAX_PAGE_COUNT
+        or not 1 <= candidate_count <= _MAX_PAGE_COUNT
+    ):
+        return None
+    old_range = _page_range(raw.get("old_page_range"), total=baseline_count)
+    new_range = _page_range(raw.get("new_page_range"), total=candidate_count)
+    if old_range is None and new_range is None:
+        return None
+    resync = raw.get("resynchronized_after_page")
+    safe_resync: int | None = None
+    if (
+        isinstance(resync, int)
+        and not isinstance(resync, bool)
+        and 1 <= resync <= max(baseline_count, candidate_count)
+    ):
+        safe_resync = resync
+    return {
+        "materiality": materiality,
+        "change_kind": change_kind,
+        "baseline_page_count": baseline_count,
+        "candidate_page_count": candidate_count,
+        "old_page_range": old_range,
+        "new_page_range": new_range,
+        "resynchronized_after_page": safe_resync,
+    }
+
+
 def _sanitize_incident(row: Mapping[str, object]) -> dict[str, object] | None:
     incident_id = row.get("incident_id")
     if not isinstance(incident_id, str) or _HEX_SHA256.fullmatch(incident_id) is None:
@@ -90,9 +175,12 @@ def _sanitize_incident(row: Mapping[str, object]) -> dict[str, object] | None:
         if blocking_value is not None
         else None
     )
-    return {
+    timestamp = _normalized_timestamp(row.get("updated_at"))
+    highlight = _sanitize_watch_highlight(row.get("watch_highlight"))
+    sanitized: dict[str, object] = {
         "incident_id": incident_id,
         "workflow_stage": stage,
+        "workflow_label": workflow_label(stage),
         "review_state": state,
         "blocking_reason": blocking_reason,
         "next_safe_action": _next_safe_action(
@@ -101,6 +189,12 @@ def _sanitize_incident(row: Mapping[str, object]) -> dict[str, object] | None:
             blocking_reason=blocking_reason,
         ),
     }
+    if timestamp is not None:
+        sanitized["updated_at"] = timestamp[0]
+        sanitized["_updated_at_sort"] = timestamp[1]
+    if highlight is not None:
+        sanitized["watch_highlight"] = highlight
+    return sanitized
 
 
 def _sanitize_automation_status(automation: Mapping[str, object] | None) -> dict[str, object]:
@@ -205,7 +299,15 @@ def sanitize_watch_snapshot(
         if isinstance(row, Mapping)
         if (sanitized := _sanitize_incident(row)) is not None
     ]
-    incidents.sort(key=lambda incident: str(incident["incident_id"]))
+
+    def sort_key(incident: Mapping[str, object]) -> tuple[float, str]:
+        raw_timestamp = incident.get("_updated_at_sort")
+        timestamp = raw_timestamp if isinstance(raw_timestamp, float) else float("-inf")
+        return -timestamp, str(incident["incident_id"])
+
+    incidents.sort(key=sort_key)
+    for incident in incidents:
+        incident.pop("_updated_at_sort", None)
     now = observed_at or _utc_now()
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
@@ -247,7 +349,7 @@ def _automation_summary(automation: Mapping[str, object]) -> str:
     return label
 
 
-def watch_summary(snapshot: Mapping[str, object]) -> dict[str, str]:
+def watch_summary(snapshot: Mapping[str, object]) -> dict[str, object]:
     """Build only display-safe summary fields for the watch template."""
 
     raw_incidents = snapshot.get("incidents")
@@ -259,13 +361,18 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, str]:
         return {
             "source_label": WATCH_SOURCE_LABEL,
             "durable_stage": "WATCHING",
+            "stage_label": "Monitoring authoritative source",
             "next_safe_action": "No incident is awaiting review. Continue watching authoritative source.",
             "automatic_cycle": automatic_cycle,
+            "hero": None,
         }
     first = incidents[0] if isinstance(incidents[0], Mapping) else {}
     return {
         "source_label": WATCH_SOURCE_LABEL,
         "durable_stage": _safe_enum(first.get("workflow_stage"), default="DETECTED"),
+        "stage_label": str(
+            first.get("workflow_label", workflow_label(first.get("workflow_stage")))
+        ),
         "next_safe_action": str(
             first.get(
                 "next_safe_action",
@@ -273,6 +380,7 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, str]:
             )
         ),
         "automatic_cycle": automatic_cycle,
+        "hero": dict(first),
     }
 
 
@@ -344,9 +452,11 @@ class WatchEventTracker:
                 for key in (
                     "incident_id",
                     "workflow_stage",
+                    "workflow_label",
                     "review_state",
                     "blocking_reason",
                     "next_safe_action",
+                    "watch_highlight",
                 )
                 if key in row
             }

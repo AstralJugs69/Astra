@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_SUPPORTED_DRIVE_SOURCE_MIME_TYPES = frozenset(
+    {"text/markdown", "application/vnd.google-apps.document"}
+)
 
 
 class CloudSettings(BaseModel):
@@ -32,6 +36,16 @@ class CloudSettings(BaseModel):
     site_id: str | None = None
     bridge_id: str | None = None
     cups_queue_name: str | None = None
+
+    @field_validator("drive_source_mime_type")
+    @classmethod
+    def validate_drive_source_mime_type(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized not in _SUPPORTED_DRIVE_SOURCE_MIME_TYPES:
+            raise ValueError(
+                "DRIVE_SOURCE_MIME_TYPE must be text/markdown or application/vnd.google-apps.document"
+            )
+        return normalized
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> CloudSettings:

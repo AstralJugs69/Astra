@@ -156,6 +156,7 @@ def test_watch_snapshot_drops_private_fields_and_invalid_rows() -> None:
         {
             "incident_id": FIRST_ID,
             "workflow_stage": "IMPACT_READY",
+            "workflow_label": "Braille page impact calculated",
             "review_state": "ASSESSING",
             "blocking_reason": None,
             "next_safe_action": "Next step: semantic assessment.",
@@ -182,6 +183,58 @@ def test_watch_snapshot_drops_private_fields_and_invalid_rows() -> None:
     }
     assert "private-file" not in rendered
     assert "private_receipt" not in rendered
+
+
+def test_watch_snapshot_keeps_only_closed_report_highlights_and_sorts_by_latest_timestamp() -> None:
+    first = _overview(incident_id=FIRST_ID, stage="REPORT_READY", review_state="REPORT_READY")
+    second = _overview(incident_id=SECOND_ID, stage="REPORT_READY", review_state="REPORT_READY")
+    first["incidents"][0].update(  # type: ignore[index]
+        {
+            "updated_at": "2026-08-31T12:00:00+00:00",
+            "watch_highlight": {
+                "materiality": "MATERIAL",
+                "change_kind": "FACTUAL_CORRECTION",
+                "baseline_page_count": 46,
+                "candidate_page_count": 46,
+                "old_page_range": {"start": 24, "end": 24},
+                "new_page_range": {"start": 24, "end": 24},
+                "resynchronized_after_page": 24,
+                "semantic_summary": "private model prose must not cross the browser boundary",
+            },
+        }
+    )
+    second["incidents"][0].update(  # type: ignore[index]
+        {
+            "updated_at": "2026-08-31T12:01:00+00:00",
+            "watch_highlight": {
+                "materiality": "MATERIAL",
+                "change_kind": "FACTUAL_CORRECTION",
+                "baseline_page_count": 46,
+                "candidate_page_count": 46,
+                "old_page_range": {"start": 24, "end": 24},
+                "new_page_range": {"start": 24, "end": 24},
+                "resynchronized_after_page": 24,
+            },
+        }
+    )
+
+    snapshot = sanitize_watch_snapshot(
+        {"incidents": [first["incidents"][0], second["incidents"][0]]},  # type: ignore[index]
+        observed_at=datetime(2026, 8, 31, 12, 2, tzinfo=UTC),
+        automation=_automation(),
+    )
+
+    assert [row["incident_id"] for row in snapshot["incidents"]] == [SECOND_ID, FIRST_ID]
+    assert snapshot["incidents"][0]["watch_highlight"] == {
+        "materiality": "MATERIAL",
+        "change_kind": "FACTUAL_CORRECTION",
+        "baseline_page_count": 46,
+        "candidate_page_count": 46,
+        "old_page_range": {"start": 24, "end": 24},
+        "new_page_range": {"start": 24, "end": 24},
+        "resynchronized_after_page": 24,
+    }
+    assert "semantic_summary" not in str(snapshot)
 
 
 def test_watch_tracker_deduplicates_historical_snapshots_and_emits_one_new_alert() -> None:

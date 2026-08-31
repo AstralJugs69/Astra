@@ -253,6 +253,23 @@ def test_presentation_is_server_rendered_escaped_and_uses_strict_http_only_sessi
     assert response.headers["x-frame-options"] == "DENY"
 
 
+def test_printable_incident_report_uses_only_existing_evidence_and_no_human_mutation() -> None:
+    client, api = _client()
+
+    response = client.get(f"/incidents/{INCIDENT_ID}/report")
+
+    assert response.status_code == 200
+    assert "Print / Save as PDF" in response.text
+    assert 'src="/assets/report.js"' in response.text
+    assert "Semantic summary &lt;img src=x onerror=alert(1)&gt;" in response.text
+    assert "Candidate BRF is not an approved production master" in response.text
+    assert '<form method="post"' not in response.text
+    assert api.posts == []
+    assert api.downloads == []
+    assert response.headers["cache-control"] == "no-store"
+    assert "form-action 'self'" in response.headers["content-security-policy"]
+
+
 def test_presentation_hides_human_record_forms_when_private_data_is_unavailable() -> None:
     app = create_presentation_app(
         PresentationSettings(

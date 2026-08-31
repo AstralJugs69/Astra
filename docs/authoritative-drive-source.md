@@ -44,10 +44,27 @@ authoritative byte refetch and durable cursor.
 
 ## Supported source
 
-The hero workflow supports one `text/markdown` file under the strict parser.
-Unsupported content fails closed; it does not become silently reformatted
-Braille content. The configured Drive ID is not rendered in the browser watch
-floor.
+The hero workflow has two deliberately small, read-only source modes:
+
+| Configured Drive MIME type | Authoritative byte path | Intended use |
+| --- | --- | --- |
+| `text/markdown` | `files.get` byte download | Strict Markdown source file. |
+| `application/vnd.google-apps.document` | `files.export` to Markdown | A simple native Google Doc edited naturally in the Drive UI. |
+
+For a native Google Doc, Astra checks `capabilities.canDownload`, confirms the
+expected MIME type and non-trashed metadata before and after the export, and
+uses only the exported UTF-8 Markdown bytes as source truth. Drive’s change
+feed remains a wake signal; it never becomes source truth. Export byte length
+is intentionally not compared to native-Doc metadata size because Drive does
+not define that metadata as the export length.
+
+The live demo intentionally uses headings and paragraphs only. Rich document
+ingestion, tables, drawings, comments, revision authoring, and general Google
+Docs publishing are out of scope and fail closed rather than being silently
+reformatted into Braille. Run the metadata-only doctor before relying on a
+native Doc, then perform one human-observed baseline initialization/export
+smoke before claiming that a particular document is live-ready. The configured
+Drive ID is never rendered in the browser watch floor.
 
 ## Read-only access check
 
