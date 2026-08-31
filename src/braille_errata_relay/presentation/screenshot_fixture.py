@@ -35,6 +35,7 @@ CANDIDATE_SHA256 = "5" * 64
 MANIFEST_SHA256 = "6" * 64
 OBSERVATION_ID = "7" * 64
 PROOF_RECORD_ID = "8" * 64
+BASELINE_ID = "9" * 64
 NOW = datetime(2026, 8, 30, 18, 0, tzinfo=UTC)
 
 
@@ -134,6 +135,24 @@ def _overview_rows() -> tuple[dict[str, object], ...]:
             workflow_stage="REPORT_READY",
             updated_at=NOW.replace(minute=3),
         ),
+    )
+
+
+def _baseline_rows() -> tuple[dict[str, object], ...]:
+    """Return a visibly synthetic, non-final baseline for the offline fixture."""
+
+    return (
+        {
+            "baseline_id": BASELINE_ID,
+            "production_id": "SYNTHETIC-CELLULAR-SYSTEMS",
+            "status": "PROVISIONAL_PRODUCTION_LINK",
+            "state_version": 2,
+            "site_id": "synthetic-demo-site",
+            "queue_name": "Braille-Embosser-Sim",
+            "approved_brf_sha256": CANDIDATE_SHA256,
+            "created_at": NOW.replace(minute=0).isoformat(),
+            "production_action": "NOT_PERFORMED",
+        },
     )
 
 
@@ -343,12 +362,31 @@ def create_screenshot_fixture_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def overview() -> HTMLResponse:
+        baselines = _baseline_rows()
         return HTMLResponse(
             templates.get_template("index.html").render(
                 incidents=_overview_rows(),
-                summary={"total": 4, "blocked": 1},
+                baselines=baselines,
+                summary={"total": 4, "blocked": 1, "baselines": len(baselines)},
                 error=None,
                 fixture_mode=True,
+            )
+        )
+
+    @app.get("/baselines/{baseline_id}", response_class=HTMLResponse)
+    async def baseline(baseline_id: str) -> HTMLResponse:
+        rows = _baseline_rows()
+        record = next((row for row in rows if row["baseline_id"] == baseline_id), None)
+        if record is None:
+            return HTMLResponse(
+                "<!doctype html><p>Fixture baseline not found.</p>", status_code=404
+            )
+        return HTMLResponse(
+            templates.get_template("baseline_monitor.html").render(
+                baseline=record,
+                error=None,
+                fixture_mode=True,
+                nav="baselines",
             )
         )
 

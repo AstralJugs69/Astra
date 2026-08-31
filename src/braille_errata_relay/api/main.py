@@ -851,6 +851,30 @@ def create_app(
             return JSONResponse(status_code=404, content={"detail": "baseline not found"})
         return JSONResponse(status_code=200, content=record.model_dump(mode="json"))
 
+    @app.get("/api/v1/baselines")
+    async def list_baselines() -> JSONResponse:
+        """Return monitor-safe persistent baseline summaries for review dashboards."""
+
+        if ledger is None:
+            return JSONResponse(status_code=503, content={"status": "BLOCKED"})
+        rows: list[dict[str, object]] = []
+        for record in await ledger.list_baselines():
+            baseline = record.baseline
+            rows.append(
+                {
+                    "baseline_id": baseline.baseline_id,
+                    "production_id": baseline.production_id,
+                    "status": baseline.status.value,
+                    "state_version": baseline.state_version,
+                    "site_id": baseline.site_id,
+                    "queue_name": baseline.queue_name,
+                    "approved_brf_sha256": baseline.approved_brf_sha256,
+                    "created_at": record.created_at.isoformat(),
+                    "production_action": "NOT_PERFORMED",
+                }
+            )
+        return JSONResponse(content={"baselines": rows})
+
     @app.post("/api/v1/baselines/{baseline_id}/production-links")
     async def link_baseline_production(
         baseline_id: str,

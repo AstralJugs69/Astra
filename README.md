@@ -253,6 +253,21 @@ workflow above is the easier way to understand their operational effect.
 
 ## Quick start: choose the truthful path
 
+### Hosted judge path — no setup, read-only durable evidence
+
+The deployed judge dashboard is the fastest way to understand Astra. It shows
+registered baselines, live reconciliation state, past incident reports,
+recorded human outcomes, deterministic Braille impact, Gemini assessment, and
+the audit timeline without exposing the private API or a mutation surface.
+
+Open the dashboard's **Test Astra** page for the guided route. The public
+service is GET-only and uses a dedicated identity that is rejected from
+candidate downloads, human-record routes, Drive setup, scheduler calls, and
+every CUPS/device action. The underlying Cloud Run API remains private.
+
+See [judge-testing.md](docs/judge-testing.md) for the deployed path, prepared
+source link, and the full self-hosted alternative.
+
 ### Offline evaluator path — five minutes, zero credentials
 
 This is safe for any evaluator. It does not contact Google Cloud, Drive, CUPS,
@@ -293,6 +308,8 @@ Start here:
 
 - [quickstart.md](docs/quickstart.md) for local configuration and fixture/live
   choices;
+- [judge-testing.md](docs/judge-testing.md) for the hosted GET-only dashboard
+  and full evaluator-owned reproduction paths;
 - [fresh-project-deployment.md](docs/fresh-project-deployment.md) for an
   explicit human-reviewed GCP deployment path;
 - [google-cloud-setup.md](docs/google-cloud-setup.md) for credentials, Drive

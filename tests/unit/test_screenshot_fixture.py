@@ -16,6 +16,7 @@ def test_screenshot_fixture_is_offline_sanitized_get_only_and_not_mounted_by_clo
     overview = client.get("/")
     quiet_watch = client.get("/watch/quiet")
     alert_watch = client.get("/watch")
+    baseline = client.get(f"/baselines/{screenshot_fixture.BASELINE_ID}")
     proof_ready = client.get(f"/incidents/{screenshot_fixture.PROOF_READY_ID}")
     printable_report = client.get(f"/incidents/{screenshot_fixture.PROOF_READY_ID}/report")
     observed = client.get(f"/incidents/{screenshot_fixture.REPLACEMENT_OBSERVED_ID}")
@@ -25,6 +26,7 @@ def test_screenshot_fixture_is_offline_sanitized_get_only_and_not_mounted_by_clo
     assert overview.status_code == 200
     assert quiet_watch.status_code == 200
     assert alert_watch.status_code == 200
+    assert baseline.status_code == 200
     assert proof_ready.status_code == 200
     assert printable_report.status_code == 200
     assert observed.status_code == 200
@@ -32,6 +34,8 @@ def test_screenshot_fixture_is_offline_sanitized_get_only_and_not_mounted_by_clo
     assert "No incident is currently awaiting review" in quiet_watch.text
     assert "SOURCE / PRODUCTION MISMATCH" in alert_watch.text
     assert "SANITIZED DEMO FIXTURE" in proof_ready.text
+    assert "SANITIZED DEMO FIXTURE" in baseline.text
+    assert "PROVISIONAL PRODUCTION LINK" in overview.text
     assert "Print / Save as PDF" in printable_report.text
     assert '<form method="post"' not in printable_report.text
     for state in ("REPORT_READY", "NEEDS_REVIEW", "AWAITING_REPLACEMENT", "REPLACEMENT_OBSERVED"):

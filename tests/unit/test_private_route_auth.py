@@ -160,6 +160,7 @@ def _settings() -> CloudSettings:
         telemetry_push_principal_email="telemetry@example.iam.gserviceaccount.com",
         scheduler_principal_email="scheduler@example.iam.gserviceaccount.com",
         demonstrator_principal_email="demonstrator@example.com",
+        judge_reader_principal_email="judge-reader@example.iam.gserviceaccount.com",
         endpoint_evidence_principal_email="endpoint@example.iam.gserviceaccount.com",
     )
 
@@ -312,6 +313,32 @@ def test_demonstrator_is_the_only_principal_admitted_to_baseline_api() -> None:
     assert admitted.status_code == 503
     assert admitted.json()["detail"] == "baseline workflow is not configured"
     assert denied.status_code == 403
+
+
+def test_judge_reader_is_limited_to_monitor_gets_and_cannot_download_or_mutate() -> None:
+    record_id = "a" * 64
+    headers = {"Authorization": "Bearer judge-reader@example.iam.gserviceaccount.com"}
+
+    monitor_gets = (
+        "/api/v1/automation-status",
+        "/api/v1/baselines",
+        f"/api/v1/baselines/{record_id}",
+        "/api/v1/incidents",
+        f"/api/v1/incidents/{record_id}",
+        f"/api/v1/incidents/{record_id}/timeline",
+    )
+    for path in monitor_gets:
+        assert _client().get(path, headers=headers).status_code != 403
+
+    artifact = _client().get(f"/api/v1/incidents/{record_id}/approved-candidate", headers=headers)
+    mutation = _client().post(
+        f"/api/v1/incidents/{record_id}/professional-dispositions",
+        json={},
+        headers=headers,
+    )
+
+    assert artifact.status_code == 403
+    assert mutation.status_code == 403
 
 
 def test_telemetry_and_scheduler_principals_are_route_scoped() -> None:

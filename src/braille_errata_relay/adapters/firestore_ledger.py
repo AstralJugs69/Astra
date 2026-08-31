@@ -428,6 +428,18 @@ class FirestoreGate0Ledger:
     async def get_baseline(self, baseline_id: str) -> RegisteredBaseline | None:
         return await asyncio.to_thread(self._get_baseline_sync, baseline_id)
 
+    def _list_baselines_sync(self) -> tuple[RegisteredBaseline, ...]:
+        records: list[RegisteredBaseline] = []
+        for snapshot in self.client.collection("baselines").limit(200).stream():
+            data = self._snapshot_data(snapshot)
+            if data is None or not isinstance(data.get("record"), dict):
+                raise LedgerIntegrityError("stored baseline is malformed")
+            records.append(RegisteredBaseline.model_validate(data["record"]))
+        return tuple(sorted(records, key=lambda record: record.created_at, reverse=True))
+
+    async def list_baselines(self) -> tuple[RegisteredBaseline, ...]:
+        return await asyncio.to_thread(self._list_baselines_sync)
+
     def _find_baseline_for_file_sync(self, file_id: str) -> RegisteredBaseline | None:
         if not file_id:
             raise ValueError("Drive file ID is required")

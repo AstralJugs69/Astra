@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -59,25 +60,46 @@ class GoogleOidcVerifier:
         return VerifiedIdentity(email=email, subject=subject, audience=audience)
 
 
-def _expected_principal(path: str, settings: CloudSettings) -> str | None:
+_RECORD_ID = r"[0-9a-f]{64}"
+
+
+def _is_judge_safe_get(path: str) -> bool:
+    """Admit only monitor JSON, never artifact downloads or mutation subroutes."""
+
+    if path in {"/api/v1/automation-status", "/api/v1/baselines", "/api/v1/incidents"}:
+        return True
+    return (
+        re.fullmatch(
+            rf"/api/v1/(?:baselines/{_RECORD_ID}|incidents/{_RECORD_ID}(?:/timeline)?)",
+            path,
+        )
+        is not None
+    )
+
+
+def _expected_principals(method: str, path: str, settings: CloudSettings) -> tuple[str, ...]:
     if path in {"/internal/workspace-events", "/internal/source-jobs"}:
-        return settings.source_push_principal_email
+        return tuple(filter(None, (settings.source_push_principal_email,)))
     if path == "/internal/site-observations":
-        return settings.telemetry_push_principal_email
+        return tuple(filter(None, (settings.telemetry_push_principal_email,)))
     if path in {
         "/internal/drive-reconcile",
         "/internal/outbox-drain",
         "/internal/automation-cycle",
     }:
-        return settings.scheduler_principal_email
+        return tuple(filter(None, (settings.scheduler_principal_email,)))
     if path in {
         "/internal/endpoint-receipts",
         "/internal/baseline-link-corrections",
     }:
-        return settings.endpoint_evidence_principal_email
+        return tuple(filter(None, (settings.endpoint_evidence_principal_email,)))
     if path.startswith("/api/"):
-        return settings.demonstrator_principal_email
-    return None
+        principals = [settings.demonstrator_principal_email]
+        judge_safe_get = method == "GET" and _is_judge_safe_get(path)
+        if judge_safe_get:
+            principals.append(settings.judge_reader_principal_email)
+        return tuple(filter(None, principals))
+    return ()
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -107,7 +129,7 @@ async def enforce_route_identity(
             status_code=503,
             content={"detail": "private route authentication is not configured"},
         )
-    expected = _expected_principal(request.url.path, settings)
+    expected = _expected_principals(request.method, request.url.path, settings)
     if not expected:
         return JSONResponse(
             status_code=403, content={"detail": "route principal is not configured"}
@@ -121,7 +143,9 @@ async def enforce_route_identity(
         identity = await verifier.verify(token, audience=settings.internal_oidc_audience)
     except OidcVerificationError:
         return JSONResponse(status_code=401, content={"detail": "OIDC verification failed"})
-    if not hmac.compare_digest(identity.email.lower(), expected.lower()):
+    if not any(
+        hmac.compare_digest(identity.email.lower(), principal.lower()) for principal in expected
+    ):
         return JSONResponse(
             status_code=403, content={"detail": "principal is not allowed on route"}
         )

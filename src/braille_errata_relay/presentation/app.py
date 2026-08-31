@@ -44,6 +44,7 @@ from braille_errata_relay.domain.models import (
 )
 from braille_errata_relay.local_setup import extract_drive_file_id
 from braille_errata_relay.presentation.assets import REPORT_JAVASCRIPT, WATCH_JAVASCRIPT
+from braille_errata_relay.presentation.modern_templates import MODERN_TEMPLATES
 from braille_errata_relay.presentation.view_models import report_view
 from braille_errata_relay.presentation.watch import (
     WatchEventTracker,
@@ -300,6 +301,10 @@ class PresentationSettings:
     session_secret: str
     impersonate_service_account: str
     port: int = 8765
+    hosted_read_only: bool = False
+    public_origin: str | None = None
+    source_document_url: str | None = None
+    repository_url: str = "https://github.com/AstralJugs69/Astra"
 
     def __post_init__(self) -> None:
         if not _is_private_https_url(self.api_base_url.rstrip("/")):
@@ -314,10 +319,14 @@ class PresentationSettings:
             )
         if not 1 <= self.port <= 65535:
             raise ValueError("presentation port is outside the valid TCP range")
+        if self.hosted_read_only and (
+            self.public_origin is not None and not _is_private_https_url(self.public_origin)
+        ):
+            raise ValueError("hosted dashboard origin must be HTTPS")
 
     @property
     def origin(self) -> str:
-        return f"http://127.0.0.1:{self.port}"
+        return self.public_origin or f"http://127.0.0.1:{self.port}"
 
 
 _TEMPLATES = {
@@ -556,14 +565,14 @@ _TEMPLATES["incident.html"] = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Braille Errata Relay | Incident decision cockpit</title>
 <style>
-:root{color-scheme:light;--ink:#10263f;--muted:#53657b;--paper:#f4f7fb;--card:#fff;--line:#d0dbe8;--navy:#173f75;--teal:#007b78;--amber:#7e5600;--red:#9c2040;--violet:#5d459e;--shadow:0 12px 30px rgba(20,42,74,.09)}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:5;background:#fff;padding:.6rem 1rem;border:3px solid var(--navy)}.site-header{background:var(--ink);color:#fff;border-bottom:5px solid #28aab9}.site-header .shell{padding:1rem 0}.brand{font-weight:900}.eyebrow{margin:0;color:#bdebf1;font-size:.76rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}main{padding:1.4rem 0 3rem}.back{color:var(--navy);font-weight:800}.status,.card,.action-card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.status{padding:1.25rem;margin:1rem 0;border-left:7px solid var(--navy)}.status h1{margin:.2rem 0 .5rem;font-size:clamp(1.7rem,4vw,2.8rem);line-height:1.1}.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(290px,.75fr);gap:1rem}.card,.action-card{padding:1.1rem;margin-bottom:1rem}.card h2,.action-card h2{margin:0 0 .65rem;font-size:1.2rem}.card h3{margin:1rem 0 .4rem;font-size:1rem}.card p{margin:.45rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.real{color:var(--teal);background:#e8faf8}.simulated{color:var(--red);background:#fff0f2}.block{color:var(--red);font-weight:800}.notice{background:#fff9df;border-left:5px solid var(--amber);padding:1rem;margin:1rem 0}.compare{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.compare article{border-left:4px solid var(--navy);background:#f1f5fb;padding:.75rem}.compare article:last-child{border-left-color:var(--teal)}.compare h3{margin:0}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin:1rem 0}.summary{background:#fff;border:1px solid var(--line);border-radius:10px;padding:.8rem}.summary strong{display:block;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}.progress{display:flex;flex-wrap:wrap;gap:.45rem;margin:.8rem 0}.progress span{border:1px solid var(--line);border-radius:999px;padding:.24rem .52rem;font-size:.75rem;font-weight:800}.progress .complete{border-color:var(--teal);background:#effaf8;color:var(--teal)}.progress .blocked{border-color:var(--red);background:#fff1f4;color:var(--red)}.ripple{margin:0}.ripple-row{display:flex;gap:3px;min-height:1.8rem;margin:.45rem 0}.ripple-segment{display:flex;align-items:center;justify-content:center;min-width:1.5rem;padding:.2rem;color:#14233b;font-size:.75rem;font-weight:800;text-align:center}.ripple-segment.match{background:#dce8f5}.ripple-segment.changed{background:#f5bf4f}.ripple-segment.suffix{background:#ccece5}.ripple figcaption{color:var(--muted);font-size:.92rem}.action-card{border-left:7px solid var(--amber)}.action-card .role{background:#fffbeb;border:1px solid #e5c66b;border-radius:8px;padding:.75rem}.action{background:var(--navy);border:0;border-radius:7px;color:#fff;cursor:pointer;font:inherit;font-weight:800;padding:.65rem .9rem}.action[disabled]{background:#9ba8b8;cursor:not-allowed}.print-link,.download{display:inline-block;background:var(--teal);color:#fff;padding:.65rem .9rem;border-radius:7px;font-weight:800;text-decoration:none}.print-link:hover,.download:hover{background:#06595a}label{display:block;font-weight:700;margin:.75rem 0}select,textarea,input[type=number]{display:block;width:100%;margin-top:.25rem;border:1px solid #8797ad;border-radius:6px;padding:.55rem;font:inherit;background:#fff}textarea{min-height:5rem}input[type=hidden]{display:none}details{margin:.85rem 0;border:1px solid var(--line);border-radius:10px;background:#fff;padding:.75rem}summary{cursor:pointer;font-weight:900}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f9;border:1px solid var(--line);padding:.75rem;border-radius:7px;font-size:.83rem}ol{padding-left:1.3rem}li{margin:.45rem 0}.boundary{background:#edf7f8;border:1px solid #a7d8da;border-radius:10px;padding:1rem}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}@media(max-width:850px){.grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}.compare{grid-template-columns:1fr}}@media(max-width:520px){.shell{width:min(100% - 1rem,1180px)}.status,.card,.action-card{padding:1rem}}
+:root{color-scheme:light;--ink:#13233f;--muted:#60708a;--paper:#f4f1e9;--card:#fffdf8;--line:#dbe0e7;--navy:#17365f;--teal:#13877f;--amber:#8a5b00;--red:#9c2040;--violet:#5d459e;--shadow:0 18px 45px rgba(24,48,80,.10)}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,#e9f4f0 0,transparent 34rem),var(--paper);color:var(--ink);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1180px,calc(100% - 2rem));margin:auto}.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:5;background:#fff;padding:.6rem 1rem;border:3px solid var(--navy)}.site-header{position:sticky;top:0;z-index:10;background:rgba(19,35,63,.96);backdrop-filter:blur(14px);color:#fff;border-bottom:3px solid var(--teal)}.site-header .shell{min-height:74px;padding:.75rem 0;display:flex;align-items:center;justify-content:space-between;gap:1rem}.site-header nav{color:#8fb5c8}.site-header a{color:#dce9f7;text-decoration:none;font-weight:750}.brand{font-weight:900}.eyebrow{margin:0;color:#9edbd3;font-size:.76rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}main{padding:1.4rem 0 3rem}.back{color:var(--navy);font-weight:800}.status,.card,.action-card{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow)}.status{padding:1.25rem;margin:1rem 0;border-left:7px solid var(--navy)}.status h1{margin:.2rem 0 .5rem;font-size:clamp(1.7rem,4vw,2.8rem);line-height:1.1}.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(290px,.75fr);gap:1rem}.card,.action-card{padding:1.1rem;margin-bottom:1rem}.card h2,.action-card h2{margin:0 0 .65rem;font-size:1.2rem}.card h3{margin:1rem 0 .4rem;font-size:1rem}.card p{margin:.45rem 0}.badges{display:flex;flex-wrap:wrap;gap:.35rem}.badge{display:inline-block;border-radius:999px;padding:.18rem .55rem;font-size:.7rem;font-weight:800;letter-spacing:.04em;border:1px solid currentColor}.deterministic{color:var(--navy);background:#eaf2ff}.gemini{color:var(--violet);background:#f0edff}.human{color:var(--amber);background:#fff7df}.real{color:var(--teal);background:#e8faf8}.simulated{color:var(--red);background:#fff0f2}.block{color:var(--red);font-weight:800}.notice{background:#fff9df;border-left:5px solid var(--amber);padding:1rem;margin:1rem 0}.compare{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}.compare article{border-left:4px solid var(--navy);background:#f1f5fb;padding:.75rem}.compare article:last-child{border-left-color:var(--teal)}.compare h3{margin:0}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin:1rem 0}.summary{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:.8rem;box-shadow:var(--shadow)}.summary strong{display:block;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}.progress{display:flex;flex-wrap:wrap;gap:.45rem;margin:.8rem 0}.progress span{border:1px solid var(--line);border-radius:999px;padding:.24rem .52rem;font-size:.75rem;font-weight:800}.progress .complete{border-color:var(--teal);background:#effaf8;color:var(--teal)}.progress .blocked{border-color:var(--red);background:#fff1f4;color:var(--red)}.ripple{margin:0}.ripple-row{display:flex;gap:3px;min-height:1.8rem;margin:.45rem 0}.ripple-segment{display:flex;align-items:center;justify-content:center;min-width:1.5rem;padding:.2rem;color:#14233b;font-size:.75rem;font-weight:800;text-align:center}.ripple-segment.match{background:#dce8f5}.ripple-segment.changed{background:#f5bf4f}.ripple-segment.suffix{background:#ccece5}.ripple figcaption{color:var(--muted);font-size:.92rem}.action-card{border-left:7px solid var(--amber)}.action-card .role{background:#fffbeb;border:1px solid #e5c66b;border-radius:8px;padding:.75rem}.action{background:var(--navy);border:0;border-radius:10px;color:#fff;cursor:pointer;font:inherit;font-weight:800;padding:.65rem .9rem}.action[disabled]{background:#9ba8b8;cursor:not-allowed}.print-link,.download{display:inline-block;background:var(--teal);color:#fff;padding:.65rem .9rem;border-radius:10px;font-weight:800;text-decoration:none}.print-link:hover,.download:hover{background:#06595a}label{display:block;font-weight:700;margin:.75rem 0}select,textarea,input[type=number]{display:block;width:100%;margin-top:.25rem;border:1px solid #8797ad;border-radius:8px;padding:.55rem;font:inherit;background:#fff}textarea{min-height:5rem}input[type=hidden]{display:none}details{margin:.85rem 0;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:.75rem}summary{cursor:pointer;font-weight:900}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f9;border:1px solid var(--line);padding:.75rem;border-radius:9px;font-size:.83rem}ol{padding-left:1.3rem}li{margin:.45rem 0}.boundary{background:#edf7f8;border:1px solid #a7d8da;border-radius:14px;padding:1rem}.footer{border-top:1px solid var(--line);padding:1.5rem 0 2.5rem;color:var(--muted);font-size:.9rem}a:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid #f2ac32;outline-offset:3px}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}@media(max-width:850px){.grid{grid-template-columns:1fr}.summary-grid{grid-template-columns:1fr}.compare{grid-template-columns:1fr}.site-header .shell{align-items:flex-start;flex-direction:column}.site-header nav{overflow:auto;white-space:nowrap;width:100%}}@media(max-width:520px){.shell{width:min(100% - 1rem,1180px)}.status,.card,.action-card{padding:1rem}}
 </style></head>
-<body><a class="skip" href="#incident-content">Skip to incident</a><header class="site-header"><div class="shell"><p class="eyebrow">Report-first production overlay</p><div class="brand">Braille Errata Relay{% if fixture_mode %} — SANITIZED DEMO FIXTURE{% endif %}</div></div></header>
+<body><a class="skip" href="#incident-content">Skip to incident</a><header class="site-header"><div class="shell"><div><p class="eyebrow">Braille Errata Relay</p><div class="brand">Astra{% if fixture_mode %} — SANITIZED DEMO FIXTURE{% endif %}</div></div><nav aria-label="Primary"><a href="/">Overview</a> · <a href="/watch">Live watch</a> · <a href="/#baselines">Baselines</a> · <a href="/#reports">Reports</a> · <a href="/test-astra">Test Astra</a></nav></div></header>
 {% macro disposition_form() -%}
-{% if error %}<p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: disposition recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/professional-dispositions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ disposition_idempotency_key }}"><label>Decision <select name="decision" required><option value="" selected disabled>Choose a decision</option>{% for decision in decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record professional disposition</button></form>{% endif %}
+{% if error %}<p>Professional disposition controls are unavailable until authoritative private review data is loaded.</p>{% elif hosted_read_only %}<div class="role"><strong>Public judge view:</strong> this outcome is view-only. Recording a new human decision requires the private operator surface.</div>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: disposition recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/professional-dispositions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ disposition_idempotency_key }}"><label>Decision <select name="decision" required><option value="" selected disabled>Choose a decision</option>{% for decision in decisions %}<option value="{{ decision }}">{{ decision }}</option>{% endfor %}</select></label><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record professional disposition</button></form>{% endif %}
 {%- endmacro %}
 {% macro operator_form() -%}
-{% if error %}<p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: operator attestation disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/operator-attestations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ attestation_idempotency_key }}"><label>Attributable fact <select name="attestation_type">{% for kind in attestation_types %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label>Truth basis <select name="truth_basis">{% for basis in truth_bases %}<option value="{{ basis }}">{{ basis }}</option>{% endfor %}</select></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record operator attestation</button></form>{% endif %}
+{% if error %}<p>Operator attestation controls are unavailable until authoritative private review data is loaded.</p>{% elif hosted_read_only %}<div class="role"><strong>Public judge view:</strong> operator attestations are view-only here.</div>{% elif fixture_mode %}<button class="action" disabled>Offline fixture: operator attestation disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/operator-attestations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="machine_operator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ attestation_idempotency_key }}"><label>Attributable fact <select name="attestation_type">{% for kind in attestation_types %}<option value="{{ kind }}">{{ kind }}</option>{% endfor %}</select></label><label>Truth basis <select name="truth_basis">{% for basis in truth_bases %}<option value="{{ basis }}">{{ basis }}</option>{% endfor %}</select></label><label>Operator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record operator attestation</button></form>{% endif %}
 {%- endmacro %}
 {% macro containment_form() -%}
 <p>CUPS state alone never proves device stop or physical-output isolation.</p>{% if review_actions.containment_confirmation.eligible %}{% if fixture_mode %}<button class="action" disabled>Offline fixture: containment recording disabled</button>{% else %}<form method="post" action="/incidents/{{ incident_id }}/containment-confirmations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="selected_role" value="production_coordinator"><input type="hidden" name="expected_state_version" value="{{ review_state.state_version }}"><input type="hidden" name="idempotency_key" value="{{ containment_idempotency_key }}"><input type="hidden" name="halt_disposition_record_id" value="{{ review_actions.containment_confirmation.halt_disposition_record_id }}"><input type="hidden" name="site_observation_id" value="{{ review_actions.containment_confirmation.site_observation_id }}"><input type="hidden" name="physical_output_isolation_attestation_id" value="{{ review_actions.containment_confirmation.physical_output_isolation_attestation_id }}"><label>Coordinator note <textarea name="note" maxlength="2000"></textarea></label><button class="action" type="submit">Record containment confirmation</button></form>{% endif %}{% else %}<p>Containment confirmation is unavailable: {{ review_actions.containment_confirmation.blocking_reason }}.</p>{% endif %}
@@ -623,6 +632,82 @@ _TEMPLATES["baseline_monitor.html"] = (
     """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="15"><title>Astra | Baseline monitor</title><style>"""
     + _SETUP_STYLE
     + """</style></head><body><header class="head"><div class="shell"><div><p class="eyebrow">Guided baseline onboarding</p><div class="brand">Braille Errata Relay</div></div><a href="/">Review dashboard</a></div></header><main class="shell"><section class="hero"><p class="eyebrow">Step 3 of 3</p><h1>Baseline registered</h1><p class="lede">This page refreshes every 15 seconds and shows only durable, monitor-safe baseline facts.</p></section><div class="steps"><span class="step">1 Source</span><span class="step">2 Baseline</span><span class="step current">3 Monitor</span></div>{% if error %}<p class="error" role="alert">{{ error }}</p>{% else %}<p class="success"><strong>Registration successful.</strong> Astra generated deterministic BRF evidence and registered the baseline without performing a production action.</p><section class="card"><h2>{{ baseline.production_id }}</h2><div class="facts"><div class="fact"><strong>Status</strong>{{ baseline.status }}</div><div class="fact"><strong>State version</strong>{{ baseline.state_version }}</div><div class="fact"><strong>Site / queue</strong>{{ baseline.site_id }} / {{ baseline.queue_name }}</div><div class="fact"><strong>Created</strong>{{ baseline.created_at }}</div><div class="fact"><strong>Baseline ID</strong><code>{{ baseline.baseline_id }}</code></div><div class="fact"><strong>BRF SHA-256</strong><code>{{ baseline.approved_brf_sha256 }}</code></div></div></section><section class="card"><h2>What happens next</h2><ol><li>A qualified human uses the existing production surface if they choose to submit this baseline.</li><li>Astra accepts only fresh, unambiguous read-only observation evidence to link that human-submitted job.</li><li>Source edits are detected through the configured Drive change feed when the authorized automation cycle runs.</li></ol><p><a class="button" href="/watch">Open live watch floor</a> <a class="button secondary" href="/setup/source">Register another source</a></p></section>{% endif %}<section class="boundary"><strong>Authority boundary:</strong> the baseline is a demo-generated fixture, not a certified production master. No CUPS/device action, endpoint completion, or physical output is claimed.</section></main></body></html>"""
+)
+
+
+_TEMPLATES.update(MODERN_TEMPLATES)
+
+# Keep the visibly labelled offline fixture distinct from both the private
+# operator dashboard and the public read-only judge dashboard.
+_TEMPLATES["index.html"] = _TEMPLATES["index.html"].replace(
+    '<section class="hero">',
+    '{% if fixture_mode %}<p class="notice"><strong>SANITIZED DEMO FIXTURE</strong> '
+    "· Synthetic GET-only evidence; no cloud or production action is performed.</p>{% endif %}"
+    '<section class="hero">',
+    1,
+)
+_TEMPLATES["baseline_monitor.html"] = _TEMPLATES["baseline_monitor.html"].replace(
+    '<section class="hero">',
+    '{% if fixture_mode %}<p class="notice"><strong>SANITIZED DEMO FIXTURE</strong> '
+    "· This baseline is synthetic and not a production master.</p>{% endif %}"
+    '<section class="hero">',
+    1,
+)
+_TEMPLATES["watch.html"] = _TEMPLATES["watch.html"].replace(
+    "No report is currently awaiting review.",
+    "No incident is currently awaiting review.",
+)
+_TEMPLATES["index.html"] = _TEMPLATES["index.html"].replace(
+    'class="pill {% if incident.blocking_reason %}review{% else %}ok{% endif %}">'
+    "{{ incident.review_state.state|replace('_',' ') }}</span>",
+    'class="pill {% if incident.blocking_reason %}review{% else %}ok{% endif %}" '
+    'data-workflow-state="{{ incident.review_state.state }}">'
+    "{{ incident.review_state.state|replace('_',' ') }}</span>",
+)
+
+# The incident cockpit remains shared by the private operator and public judge
+# surfaces.  In hosted mode, eligible workflow gates must render as evidence,
+# never as forms.  The application middleware independently rejects every
+# hosted non-GET request; these substitutions keep the visible affordances
+# aligned with that enforced authority boundary.
+_HOSTED_GATE_COPY = {
+    '{% if fixture_mode %}<button class="action" disabled>Offline fixture: containment recording disabled</button>': (
+        '{% if hosted_read_only %}<div class="role"><strong>Public judge view:</strong> '
+        "containment evidence is view-only here.</div>{% elif fixture_mode %}<button "
+        'class="action" disabled>Offline fixture: containment recording disabled</button>'
+    ),
+    '{% if fixture_mode %}<button class="action" disabled>Offline fixture: proof decision recording disabled</button>': (
+        '{% if hosted_read_only %}<div class="role"><strong>Public judge view:</strong> '
+        "proof evidence is view-only here.</div>{% elif fixture_mode %}<button "
+        'class="action" disabled>Offline fixture: proof decision recording disabled</button>'
+    ),
+    '{% if fixture_mode %}<div class="role"><strong>Proof-ready offline fixture:</strong>': (
+        '{% if hosted_read_only %}<div class="role"><strong>Public judge view:</strong> '
+        "replacement evidence is view-only here.</div>{% elif fixture_mode %}<div "
+        'class="role"><strong>Proof-ready offline fixture:</strong>'
+    ),
+    "{% if review_actions.replacement_observation.candidate_download_eligible %}": (
+        "{% if review_actions.replacement_observation.candidate_download_eligible and not hosted_read_only %}"
+    ),
+}
+for _private_copy, _hosted_copy in _HOSTED_GATE_COPY.items():
+    _TEMPLATES["incident.html"] = _TEMPLATES["incident.html"].replace(_private_copy, _hosted_copy)
+_TEMPLATES["incident.html"] = _TEMPLATES["incident.html"].replace(
+    '<nav aria-label="Primary"><a href="/">Overview</a> · <a href="/watch">Live watch</a> '
+    '· <a href="/#baselines">Baselines</a> · <a href="/#reports">Reports</a> · '
+    '<a href="/test-astra">Test Astra</a></nav>',
+    '<nav aria-label="Primary"><a href="/">Overview</a><a href="/watch">Live watch</a>'
+    '<a href="/#baselines">Baselines</a><a href="/#reports">Reports</a>'
+    '<a href="/test-astra">Test Astra</a></nav>',
+)
+_TEMPLATES["incident.html"] = _TEMPLATES["incident.html"].replace(
+    "</style></head>",
+    ".site-header nav{display:flex;flex-wrap:wrap;gap:.35rem .7rem}.site-header nav a{"
+    "color:#dce9f7}.site-header nav a:hover{color:#fff}@media(max-width:850px){"
+    ".site-header .shell{align-items:flex-start;flex-direction:column}.site-header nav{"
+    "width:100%;font-size:.8rem;line-height:1.45}}"
+    "</style></head>",
+    1,
 )
 
 
@@ -760,15 +845,26 @@ def create_presentation_app(
     if not 10.0 <= watch_heartbeat_seconds <= 15.0:
         raise ValueError("watch heartbeat interval must remain between 10 and 15 seconds")
 
-    api = api_client or CloudRunPrivateReviewApi(
-        base_url=settings.api_base_url,
-        audience=settings.audience,
-        token_provider=GoogleAudienceTokenProvider(
+    api: PrivateReviewApi
+    if api_client is None:
+        token_provider: AudienceTokenProvider
+        token_provider = GoogleAudienceTokenProvider(
             target_principal=settings.impersonate_service_account,
             audience=settings.audience,
-        ),
-    )
+        )
+        api = CloudRunPrivateReviewApi(
+            base_url=settings.api_base_url,
+            audience=settings.audience,
+            token_provider=token_provider,
+        )
+    else:
+        api = api_client
     templates = _templates()
+    templates.globals.update(
+        hosted_read_only=settings.hosted_read_only,
+        source_document_url=settings.source_document_url,
+        repository_url=settings.repository_url,
+    )
     app = FastAPI(
         title="Braille Errata Relay local professional review", docs_url=None, redoc_url=None
     )
@@ -776,7 +872,7 @@ def create_presentation_app(
         SessionMiddleware,
         secret_key=settings.session_secret,
         same_site="strict",
-        https_only=False,
+        https_only=settings.hosted_read_only,
     )
 
     @app.middleware("http")
@@ -795,6 +891,15 @@ def create_presentation_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         return response
+
+    @app.middleware("http")
+    async def hosted_read_only_boundary(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        if settings.hosted_read_only and request.method not in {"GET", "HEAD"}:
+            return PlainTextResponse("Hosted judge dashboard is read-only.", status_code=405)
+        return await call_next(request)
 
     def render(name: str, **context: object) -> HTMLResponse:
         return HTMLResponse(templates.get_template(name).render(**context))
@@ -894,6 +999,8 @@ def create_presentation_app(
         )
 
     def require_local_form(request: Request, csrf: str) -> HTMLResponse | None:
+        if settings.hosted_read_only:
+            return _form_error(405, "Hosted judge dashboard is read-only.")
         if request.headers.get("host") != f"127.0.0.1:{settings.port}":
             return _form_error(403, "Local review requests must use the loopback host.")
         origin = request.headers.get("origin")
@@ -1104,7 +1211,11 @@ def create_presentation_app(
         ):
             baseline = {}
             error = "Baseline monitor data is temporarily unavailable."
-        return render("baseline_monitor.html", baseline=baseline, error=error)
+        return render("baseline_monitor.html", baseline=baseline, error=error, nav="baselines")
+
+    @app.get("/test-astra", response_class=HTMLResponse)
+    async def test_astra() -> HTMLResponse:
+        return render("test_astra.html", nav="test")
 
     @app.get("/assets/watch.js")
     async def watch_javascript() -> Response:
@@ -1139,13 +1250,15 @@ def create_presentation_app(
             error=error,
             fixture_mode=False,
             fixture_alert=False,
+            nav="watch",
         )
 
     @app.get("/events")
     async def watch_events(request: Request, max_events: int | None = None) -> Response:
         """Stream sanitized durable transitions to a loopback browser via SSE."""
 
-        if request.headers.get("host") != f"127.0.0.1:{settings.port}":
+        allowed_host = urlsplit(settings.origin).netloc
+        if request.headers.get("host") != allowed_host:
             return PlainTextResponse("Loopback watch requests only.", status_code=403)
         if max_events is not None and not 1 <= max_events <= 3:
             return PlainTextResponse("Invalid watch event bound.", status_code=400)
@@ -1198,7 +1311,10 @@ def create_presentation_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         try:
-            payload = await api.get_json("/api/v1/incidents")
+            payload, baseline_payload = await asyncio.gather(
+                api.get_json("/api/v1/incidents"),
+                api.get_json("/api/v1/baselines"),
+            )
         except (
             httpx.HTTPError,
             PrivateReviewApiError,
@@ -1208,12 +1324,16 @@ def create_presentation_app(
             return render(
                 "index.html",
                 incidents=(),
+                baselines=(),
                 summary={"total": 0, "blocked": 0},
                 error="Private review data is unavailable.",
                 fixture_mode=False,
+                nav="overview",
             )
         incidents = payload.get("incidents")
         rows = incidents if isinstance(incidents, list) else ()
+        baselines = baseline_payload.get("baselines")
+        baseline_rows = baselines if isinstance(baselines, list) else ()
         blocked = sum(
             1
             for incident in rows
@@ -1222,10 +1342,12 @@ def create_presentation_app(
         return render(
             "index.html",
             incidents=rows,
-            summary={"total": len(rows), "blocked": blocked},
+            baselines=baseline_rows,
+            summary={"total": len(rows), "blocked": blocked, "baselines": len(baseline_rows)},
             error=None,
             csrf_token=csrf_token(request),
             fixture_mode=False,
+            nav="overview",
         )
 
     @app.get("/incidents/{incident_id}", response_class=HTMLResponse)

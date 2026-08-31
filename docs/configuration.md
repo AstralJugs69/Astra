@@ -44,6 +44,7 @@ It rejects non-HTTPS, credential-bearing, or non-Google URLs.
 | `DRIVE_SOURCE_MIME_TYPE` | Yes | Currently `text/markdown` only. |
 | `SITE_ID`, `QUEUE_NAME`, `LOCAL_BRIDGE_ID` | Yes | Read-only local site-observation identity. |
 | `DEMONSTRATOR_PRINCIPAL_EMAIL` | Live presentation | Human-authorized temporary impersonation target. |
+| `JUDGE_READER_PRINCIPAL_EMAIL` | Optional public judge dashboard | Dedicated service identity admitted only to monitor-safe private API GET routes. |
 | `INTERNAL_TELEMETRY_PUSH_PRINCIPAL_EMAIL` | Telemetry runbook | Read-only bridge telemetry principal. |
 | `RELAY_API_BASE_URL`, `RELAY_API_AUDIENCE` | Live presentation | Credential-free private HTTPS origins. |
 
