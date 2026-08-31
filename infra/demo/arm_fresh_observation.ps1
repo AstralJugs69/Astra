@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Stop'
 
 $ObserverUser = 'relay-observer'
 $JournalRelativePath = 'work/live-bridge/journal.sqlite3'
-$StatusSchema = 'demo-monitor-publisher-status.v1'
+$StatusSchema = 'demo-monitor-publisher-status.v2'
 
 function Get-NonSecretEnvironment {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -134,8 +134,11 @@ function Write-PublisherStatus {
         [Parameter(Mandatory = $true)][string]$Status,
         [Parameter(Mandatory = $true)][string]$Session,
         [int]$PublishedCount = 0,
-        [string]$LastObservationId = '',
-        [string]$LastObservedAt = '',
+        [string]$LastLocalObservationId = '',
+        [string]$LastLocalObservedAt = '',
+        [string]$LastCloudAcceptedObservationId = '',
+        [string]$LastCloudAcceptedObservedAt = '',
+        [string]$LastCloudAcceptedAt = '',
         [string]$ObserverStatus = '',
         [string]$BlockingReason = ''
     )
@@ -146,8 +149,11 @@ function Write-PublisherStatus {
         session_id = $Session
         published_count = $PublishedCount
     }
-    if ($LastObservationId) { $record.last_observation_id = $LastObservationId }
-    if ($LastObservedAt) { $record.last_observed_at = $LastObservedAt }
+    if ($LastLocalObservationId) { $record.last_local_observation_id = $LastLocalObservationId }
+    if ($LastLocalObservedAt) { $record.last_local_observed_at = $LastLocalObservedAt }
+    if ($LastCloudAcceptedObservationId) { $record.last_cloud_accepted_observation_id = $LastCloudAcceptedObservationId }
+    if ($LastCloudAcceptedObservedAt) { $record.last_cloud_accepted_observed_at = $LastCloudAcceptedObservedAt }
+    if ($LastCloudAcceptedAt) { $record.last_cloud_accepted_at = $LastCloudAcceptedAt }
     if ($ObserverStatus) { $record.observer_status = $ObserverStatus }
     if ($BlockingReason) { $record.blocking_reason = $BlockingReason }
     $directory = Split-Path -Parent $Path
@@ -241,8 +247,11 @@ function Get-PendingBridgeObservations {
 
 function Publish-PendingObservations {
     $published = 0
-    $lastId = ''
-    $lastObservedAt = ''
+    $lastLocalObservationId = ''
+    $lastLocalObservedAt = ''
+    $lastCloudAcceptedObservationId = ''
+    $lastCloudAcceptedObservedAt = ''
+    $lastCloudAcceptedAt = ''
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($MaxRuntimeSeconds + 90)
     try {
         while ([DateTimeOffset]::UtcNow -lt $deadline) {
@@ -251,6 +260,15 @@ function Publish-PendingObservations {
                 Start-Sleep -Seconds 1
                 continue
             }
+            $lastLocalObservationId = [string]$observer.last_observation_id
+            $lastLocalObservedAt = [string]$observer.last_observed_at
+            $observerState = [string]$observer.status
+            Write-PublisherStatus -Path $publisherStatusPath -Status 'PUBLISHING' -Session $SessionId `
+                -PublishedCount $published -LastLocalObservationId $lastLocalObservationId `
+                -LastLocalObservedAt $lastLocalObservedAt `
+                -LastCloudAcceptedObservationId $lastCloudAcceptedObservationId `
+                -LastCloudAcceptedObservedAt $lastCloudAcceptedObservedAt `
+                -LastCloudAcceptedAt $lastCloudAcceptedAt -ObserverStatus $observerState
             $entries = Get-PendingBridgeObservations
             foreach ($entry in $entries) {
                 $observationId = [string]$entry.observation_id
@@ -283,10 +301,17 @@ function Publish-PendingObservations {
                     [void](Invoke-Bridge -Arguments @(
                             'acknowledge-published', '--journal', $JournalRelativePath,
                             '--observation-id', $observationId
-                        ))
+                    ))
                     $published++
-                    $lastId = $observationId
-                    $lastObservedAt = [string]$entry.payload.observed_at
+                    $lastCloudAcceptedObservationId = $observationId
+                    $lastCloudAcceptedObservedAt = [string]$entry.payload.observed_at
+                    $lastCloudAcceptedAt = [DateTimeOffset]::UtcNow.ToString('o')
+                    Write-PublisherStatus -Path $publisherStatusPath -Status 'PUBLISHING' -Session $SessionId `
+                        -PublishedCount $published -LastLocalObservationId $lastLocalObservationId `
+                        -LastLocalObservedAt $lastLocalObservedAt `
+                        -LastCloudAcceptedObservationId $lastCloudAcceptedObservationId `
+                        -LastCloudAcceptedObservedAt $lastCloudAcceptedObservedAt `
+                        -LastCloudAcceptedAt $lastCloudAcceptedAt -ObserverStatus $observerState
                 }
                 finally {
                     if (Test-Path -LiteralPath $temporaryObservation -PathType Leaf) {
@@ -298,7 +323,11 @@ function Publish-PendingObservations {
             $observerState = if ($null -eq $observer) { '' } else { [string]$observer.status }
             if ($observerState -eq 'BLOCKED') {
                 Write-PublisherStatus -Path $publisherStatusPath -Status 'BLOCKED' -Session $SessionId `
-                    -PublishedCount $published -LastObservationId $lastId -LastObservedAt $lastObservedAt `
+                    -PublishedCount $published -LastLocalObservationId $lastLocalObservationId `
+                    -LastLocalObservedAt $lastLocalObservedAt `
+                    -LastCloudAcceptedObservationId $lastCloudAcceptedObservationId `
+                    -LastCloudAcceptedObservedAt $lastCloudAcceptedObservedAt `
+                    -LastCloudAcceptedAt $lastCloudAcceptedAt `
                     -ObserverStatus $observerState -BlockingReason 'OBSERVER_BLOCKED'
                 return 3
             }
@@ -312,7 +341,11 @@ function Publish-PendingObservations {
                         'PUBLISHED_AND_STOPPED'
                     }
                     Write-PublisherStatus -Path $publisherStatusPath -Status $finalStatus -Session $SessionId `
-                        -PublishedCount $published -LastObservationId $lastId -LastObservedAt $lastObservedAt `
+                        -PublishedCount $published -LastLocalObservationId $lastLocalObservationId `
+                        -LastLocalObservedAt $lastLocalObservedAt `
+                        -LastCloudAcceptedObservationId $lastCloudAcceptedObservationId `
+                        -LastCloudAcceptedObservedAt $lastCloudAcceptedObservedAt `
+                        -LastCloudAcceptedAt $lastCloudAcceptedAt `
                         -ObserverStatus $observerState
                     return 0
                 }
@@ -322,12 +355,20 @@ function Publish-PendingObservations {
     }
     catch {
         Write-PublisherStatus -Path $publisherStatusPath -Status 'BLOCKED' -Session $SessionId `
-            -PublishedCount $published -LastObservationId $lastId -LastObservedAt $lastObservedAt `
+            -PublishedCount $published -LastLocalObservationId $lastLocalObservationId `
+            -LastLocalObservedAt $lastLocalObservedAt `
+            -LastCloudAcceptedObservationId $lastCloudAcceptedObservationId `
+            -LastCloudAcceptedObservedAt $lastCloudAcceptedObservedAt `
+            -LastCloudAcceptedAt $lastCloudAcceptedAt `
             -BlockingReason 'TELEMETRY_ADMISSION_UNAVAILABLE'
         return 1
     }
     Write-PublisherStatus -Path $publisherStatusPath -Status 'BLOCKED' -Session $SessionId `
-        -PublishedCount $published -LastObservationId $lastId -LastObservedAt $lastObservedAt `
+        -PublishedCount $published -LastLocalObservationId $lastLocalObservationId `
+        -LastLocalObservedAt $lastLocalObservedAt `
+        -LastCloudAcceptedObservationId $lastCloudAcceptedObservationId `
+        -LastCloudAcceptedObservedAt $lastCloudAcceptedObservedAt `
+        -LastCloudAcceptedAt $lastCloudAcceptedAt `
         -BlockingReason 'MONITOR_RUNTIME_EXPIRED'
     return 1
 }

@@ -59,6 +59,27 @@ function Get-StatusRecord {
     catch { throw 'The supplied monitor status record is malformed.' }
 }
 
+function Test-FreshTimestamp {
+    param([object]$Value)
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $false
+    }
+    try {
+        $age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$Value)).TotalSeconds
+        return $age -ge 0 -and $age -le 15
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-Sha256Identity {
+    param([object]$Value)
+
+    return $Value -is [string] -and $Value -match '^[0-9a-f]{64}$'
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $configCandidate = if ([IO.Path]::IsPathRooted($ConfigPath)) {
     $ConfigPath
@@ -123,21 +144,32 @@ if ($MonitorStatusPath) {
     }
     $statusPath = (Resolve-Path -LiteralPath $statusCandidate -ErrorAction Stop).Path
     $monitor = Get-StatusRecord -Path $statusPath
-    $fresh = $false
-    if ($null -ne $monitor -and $monitor.last_observed_at) {
-        try {
-            $age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$monitor.last_observed_at)).TotalSeconds
-            $fresh = $age -ge 0 -and $age -le 15
-        }
-        catch { $fresh = $false }
-    }
     $state = if ($null -eq $monitor) { 'MISSING' } else { [string]$monitor.status }
-    Add-Check -Checks $checks -Name 'fresh_read_only_observation' -Status $(if ($fresh) { 'PASS' } else { 'BLOCKED' }) `
-        -Detail $(if ($fresh) { 'human-armed read-only observation is at most 15 seconds old' } else { "observation is not currently fresh (status $state)" })
+    $localFresh = $null -ne $monitor -and (Test-FreshTimestamp -Value $monitor.last_local_observed_at)
+    $sameExactObservation = $null -ne $monitor -and `
+        (Test-Sha256Identity -Value $monitor.last_local_observation_id) -and `
+        $monitor.last_local_observation_id -eq $monitor.last_cloud_accepted_observation_id
+    $cloudAccepted = $null -ne $monitor -and `
+        $monitor.schema_version -eq 'demo-monitor-publisher-status.v2' -and `
+        $sameExactObservation -and `
+        (Test-Sha256Identity -Value $monitor.last_cloud_accepted_observation_id) -and `
+        (Test-FreshTimestamp -Value $monitor.last_cloud_accepted_at)
+    $cloudFresh = $cloudAccepted -and $localFresh -and `
+        (Test-FreshTimestamp -Value $monitor.last_cloud_accepted_observed_at)
+    Add-Check -Checks $checks -Name 'fresh_local_read_only_observation' -Status $(if ($localFresh) { 'PASS' } else { 'BLOCKED' }) `
+        -Detail $(if ($localFresh) { 'human-armed read-only observation is at most 15 seconds old' } else { "local observation is not currently fresh (publisher status $state)" })
+    Add-Check -Checks $checks -Name 'private_cloud_telemetry_admission' -Status $(if ($cloudAccepted) { 'PASS' } else { 'BLOCKED' }) `
+        -Detail $(if ($cloudAccepted) { 'the current exact canonical observation was admitted by private cloud telemetry' } else { 'the current local observation has not been confirmed by private cloud telemetry' })
+    Add-Check -Checks $checks -Name 'fresh_cloud_accepted_observation' -Status $(if ($cloudFresh) { 'PASS' } else { 'BLOCKED' }) `
+        -Detail $(if ($cloudFresh) { 'the cloud-accepted exact observation remains within the 15-second evidence window' } else { 'no exact cloud-accepted observation is currently within the 15-second evidence window' })
 }
 else {
-    Add-Check -Checks $checks -Name 'fresh_read_only_observation' -Status 'OPTIONAL' `
-        -Detail 'supply the active session status path to check the 15-second freshness gate'
+    Add-Check -Checks $checks -Name 'fresh_local_read_only_observation' -Status 'OPTIONAL' `
+        -Detail 'supply the active publisher session status path to check local observation freshness'
+    Add-Check -Checks $checks -Name 'private_cloud_telemetry_admission' -Status 'OPTIONAL' `
+        -Detail 'supply the active publisher session status path to check exact private telemetry admission'
+    Add-Check -Checks $checks -Name 'fresh_cloud_accepted_observation' -Status 'OPTIONAL' `
+        -Detail 'supply the active publisher session status path to check cloud-accepted evidence freshness'
 }
 
 $blocked = @($checks | Where-Object { $_.status -eq 'BLOCKED' }).Count -gt 0

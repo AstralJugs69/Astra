@@ -367,9 +367,12 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, object]:
             "hero": None,
         }
     first = incidents[0] if isinstance(incidents[0], Mapping) else {}
+    stage = _safe_enum(first.get("workflow_stage"), default="DETECTED")
+    highlight = first.get("watch_highlight")
+    hero = dict(first) if stage in QUALIFYING_STAGES and isinstance(highlight, Mapping) else None
     return {
         "source_label": WATCH_SOURCE_LABEL,
-        "durable_stage": _safe_enum(first.get("workflow_stage"), default="DETECTED"),
+        "durable_stage": stage,
         "stage_label": str(
             first.get("workflow_label", workflow_label(first.get("workflow_stage")))
         ),
@@ -380,7 +383,10 @@ def watch_summary(snapshot: Mapping[str, object]) -> dict[str, object]:
             )
         ),
         "automatic_cycle": automatic_cycle,
-        "hero": dict(first),
+        # A result hero is evidence-led: no highlight, no judge-facing result.
+        # NEEDS_REVIEW remains a strong autonomous outcome when the complete
+        # deterministic/semantic report evidence exists.
+        "hero": hero,
     }
 
 

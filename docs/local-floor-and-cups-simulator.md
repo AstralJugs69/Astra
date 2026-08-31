@@ -52,8 +52,10 @@ after telemetry admission accepts it. It contains no CUPS lifecycle command.
 
 The session is bounded to 15 minutes, uses a five-second default observation
 cadence, and stores only sanitized local monitor status under ignored `work/`.
-It does not create a new journal, relax the 15-second cloud freshness limit, or
-provide any device-control capability. See
+The publisher status distinguishes a fresh local read from the exact latest
+observation that private telemetry accepted; demo preflight requires both and
+the unchanged 15-second cloud-evidence limit. It does not create a new journal,
+relax the freshness limit, or provide any device-control capability. See
 [demo preparation](demo-preparation.md) for the explicit human preparation and
 stop procedure.
 

@@ -19,6 +19,7 @@ from braille_errata_relay.presentation.watch import (
     heartbeat_event,
     sanitize_watch_snapshot,
     sse_frame,
+    watch_summary,
 )
 
 AUDIENCE = "https://private-relay.example.test"
@@ -235,6 +236,60 @@ def test_watch_snapshot_keeps_only_closed_report_highlights_and_sorts_by_latest_
         "resynchronized_after_page": 24,
     }
     assert "semantic_summary" not in str(snapshot)
+
+
+def test_watch_summary_exposes_a_result_hero_for_report_ready_or_needs_review_only() -> None:
+    base = _overview(stage="REPORT_READY", review_state="REPORT_READY")
+    base["incidents"][0]["watch_highlight"] = {  # type: ignore[index]
+        "materiality": "MATERIAL",
+        "change_kind": "FACTUAL_CORRECTION",
+        "baseline_page_count": 46,
+        "candidate_page_count": 46,
+        "old_page_range": {"start": 24, "end": 24},
+        "new_page_range": {"start": 24, "end": 24},
+        "resynchronized_after_page": 24,
+    }
+    report_ready = sanitize_watch_snapshot(base)
+    needs_review = sanitize_watch_snapshot(
+        {
+            "incidents": [
+                {**base["incidents"][0], "workflow_stage": "NEEDS_REVIEW"}  # type: ignore[index]
+            ]
+        }
+    )
+    no_highlight = sanitize_watch_snapshot(
+        _overview(stage="NEEDS_REVIEW", review_state="NEEDS_REVIEW")
+    )
+
+    assert watch_summary(report_ready)["hero"] is not None
+    assert watch_summary(needs_review)["hero"] is not None
+    assert watch_summary(no_highlight)["hero"] is None
+
+
+def test_watch_page_distinguishes_report_ready_from_safe_needs_review_results() -> None:
+    report = _overview(stage="REPORT_READY", review_state="REPORT_READY")
+    needs_review = _overview(stage="NEEDS_REVIEW", review_state="NEEDS_REVIEW")
+    highlight = {
+        "materiality": "MATERIAL",
+        "change_kind": "FACTUAL_CORRECTION",
+        "baseline_page_count": 46,
+        "candidate_page_count": 46,
+        "old_page_range": {"start": 24, "end": 24},
+        "new_page_range": {"start": 24, "end": 24},
+        "resynchronized_after_page": 24,
+    }
+    report["incidents"][0]["watch_highlight"] = highlight  # type: ignore[index]
+    needs_review["incidents"][0]["watch_highlight"] = highlight  # type: ignore[index]
+
+    report_page = _client(OverviewApi(report)).get("/watch")
+    review_page = _client(OverviewApi(needs_review)).get("/watch")
+    no_result_page = _client(OverviewApi(_overview(stage="NEEDS_REVIEW"))).get("/watch")
+
+    assert report_page.status_code == review_page.status_code == no_result_page.status_code == 200
+    assert "Professional recovery report ready" in report_page.text
+    assert "Material issue detected — safe human review required" in review_page.text
+    assert "Resynchronized after page 24." in review_page.text
+    assert 'id="watch-hero" class="report-hero" hidden' in no_result_page.text
 
 
 def test_watch_tracker_deduplicates_historical_snapshots_and_emits_one_new_alert() -> None:

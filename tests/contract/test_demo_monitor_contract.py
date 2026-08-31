@@ -15,6 +15,12 @@ def test_human_armed_monitor_preserves_the_read_only_observer_and_ack_boundary()
     assert "pending-outbox" in source
     assert "acknowledge-published" in source
     assert "publish-site-observation" in source
+    assert "demo-monitor-publisher-status.v2" in source
+    assert "last_local_observation_id" in source
+    assert "last_cloud_accepted_observation_id" in source
+    assert "last_cloud_accepted_observed_at" in source
+    assert "last_cloud_accepted_at" in source
+    assert "-Status 'PUBLISHING'" in source
     assert "-u', $ObserverUser" in source
     assert "$ObserverUser = 'relay-observer'" in source
     assert "if ($publishExit -ne 0 -or $publishResult.status -ne 'ACCEPTED'" in source
@@ -44,7 +50,11 @@ def test_preflight_is_limited_to_doctor_and_read_only_cloud_describes() -> None:
     assert "--check-wsl-cups" in lowered
     assert "run services describe" in lowered
     assert "scheduler jobs describe" in lowered
-    assert "fresh_read_only_observation" in lowered
+    assert "fresh_local_read_only_observation" in lowered
+    assert "private_cloud_telemetry_admission" in lowered
+    assert "fresh_cloud_accepted_observation" in lowered
+    assert "last_cloud_accepted_observation_id" in lowered
+    assert "last_local_observation_id -eq $monitor.last_cloud_accepted_observation_id" in lowered
     for forbidden in (
         "gcloud iam",
         "scheduler jobs run",

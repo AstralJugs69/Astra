@@ -15,7 +15,9 @@ WATCH_JAVASCRIPT = r"""(() => {
   const rows = document.getElementById("watch-incidents");
   const empty = document.getElementById("watch-empty");
   const hero = document.getElementById("watch-hero");
+  const heroKicker = document.getElementById("watch-hero-kicker");
   const heroTitle = document.getElementById("watch-hero-title");
+  const heroStatus = document.getElementById("watch-hero-status");
   const heroImpact = document.getElementById("watch-hero-impact");
   const heroLink = document.getElementById("watch-hero-link");
   const pipeline = document.getElementById("watch-pipeline");
@@ -83,7 +85,8 @@ WATCH_JAVASCRIPT = r"""(() => {
       const itemStage = step.dataset.stage;
       step.classList.remove("complete", "current", "waiting", "blocked");
       if (stageValue === "NEEDS_REVIEW") {
-        step.classList.add(itemStage === "REPORT_READY" ? "blocked" : "waiting");
+        const itemIndex = orderedStages.indexOf(itemStage);
+        step.classList.add(itemStage === "REPORT_READY" ? "blocked" : itemIndex >= 0 && itemIndex < 5 ? "complete" : "waiting");
       } else if (stageIndex >= 0 && orderedStages.indexOf(itemStage) < stageIndex) {
         step.classList.add("complete");
       } else if (itemStage === stageValue) {
@@ -128,12 +131,15 @@ WATCH_JAVASCRIPT = r"""(() => {
   }
 
   function renderHero(lead) {
-    if (!hero || !heroTitle || !heroImpact || !heroLink) return;
+    if (!hero || !heroKicker || !heroTitle || !heroStatus || !heroImpact || !heroLink) return;
     const highlight = lead && lead.watch_highlight;
-    const isReport = lead && lead.workflow_stage === "REPORT_READY" && highlight;
-    hero.hidden = !isReport;
-    if (!isReport) return;
+    const isResult = lead && highlight && (lead.workflow_stage === "REPORT_READY" || lead.workflow_stage === "NEEDS_REVIEW");
+    hero.hidden = !isResult;
+    if (!isResult) return;
+    const needsReview = lead.workflow_stage === "NEEDS_REVIEW";
+    heroKicker.textContent = needsReview ? "Material issue detected — safe human review required" : "Professional recovery report ready";
     heroTitle.textContent = safeText(highlight.materiality, "MATERIAL") + " " + safeText(highlight.change_kind, "CORRECTION").replaceAll("_", " ");
+    heroStatus.textContent = needsReview ? "Astra completed the bounded investigation and stopped safely for qualified human review." : "The bounded autonomous investigation is complete; a production coordinator can review the recovery report.";
     heroImpact.textContent = highlightText(highlight);
     heroLink.href = "/incidents/" + encodeURIComponent(lead.incident_id);
   }

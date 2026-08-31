@@ -83,12 +83,14 @@ queue/device. Stop the foreground observer with Ctrl+C after the recording;
 the publisher drains already-created canonical records and exits. If it reports
 a block, do not edit Drive—preserve the status and resolve the visible issue.
 
-While it is running, verify the hard 15-second freshness condition with the
-session status path printed by the arm command:
+While it is running, verify all three hard facts with the publisher status path
+printed by the arm command: the local observation is fresh, that exact latest
+canonical observation was admitted through private telemetry, and the
+cloud-accepted observation remains within the 15-second evidence window.
 
 ```powershell
 .\infra\demo\test_demo_readiness.ps1 `
-  -MonitorStatusPath .\work\live-bridge\demo-monitor-<session>\observer-status.json
+  -MonitorStatusPath .\work\live-bridge\demo-monitor-<session>\publisher-status.json
 ```
 
 ## 4. Record the simple live story
