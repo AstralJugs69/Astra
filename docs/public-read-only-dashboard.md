@@ -10,7 +10,7 @@ Use the public Astra dashboard to explore the project without provisioning
 Google Cloud or installing the local production-floor simulator.
 
 **Live dashboard:**
-[https://astra-public-dashboard-zqesk2cifq-ey.a.run.app](https://astra-public-dashboard-zqesk2cifq-ey.a.run.app)
+[https://astra-public-dashboard-274036279805.europe-west3.run.app](https://astra-public-dashboard-274036279805.europe-west3.run.app)
 
 The hosted dashboard provides:
 

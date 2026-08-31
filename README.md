@@ -263,7 +263,7 @@ recorded human outcomes, deterministic Braille impact, Gemini assessment, and
 the audit timeline without exposing the private API or a mutation surface.
 
 **Hosted dashboard:**
-[astra-public-dashboard-zqesk2cifq-ey.a.run.app](https://astra-public-dashboard-zqesk2cifq-ey.a.run.app)
+[astra-public-dashboard-274036279805.europe-west3.run.app](https://astra-public-dashboard-274036279805.europe-west3.run.app)
 
 Open the dashboard's **Explore Astra** page for the guided route. The public
 service is GET-only and uses a dedicated identity that is rejected from

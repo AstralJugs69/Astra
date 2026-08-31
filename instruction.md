@@ -145,7 +145,7 @@ Every project must use all three of the following:
 
 This build pins `gemini-3.5-flash` through Vertex AI, uses Google ADK, Cloud Run, Pub/Sub, Firestore, and an artifact bucket. Do not use a floating `latest` alias or silently fall back below the event minimum. Newer Gemini models may be enabled only after an explicit project-level smoke test and a recorded configuration change.
 
-### 2.2 Judging criteria
+### 2.2 Delivery priorities
 
 | Criterion | Weight | What this project must prove |
 |---|---:|---|
@@ -159,7 +159,7 @@ Do not spend scarce time on decorative features that do not improve one of those
 
 The binding submission deadline is **2026-08-31 at 5:00 PM Pacific Time**, which is **2026-09-01 00:00 UTC** and **2026-09-01 03:00 EAT**.
 
-Devpost's structured schedule and the prose terms disagree on some non-submission dates: the structured schedule reported submissions beginning on 2026-08-04 and judging ending on 2026-09-24 at 5:00 PM PT, while the terms describe an August 3 start and an October 1 judging end. They also differ on the announced time on October 8. Do not use this file to resolve that discrepancy. Re-check the live event page for any action that depends on those dates. The submission deadline is consistent in both sources.
+Devpost's structured schedule and the prose terms disagree on several non-submission dates. Do not use this file to resolve that discrepancy. Re-check the live event page for any action that depends on those dates. The submission deadline is consistent in both sources.
 
 ### 2.4 Submission obligations
 
@@ -194,7 +194,7 @@ Other material requirements include:
 - submission content must be owned or properly licensed and must not violate privacy, IP, law, or platform rules;
 - submissions lock after the deadline; preserve the submitted repo/video state and continue later work in a separate branch or copy.
 
-The rules allow the organizer to request access when an entry depends on proprietary hardware that is not widely available. **This project does not claim to run on a physical embosser and does not depend on one.** Its intended, reproducible platform is a software CUPS queue plus a documented virtual endpoint. A future real embosser integration is outside the judged MVP.
+The rules allow the organizer to request access when an entry depends on proprietary hardware that is not widely available. **This project does not claim to run on a physical embosser and does not depend on one.** Its intended, reproducible platform is a software CUPS queue plus a documented virtual endpoint. A future real embosser integration is outside this MVP.
 
 Relevant prize positioning: the event reports a $180,000 total pool, including the $20,000 Taskmaster award, two $10,000 Individual/Hobbyist awards, and two $5,000 Best Architectural Design awards. The rules state that a project can receive at most one prize. Prize strategy must not distort the build strategy.
 
@@ -1658,7 +1658,7 @@ All must agree with recorded manifests. Show report timestamp before human actio
 
 Show the deployed Cloud Run URL/dashboard or logs, Vertex AI/Gemini invocation evidence, Pub/Sub/Firestore evidence, the architecture diagram, and the passing negative test showing the bridge identity cannot cancel or submit. Close with the existing-workflow framing, not a platform roadmap.
 
-## 18. Judging strategy
+## 18. Delivery strategy
 
 ### 18.1 Innovation & Operational Utility (40%)
 
